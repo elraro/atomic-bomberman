@@ -387,3 +387,8 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 
 - `0x422C13` sets the next dud time from the C library clock (seconds): now + value 320 + random(value 321). The timer is global, not per round. The dud animation is `bomb regular green dud` in `duds.ani`.
 - Core: dud bombs (fuse held for value 323 frames). Tests: 50 tests, 826 checks.
+
+## 2026-10-04 — Session 13: more scenarios on the original
+
+- With the focus-checked driver: team colours (D38), field edge (D39), capacity (D40), bomb blocks the way back (D41), trigger bombs including the supply limit (D42), jelly bounce (D43), goldflame (D44). All as predicted.
+- New lab schemes in the working copy: `testtrg`, `testjel`, `testgold`.

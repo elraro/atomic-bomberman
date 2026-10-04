@@ -44,13 +44,13 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 | B8 | Kill all but one player while bombs are ticking | Remaining bombs stop counting down | HIGH | |
 | B9 | Kick a bomb down an open corridor | Slides at 10 px per frame (200 px/s) until the next cell is blocked, then rests at a cell centre | HIGH | **Confirmed**: 202 px/s, rests at the edge cell centre (D26) |
 | B10 | Kick a bomb toward a cell that currently has a flame | Bomb stops and explodes on the next tick | HIGH | |
-| B11 | Kick a jelly bomb at a wall | Reverses and keeps sliding | HIGH | |
+| B11 | Kick a jelly bomb at a wall | Reverses and keeps sliding | HIGH | **Confirmed** (D43) |
 | B12 | Kicked bomb, press button 2 | Stops at the next cell centre (not jelly) | HIGH | |
 | B13 | Punch a bomb with open field ahead | Lands 3 cells away if that cell is free, otherwise keeps hopping one cell at a time | HIGH | **Confirmed**: lands 3 cells away after 0.46 s (D31) |
 | B14 | Punch a bomb off the edge of the field | Reappears on the opposite side | MEDIUM | |
 | B15 | Punch a bomb so that it lands on a player | Player stunned and loses 1-3 powerups, which reappear on the field; bomb bounces on | HIGH | |
 | B16 | Hold a grabbed bomb for longer than the fuse | Does not explode while held; fuse restarts from zero when thrown | HIGH | **Confirmed**: carried > 3 s without exploding; explodes 1.999 s after landing (D32) |
-| B17 | With a trigger powerup and capacity 3, lay 5 bombs over time | The first 3 are trigger bombs, later ones are normal | HIGH | |
+| B17 | With a trigger powerup and capacity 3, lay 5 bombs over time | The first 3 are trigger bombs, later ones are normal | HIGH | **Confirmed** with capacity 2 (D42) |
 | B18 | Spooge with capacity 4 in an open corridor | A line of bombs ahead of the player; they detonate 50 ms apart moving away from the player | HIGH | Line of bombs **confirmed** (D33); stagger not measured |
 
 ## Explosions
@@ -65,7 +65,7 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 | E6 | Player standing with the reference point 1 px inside a flamed cell | Dies | HIGH | Consistent: player in the cell next to the bomb, inside its range, died (D41) |
 | E7 | Player sprite overlapping a flamed cell but reference point in the neighbouring cell | Survives | HIGH | Consistent: player in the cell next to the last flame survives (D20) |
 | E8 | Player walks into a cell 400 ms after its flame appeared | Dies (flame still active until 500 ms) | HIGH | |
-| E9 | Goldflame bomb in an open row | Flames across the whole row and column up to the first obstacle | HIGH | |
+| E9 | Goldflame bomb in an open row | Flames across the whole row and column up to the first obstacle | HIGH | **Confirmed** (D44) |
 | E10 | Player on a trampoline or mid-warp in a flamed cell | Survives | HIGH | |
 
 ## Powerups

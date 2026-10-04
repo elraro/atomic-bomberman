@@ -92,6 +92,10 @@ Lab schemes `testpun.sch`, `testgrab.sch`, `testspg.sch` (working copy only) giv
 | D40 | **Capacity.** With one bomb on the field and capacity 1, pressing Space again two cells away places nothing | Screenshot shows a single bomb | B1 |
 | D41 | **A bomb blocks the way back.** After walking two cells away from the bomb and holding Left for 0.6 s (enough for 110 px), the player stands at the centre of the cell next to the bomb. The player then dies in the blast | Screenshots | M8; flames kill in adjacent cells within range |
 
+| D42 | **Trigger bombs.** Born with trigger and capacity 2 (`testtrg.sch`): the two bombs dropped are drawn as trigger bombs and are still there 3.3 s later. Enter detonates the first; the second, two cells away and inside its range, goes with it. A third bomb dropped afterwards is an ordinary bomb and explodes by itself 2 s later | Screenshots | B17: no fuse, button 2 detonates the oldest, only "capacity" trigger bombs per pickup |
+| D43 | **Jelly bomb.** Born with jelly and kicker (`testjel.sch`): the kicked bomb slides west to the field edge and comes back east | Six rapid screenshots: bomb x = 75, 52, 45, 65, 82, 118 | B11 |
+| D44 | **Goldflame.** Born with goldflame (`testgold.sch`): a bomb at (0,0) fills the whole of row 0 and the whole of column 0 with flame; a player at (1,1) is unharmed | Screenshots | E9 |
+
 ## Not yet possible
 
 Attaching a debugger, and reading game memory directly. Remaining scenarios of `docs/testing/original-behaviour.md` can now be scripted one by one.
