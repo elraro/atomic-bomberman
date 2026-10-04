@@ -62,12 +62,32 @@ bool Audio::init(const std::string& gameDir) {
 const std::vector<std::uint8_t>* Audio::load(const std::string& name) {
     auto it = cache_.find(name);
     if (it != cache_.end()) return &it->second;
-    std::ifstream in(soundDir_ + name + ".rss", std::ios::binary);
+    // An imported asset folder holds .wav files; an original game folder holds raw .rss.
+    std::ifstream in(soundDir_ + name + ".wav", std::ios::binary);
+    const bool wav = static_cast<bool>(in);
+    if (!wav) {
+        in.clear();
+        in.open(soundDir_ + name + ".rss", std::ios::binary);
+    }
     if (!in) {
         std::fprintf(stderr, "WARN  sound file missing name=%s\n", name.c_str());
         return nullptr;
     }
     std::vector<std::uint8_t> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (wav) {
+        // Keep only the contents of the "data" chunk (the importer writes a 44-byte header).
+        std::size_t start = data.size();
+        for (std::size_t i = 12; i + 8 <= data.size();) {
+            const std::size_t size = static_cast<std::size_t>(data[i + 4]) | (static_cast<std::size_t>(data[i + 5]) << 8) |
+                                     (static_cast<std::size_t>(data[i + 6]) << 16) | (static_cast<std::size_t>(data[i + 7]) << 24);
+            if (data[i] == 'd' && data[i + 1] == 'a' && data[i + 2] == 't' && data[i + 3] == 'a') {
+                start = i + 8;
+                break;
+            }
+            i += 8 + size + (size & 1);
+        }
+        data.erase(data.begin(), data.begin() + static_cast<std::ptrdiff_t>(std::min(start, data.size())));
+    }
     return &cache_.emplace(name, std::move(data)).first->second;
 }
 

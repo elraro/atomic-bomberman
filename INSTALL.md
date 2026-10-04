@@ -1,0 +1,108 @@
+# Installing the modern Atomic Bomberman
+
+The modern game is a new program. It contains none of the original game's graphics, sounds or level data: those are imported once from **your own copy** of Atomic Bomberman (Interplay, 1997). Without them the program still runs, but only with placeholder shapes, no menu and no sound.
+
+You need:
+
+- the modern game (a download, or built from source: see the end of this page),
+- a copy of the original game: an installed folder or the CD. It is the folder that contains `BM95.EXE`, `COLOR.PAL` and a `DATA` folder.
+
+## 1. Get the program
+
+**Download.** Each push to the repository builds two packages with GitHub Actions (workflow "build"):
+
+| Package | For |
+|---|---|
+| `atomic-bomberman-modern-linux-x86_64.tar.gz` | 64-bit Linux with X11 or Wayland |
+| `atomic-bomberman-modern-windows-x64.zip` | 64-bit Windows 10 or later |
+
+They are attached to the workflow run (Actions → build → latest run → Artifacts) and, for tagged versions (`v*`), to the release page. Unpack the package anywhere; it holds the program (`atomic` or `atomic.exe`), the README and this file. Nothing else needs installing: SDL3 is built into the program. A graphics driver with OpenGL 3.3 is required.
+
+## 2. Import the game data (once)
+
+Run the program with `--import-assets` and the path of the original game.
+
+Linux:
+
+```sh
+./atomic --import-assets /path/to/original/game
+```
+
+Windows (Command Prompt, in the folder where you unpacked the zip):
+
+```bat
+atomic.exe --import-assets "D:\"
+atomic.exe --import-assets "C:\Games\Atomic Bomberman"
+```
+
+The import reads the original folder and never changes it. It writes about 280 MB:
+
+| What | From the original | In the asset folder |
+|---|---|---|
+| Palette, colour remaps, fonts | `COLOR.PAL`, `0.RMP`…`9.RMP`, `FONT*.FON` | same names, lower case |
+| Pictures and lists | `DATA\RES\*.PCX`, `*.RES` | `data/res/` |
+| Schemes (maps) | `DATA\SCHEMES\*.SCH` | `data/schemes/` |
+| Sprites | `DATA\ANI\*.ANI`, `MASTER.ALI` | `data/ani/` |
+| Sounds and music | the `.RSS` files named in `SOUNDLST.RES` (raw audio) | `data/sound/*.wav` (standard WAV, 22 050 Hz stereo 16-bit) |
+
+File and folder names in the original may be in any letter case. Only the sounds change format; the other files are copied as they are and are read by the game's own loaders. The installer, DirectX files, demos, movies and unused sounds of the original are not copied.
+
+By default the data goes to your per-user data folder:
+
+| System | Asset folder |
+|---|---|
+| Linux | `~/.local/share/atomic-bomberman-modern/atomic/assets` |
+| Windows | `%APPDATA%\atomic-bomberman-modern\atomic\assets` |
+
+To keep everything in one place instead (for example on a USB stick), put the data next to the program:
+
+```sh
+./atomic --import-assets /path/to/original/game --assets-dir ./assets
+```
+
+When it finishes it prints how many files and sounds were imported. A few sounds listed by the original but missing from its own disc are reported as "not found"; that is normal (3 in version 1.0).
+
+## 3. Play
+
+Start the program with no arguments. It looks for the game data in this order and uses the first place that has it:
+
+1. `--game-dir PATH` on the command line,
+2. the `ATOMIC_GAME_DIR` environment variable,
+3. an `assets` folder next to the program, then in the current folder, then in the per-user data folder (step 2),
+4. a `game` folder holding a copy of the original itself (current folder, next to the program, or one level above it).
+
+The terminal prints `INFO  Game files: …` with the folder in use. If no data is found, the window title says so.
+
+Controls and options are in `README.md`.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| Flat coloured shapes, no menu, title says "no game files found" | The data was not imported, or was imported somewhere the program does not look. Run step 2 again, or pass `--game-dir`. |
+| "not an Atomic Bomberman folder" during import | The path is not the folder that contains `COLOR.PAL` and `DATA`. On the CD it is the top folder. |
+| "OpenGL 3.3 is not available" | Graphics driver too old, or a remote/virtual display without 3D. |
+| No sound | Run from a terminal and look for `WARN` lines; `--mute` disables sound on purpose. |
+
+## Legal
+
+The original game's data is copyrighted by its owners. Import it only from a copy you own, and do not share the resulting asset folder. The packages built from this repository contain no original material.
+
+## Building from source
+
+Requirements: CMake 3.20 or newer and a C++20 compiler (GCC, Clang or Visual Studio 2022).
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAB_FETCH_SDL3=ON
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+```
+
+`-DAB_FETCH_SDL3=ON` downloads SDL3 and links it into the program. Leave it out to use an SDL3 already installed on the system (for example `libsdl3-dev`). On Linux, building SDL3 needs the X11, Wayland, OpenGL and audio development packages; the exact list is in `.github/workflows/build.yml`.
+
+The program is `build/atomic` (Linux) or `build\Release\atomic.exe` (Windows).
+
+## Status of these instructions
+
+- The Linux steps were run as written: import (246 data files, 971 sounds, 281 MB), then starting the game from the imported folder with graphics, level extras, sounds and music loading.
+- The Windows package and the GitHub Actions workflow have **not** been run yet: this repository has no GitHub remote at the time of writing. The Windows build may need fixes the first time it runs.

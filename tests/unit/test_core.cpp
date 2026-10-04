@@ -1,7 +1,9 @@
 // Tests for the gameplay core. Each test encodes a rule from
 // docs/specifications/ (ids in comments refer to docs/testing/original-behaviour.md).
 // Expected values are predictions from static analysis of the original.
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <string>
 #include <vector>

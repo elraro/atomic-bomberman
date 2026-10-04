@@ -13,6 +13,10 @@ A study of the original Atomic Bomberman (Interplay, 1997) and a clean new imple
 - `tools/asset-extractor/` — reader/extractor for the original `.ani` files.
 - `game/` — the user's copy of the original game. Read-only, never committed.
 
+## Install
+
+See [INSTALL.md](INSTALL.md): download a build (or build from source), import the data from your own copy of the original once with `atomic --import-assets PATH`, then start the program.
+
 ## Build and test
 
 ```sh
@@ -21,7 +25,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Requires CMake 3.20+ and a C++20 compiler. The front end additionally needs SDL3 and OpenGL development files (`libsdl3-dev`, `libgl-dev`); without them only the core and tests are built.
+Requires CMake 3.20+ and a C++20 compiler. The front end needs SDL3: either installed on the system (`libsdl3-dev`), or downloaded and linked in with `-DAB_FETCH_SDL3=ON`. Without SDL3 only the core and the tests are built. `.github/workflows/build.yml` builds Linux and Windows packages.
 
 ## Run
 
@@ -29,7 +33,7 @@ Requires CMake 3.20+ and a C++20 compiler. The front end additionally needs SDL3
 ./build/atomic
 ```
 
-The program needs your copy of the original game for the menu, graphics and sound. It looks for it in this order: `--game-dir PATH`, the `ATOMIC_GAME_DIR` environment variable, a `game` folder in the current directory, next to the executable, or one level above the executable. The folder is the one containing `color.pal` and `data/`. The terminal prints `INFO  Game files: …` when it is found; if it is not, the window title says so and the program falls back to placeholder shapes with no menu.
+The program needs the original game's data for the menu, graphics and sound. It looks in: `--game-dir PATH`, the `ATOMIC_GAME_DIR` environment variable, an imported `assets` folder (next to the executable, in the current folder, or in the per-user data folder), or a `game` folder with a copy of the original. The terminal prints `INFO  Game files: …` when it is found; if it is not, the window title says so and the program falls back to placeholder shapes with no menu.
 
 With game files the program opens on the main menu. Choose **Start Game**, set up the player list (Up/Down select a slot, Right cycles AI → KEY 0 → KEY 1 → OFF, Left switches a slot off), press Enter, then choose level, scheme and wins (Left/Right) and press Enter to play. By default player 1 uses the first key set and player 2 is a computer player, as in the original. The other menu items are not implemented.
 

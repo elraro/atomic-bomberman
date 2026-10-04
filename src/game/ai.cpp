@@ -1,5 +1,6 @@
 #include "game/ai.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 
 namespace ab {

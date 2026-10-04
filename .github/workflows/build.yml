@@ -1,0 +1,97 @@
+name: build
+
+# Builds the modern game for Linux and Windows and runs the unit tests.
+# The artifacts contain only new code: no original game files are in this
+# repository, and none are packaged. Players import their own copy with
+# `atomic --import-assets` (see INSTALL.md).
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools and SDL3 build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build git pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev \
+            libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev libdrm-dev libgbm-dev \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DAB_FETCH_SDL3=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          mkdir -p package/atomic-bomberman-modern
+          cp build/atomic README.md INSTALL.md package/atomic-bomberman-modern/
+          tar -C package -czf atomic-bomberman-modern-linux-x86_64.tar.gz atomic-bomberman-modern
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atomic-bomberman-modern-linux-x86_64
+          path: atomic-bomberman-modern-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -A x64 -DAB_FETCH_SDL3=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force package/atomic-bomberman-modern | Out-Null
+          Copy-Item build/Release/atomic.exe, README.md, INSTALL.md package/atomic-bomberman-modern/
+          Compress-Archive -Path package/atomic-bomberman-modern -DestinationPath atomic-bomberman-modern-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atomic-bomberman-modern-windows-x64
+          path: atomic-bomberman-modern-windows-x64.zip
+          if-no-files-found: error
+
+  release:
+    # On a version tag (v*), attach both packages to a GitHub release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            atomic-bomberman-modern-linux-x86_64.tar.gz
+            atomic-bomberman-modern-windows-x64.zip

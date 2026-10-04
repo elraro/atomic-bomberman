@@ -410,3 +410,11 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 
 - Application: SDL3 gamepads as controllers (`JOY n` in the player list), using the original's axis thresholds. Compiles and the program runs with no pad attached; never exercised with a real controller.
 - Ghidra: 24 network and helper functions named (`Net_QueueMessage`, `Net_ReceiveAndDispatch`, `Net_Send…`, `Net_GetRole`, …).
+
+## 2026-10-04 — Session 15: packaging
+
+- Decision by the project owner: networking is out of scope for now.
+- Portable OpenGL binding (`src/rendering/gl.*`) replaces the Mesa headers. CMake can fetch and statically link SDL3 (`-DAB_FETCH_SDL3=ON`); verified locally on Linux (361 build steps, runs).
+- `atomic --import-assets SRC [--assets-dir DEST]`: builds the game's asset folder from a copy of the original (case-insensitive lookup, lower-case output, `.rss` → `.wav`). Verified: 246 data files, 971 sounds, 281 MB; the game runs from the result with graphics, extras, sounds and music.
+- `.github/workflows/build.yml`: Linux and Windows packages, tests, release on `v*` tags. YAML parses; the workflow itself has not run (no GitHub remote), and the Windows build has never been compiled.
+- `INSTALL.md` written.

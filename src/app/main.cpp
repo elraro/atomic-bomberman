@@ -3,8 +3,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
-#define GL_GLEXT_PROTOTYPES 1
-#include <GL/gl.h>
+#include "rendering/gl.hpp"
 
 #include <algorithm>
 #include <array>
@@ -20,6 +19,7 @@
 #include "game/ai.hpp"
 #include "game/world.hpp"
 #include "rendering/renderer.hpp"
+#include "resources/asset_import.hpp"
 #include "resources/scheme_file.hpp"
 
 namespace {
@@ -33,6 +33,8 @@ struct Options {
     int humans = 1;           // slots 0..humans-1 use the keyboard (max 2); the rest are computer players
     int frames = -1;          // stop after this many rendered frames (for automated runs)
     std::string screenshot;   // write the last frame as a PPM file
+    std::string importFrom;   // --import-assets: build the asset folder from this original game folder and exit
+    std::string assetsDir;    // --assets-dir: where --import-assets writes (default: the per-user data folder)
     int menuShot = 0;         // automated: 1 = capture the main menu, 2 = the player list
     bool resultShot = false;  // automated: capture the result screen of the first decided round and exit
     std::vector<std::string> script;  // automated: key names pressed one after another (see --script)
@@ -60,6 +62,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--seed") o.seed = static_cast<std::uint32_t>(std::atoi(next().c_str()));
         else if (a == "--demo") o.demo = true;
         else if (a == "--start") o.menu = false;
+        else if (a == "--import-assets") o.importFrom = next();
+        else if (a == "--assets-dir") o.assetsDir = next();
         else if (a == "--result-shot") o.resultShot = true;
         else if (a == "--script") {
             // Comma-separated keys: up, down, left, right, enter, esc. One is pressed every 10 frames.
@@ -155,15 +159,30 @@ bool looksLikeGameDir(const std::string& dir) {
     return std::ifstream(dir + "/color.pal").good() && std::ifstream(dir + "/data/res/valuelst.res").good();
 }
 
-// The folder holding the user's copy of the original game: --game-dir, then the
-// ATOMIC_GAME_DIR environment variable, then "game" in the current folder, next
-// to the executable, or one level above it (the usual build/ layout).
+// Per-user folder where --import-assets puts the game data by default.
+std::string userAssetsDir() {
+    char* pref = SDL_GetPrefPath("atomic-bomberman-modern", "atomic");
+    if (pref == nullptr) return "assets";
+    const std::string dir = std::string(pref) + "assets";
+    SDL_free(pref);
+    return dir;
+}
+
+// The folder holding the game data: --game-dir, then the ATOMIC_GAME_DIR
+// environment variable, then an imported "assets" folder (next to the
+// executable, in the current folder, or in the per-user data folder), then a
+// copy of the original game in "game" (current folder, next to the executable,
+// or one level above it).
 std::string findGameDir(const std::string& requested) {
     std::vector<std::string> candidates;
     if (!requested.empty()) candidates.push_back(requested);
     if (const char* env = std::getenv("ATOMIC_GAME_DIR")) candidates.emplace_back(env);
+    const char* base = SDL_GetBasePath();
+    if (base != nullptr) candidates.push_back(std::string(base) + "assets");
+    candidates.emplace_back("assets");
+    candidates.push_back(userAssetsDir());
     candidates.emplace_back("game");
-    if (const char* base = SDL_GetBasePath()) {
+    if (base != nullptr) {
         candidates.push_back(std::string(base) + "game");
         candidates.push_back(std::string(base) + "../game");
     }
@@ -213,14 +232,28 @@ std::vector<SchemeEntry> listSchemes(const std::string& gameDir) {
 
 int main(int argc, char** argv) {
     Options opt = parseArgs(argc, argv);
+    if (!opt.importFrom.empty()) {
+        const std::string to = opt.assetsDir.empty() ? userAssetsDir() : opt.assetsDir;
+        std::printf("Importing game data\n  from: %s\n  to:   %s\n", opt.importFrom.c_str(), to.c_str());
+        const ab::ImportReport r = ab::importAssets(opt.importFrom, to);
+        if (!r.ok) {
+            std::printf("Import failed: %s\n", r.error.c_str());
+            return 1;
+        }
+        std::printf("Done: %d data files, %d sounds converted to .wav (%d listed sounds not found), %.1f MB.\n", r.dataFiles,
+                    r.sounds, r.missingSounds, static_cast<double>(r.bytes) / 1.0e6);
+        std::printf("Start the game without arguments to play.\n");
+        return 0;
+    }
     const std::string requested = opt.gameDir;
     opt.gameDir = findGameDir(requested);
     if (opt.gameDir.empty()) {
         std::fprintf(stderr,
                      "WARN  No original game files found%s%s.\n"
                      "WARN  Running without menu, original graphics and sound (placeholder shapes only).\n"
-                     "WARN  Point the program at your copy: --game-dir PATH or ATOMIC_GAME_DIR=PATH\n"
-                     "WARN  (the folder that contains color.pal and data/).\n",
+                     "WARN  Import them once from your copy of the original game:\n"
+                     "WARN      atomic --import-assets PATH_TO_ORIGINAL_GAME\n"
+                     "WARN  or point the program at it directly with --game-dir PATH.\n",
                      requested.empty() ? "" : " under ", requested.c_str());
     } else {
         std::fprintf(stderr, "INFO  Game files: %s\n", opt.gameDir.c_str());
@@ -272,6 +305,13 @@ int main(int argc, char** argv) {
     SDL_GLContext gl = SDL_GL_CreateContext(window);
     if (gl == nullptr) {
         std::fprintf(stderr, "ERROR SDL_GL_CreateContext: %s\n", SDL_GetError());
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+    if (!ab::loadOpenGL()) {
+        std::fprintf(stderr, "ERROR OpenGL 3.3 is not available on this system\n");
+        SDL_GL_DestroyContext(gl);
         SDL_DestroyWindow(window);
         SDL_Quit();
         return 1;

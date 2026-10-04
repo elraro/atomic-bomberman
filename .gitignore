@@ -6,3 +6,8 @@
 /.claude/settings.local.json
 __pycache__/
 /work/
+/build-fetch/
+/build-fetch.log
+/package/
+*.tar.gz
+*.zip

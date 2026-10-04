@@ -1,11 +1,11 @@
 #include "rendering/renderer.hpp"
 
-#define GL_GLEXT_PROTOTYPES 1
-#include <GL/gl.h>
-#include <GL/glext.h>
+#include "rendering/gl.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <string>
 #include <cstdio>
 
 namespace ab {

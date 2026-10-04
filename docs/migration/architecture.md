@@ -16,7 +16,7 @@ tests/unit/test_core.cpp
 
 Front-end loop: real time is accumulated and consumed in fixed 50 ms simulation steps (the original's nominal frame; see `docs/reverse-engineering/dynamic-analysis.md`). The renderer interpolates player and bomb positions between the previous and the current step, so display rate and simulation rate are independent. Gameplay code never includes SDL or OpenGL headers.
 
-GL functions are taken from the system `GL/gl.h` + `GL/glext.h` prototypes (Mesa). A loader (glad or similar) will be needed for Windows and macOS.
+OpenGL is bound through `src/rendering/gl.*`: the 38 functions the program uses, resolved at run time with `SDL_GL_GetProcAddress`. No system GL headers or loader library are involved, so the same code builds on Linux and Windows.
 
 `ab_game` is a static library with no dependency beyond the C++ standard library. The planned SDL3/OpenGL front end will sit on top of it and feed `World::tick` with `PlayerInput`.
 
