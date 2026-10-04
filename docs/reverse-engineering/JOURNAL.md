@@ -347,3 +347,9 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - Level extras read from `extra.c` and their users; documented in `extras.md`, specified in `specifications/maps.md`, implemented in the core (`World::setExtras`) with a reader for `extraN.res`. Rendered for levels 3 and 10 and checked by eye.
 - Tests: 47 tests, 795 checks, all passing.
 - Not yet observed on the original: any of the extras.
+
+## 2026-10-04 — Session 11: fonts and HUD
+
+- `.fon` bitmap font format decoded (header of three i32, 8 pointer bytes, width/offset table, 1-bit rows); verified by exact size match on all three fonts and by rendering. C++ reader `parseFont` with a unit test.
+- The round clock uses sprite digits (`numeric font` in `kfont.ani`); the modern HUD now draws clock, hurry banner and score labels from the original assets at the original coordinates (values 110-119). Side-by-side with an original screenshot: clock and white player's label coincide.
+- Tests: 48 tests, 808 checks.

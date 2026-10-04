@@ -100,6 +100,23 @@ Names ending in `green` are drawn through a colour remap so that the green parts
 - First 768 bytes: 256 RGB triples. Values are 6-bit (0-63) except entry 0 (`FF FF FF`). Confidence: MEDIUM-HIGH.
 - Remaining 32 768 bytes: one byte per RGB555 colour, giving the nearest palette index. This is consistent with the 32 768-entry table the ANI loader indexes with RGB555 pixels (`0x495390`). That the table in memory is loaded from this part of the file has not been traced. Confidence: MEDIUM.
 
+## fontN.fon — bitmap fonts
+
+Confidence: HIGH (the computed size equals the file size for all three shipped fonts; text rendered with `font1.fon` reproduces the original's HUD labels).
+
+```text
+0   i32  glyph count           (128 for font0 and font6, 256 for font1)
+4   i32  glyph height in pixels (17, 16, 16)
+8   i32  extra spacing between glyphs (1, 0, 0)
+12  8 bytes of run-time pointers (ignored)
+20  per glyph: i32 width, i32 offset into the bitmap area
+... bitmap area: for each glyph, `height` rows of ceil(width / 8) bytes, most significant bit = leftmost pixel
+```
+
+The game looks for `font0.fon` … `font9.fon`; only 0, 1 and 6 exist. The HUD score labels use `font1.fon`.
+
+The round clock is **not** drawn with these fonts: its digits are sprites, sequence `numeric font` in `kfont.ani` (frames 0-9 and a colon at index 10), and the "hurry" banner is the single frame of `hurry.ani`.
+
 ## N.rmp (0-9)
 
 259 bytes: 256-byte palette index remap followed by three bytes that equal the RGB percentages listed for that player colour in `valuelst.res` 200-247. How and when the remap is applied to "green" sprites is not traced (UNKNOWN-021).

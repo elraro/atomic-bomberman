@@ -54,6 +54,21 @@ struct GamePalette {
 };
 std::optional<GamePalette> loadPaletteFile(const std::string& path);
 
+// Bitmap font (fontN.fon): i32 glyph count, i32 height, i32 spacing, 8 bytes of
+// run-time pointers, then per glyph {i32 width, i32 data offset}, then 1-bit rows
+// (most significant bit first, each row padded to a byte).
+struct FontGlyph {
+    int width = 0;
+    std::vector<std::uint8_t> alpha;  // width*height, 0 or 255
+};
+struct FontFile {
+    int height = 0;
+    int spacing = 0;
+    std::vector<FontGlyph> glyphs;
+};
+std::optional<FontFile> parseFont(const std::vector<std::uint8_t>& data);
+std::optional<FontFile> loadFontFile(const std::string& path);
+
 std::optional<std::vector<std::uint8_t>> readFileBytes(const std::string& path);
 
 }  // namespace ab

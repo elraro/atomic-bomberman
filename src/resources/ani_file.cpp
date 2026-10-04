@@ -166,6 +166,40 @@ std::optional<PcxImage> loadPcxFile(const std::string& path) {
     return img;
 }
 
+std::optional<FontFile> parseFont(const std::vector<std::uint8_t>& d) {
+    if (d.size() < 20) return std::nullopt;
+    const auto count = static_cast<std::size_t>(u32(d.data()));
+    FontFile f;
+    f.height = static_cast<int>(u32(d.data() + 4));
+    f.spacing = static_cast<int>(u32(d.data() + 8));
+    if (count == 0 || count > 256 || f.height <= 0 || f.height > 64) return std::nullopt;
+    const std::size_t table = 20;
+    const std::size_t bits = table + count * 8;
+    if (bits > d.size()) return std::nullopt;
+    f.glyphs.resize(count);
+    for (std::size_t g = 0; g < count; ++g) {
+        const int w = static_cast<int>(u32(d.data() + table + g * 8));
+        const std::size_t off = u32(d.data() + table + g * 8 + 4);
+        if (w < 0 || w > 64) return std::nullopt;
+        const std::size_t rowBytes = static_cast<std::size_t>((w + 7) / 8);
+        if (bits + off + rowBytes * static_cast<std::size_t>(f.height) > d.size()) return std::nullopt;
+        FontGlyph& glyph = f.glyphs[g];
+        glyph.width = w;
+        glyph.alpha.assign(static_cast<std::size_t>(w * f.height), 0);
+        for (int y = 0; y < f.height; ++y)
+            for (int x = 0; x < w; ++x)
+                if ((d[bits + off + static_cast<std::size_t>(y) * rowBytes + static_cast<std::size_t>(x / 8)] & (0x80 >> (x % 8))) != 0)
+                    glyph.alpha[static_cast<std::size_t>(y * w + x)] = 255;
+    }
+    return f;
+}
+
+std::optional<FontFile> loadFontFile(const std::string& path) {
+    const auto bytes = readFileBytes(path);
+    if (!bytes) return std::nullopt;
+    return parseFont(*bytes);
+}
+
 std::optional<GamePalette> loadPaletteFile(const std::string& path) {
     const auto bytes = readFileBytes(path);
     if (!bytes || bytes->size() < 768 + 32768) return std::nullopt;

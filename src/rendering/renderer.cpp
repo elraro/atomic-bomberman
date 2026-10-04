@@ -141,6 +141,24 @@ void Renderer::textured(unsigned texture, float x, float y, float w, float h) {
     batch_.insert(batch_.end(), v, v + 6);
 }
 
+void Renderer::text(const SpriteBank& bank, const std::string& s, float x, float y, float r, float g, float b) {
+    const SpriteBank::Font& f = bank.font();
+    if (f.texture == 0) return;
+    setTexture(f.texture);
+    const auto aw = static_cast<float>(f.atlasWidth);
+    for (unsigned char ch : s) {
+        if (ch >= f.width.size()) continue;
+        const auto w = static_cast<float>(f.width[ch]);
+        const auto h = static_cast<float>(f.height);
+        const float u0 = static_cast<float>(f.x[ch]) / aw;
+        const float u1 = (static_cast<float>(f.x[ch]) + w) / aw;
+        const Vertex v[6] = {{x, y, u0, 0, r, g, b, 1},     {x + w, y, u1, 0, r, g, b, 1},     {x + w, y + h, u1, 1, r, g, b, 1},
+                             {x, y, u0, 0, r, g, b, 1},     {x + w, y + h, u1, 1, r, g, b, 1}, {x, y + h, u0, 1, r, g, b, 1}};
+        batch_.insert(batch_.end(), v, v + 6);
+        x += w + static_cast<float>(f.spacing);
+    }
+}
+
 bool Renderer::sprite(SpriteBank& bank, const std::string& sequence, int index, int colour, float x, float y) {
     const auto s = bank.sprite(sequence, index, colour);
     if (!s) return false;
@@ -163,7 +181,7 @@ void Renderer::flush() {
 }
 
 void Renderer::draw(const World& world, const RenderSnapshot& prev, float alpha, int windowW, int windowH,
-                    SpriteBank* sprites) {
+                    SpriteBank* sprites, const std::array<int, kMaxPlayers>* wins) {
     // Letterbox the 640x480 logical screen into the window.
     const float scale = std::min(static_cast<float>(windowW) / kScreenW, static_cast<float>(windowH) / kScreenH);
     const int vw = static_cast<int>(kScreenW * scale);
@@ -185,7 +203,7 @@ void Renderer::draw(const World& world, const RenderSnapshot& prev, float alpha,
         drawSprites(world, prev, alpha, *sprites);
     else
         drawShapes(world, prev, alpha);
-    drawHud(world);
+    drawHud(world, sprites, wins);
     flush();
 }
 
@@ -203,10 +221,28 @@ void Renderer::digit(int value, float x, float y, float r, float g, float b) {
     if (s & 0x40) quad(x, y + 12 - t / 2, 14, t, r, g, b);
 }
 
-void Renderer::drawHud(const World& world) {
-    // Round clock at the original's position (values 110/111: x 525, y 36 is the baseline).
+void Renderer::drawHud(const World& world, SpriteBank* bank, const std::array<int, kMaxPlayers>* wins) {
     const int left = world.secondsLeft();
-    if (left >= 0) {
+    const bool original = bank != nullptr && bank->loaded() && bank->sequenceLength("numeric font") >= 11;
+    if (original) {
+        // The original's clock: "numeric font" digits (index 10 is the colon) starting at
+        // x 525, baseline y 36, 4 px between glyphs (values 110-112).
+        if (left >= 0) {
+            const int glyphs[4] = {left / 60, 10, (left % 60) / 10, left % 10};
+            float x = 525.0f;
+            for (int g : glyphs) {
+                const auto s = bank->sprite("numeric font", g, -1);
+                if (!s) continue;
+                textured(s->texture, x - static_cast<float>(s->hotX), 36.0f - static_cast<float>(s->hotY),
+                         static_cast<float>(s->width), static_cast<float>(s->height));
+                x += static_cast<float>(s->width + 4);
+            }
+        } else {
+            sprite(*bank, "infinity", 0, -1, 525.0f, 36.0f);
+        }
+        // The banner blinks in the middle of the screen while the warning is on.
+        if (world.hurry() && (world.tickCount() & 4) != 0) sprite(*bank, "hurry", 0, -1, 320.0f, 240.0f);
+    } else if (left >= 0) {
         const bool red = left < 31;
         const float r = red ? 0.95f : 0.85f, g = red ? 0.25f : 0.75f, b = red ? 0.20f : 0.35f;
         const float x = 520.0f, y = 10.0f;
@@ -216,7 +252,31 @@ void Renderer::drawHud(const World& world) {
         digit((left % 60) / 10, x + 29, y, r, g, b);
         digit(left % 10, x + 49, y, r, g, b);
     }
-    if (world.hurry() && (world.tickCount() / 4) % 2 == 0) quad(250, 14, 140, 16, 0.95f, 0.85f, 0.20f);
+    if (!original && world.hurry() && (world.tickCount() / 4) % 2 == 0) quad(250, 14, 140, 16, 0.95f, 0.85f, 0.20f);
+    if (original && bank->font().texture != 0) {
+        // Score labels as in the original: message 37 "S:%d K:%d" (round wins, kills) in the
+        // player's colour; columns at x 10, 110, ... (values 115-119), rows at y 6 and 26 (113/114).
+        for (int i = 0; i < kMaxPlayers; ++i) {
+            const Player& p = world.player(i);
+            if (!p.present) continue;
+            const float* c = kPlayerColor[i];
+            const std::string label = "S:" + std::to_string(wins != nullptr ? (*wins)[static_cast<std::size_t>(i)] : 0) +
+                                      " K:" + std::to_string(p.kills);
+            const float lx = 10.0f + static_cast<float>(i / 2) * 100.0f;
+            const float ly = 6.0f + static_cast<float>(i & 1) * 20.0f;
+            const bool dark = c[0] + c[1] + c[2] < 1.0f;
+            if (dark) {
+                // The black player's label is dark with a light outline, as in the original.
+                for (int o = 0; o < 4; ++o)
+                    text(*bank, label, lx + static_cast<float>(kDx[static_cast<unsigned>(o)]),
+                         ly + static_cast<float>(kDy[static_cast<unsigned>(o)]), 0.80f, 0.80f, 0.80f);
+                text(*bank, label, lx, ly, 0.0f, 0.0f, 0.0f);
+            } else {
+                text(*bank, label, lx, ly, c[0], c[1], c[2]);
+            }
+        }
+        return;
+    }
     // Kill scores: one coloured pip per player with kills shown as small bars.
     for (int i = 0; i < kMaxPlayers; ++i) {
         const Player& p = world.player(i);

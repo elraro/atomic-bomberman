@@ -28,6 +28,7 @@ unsigned uploadRgba(int w, int h, const std::vector<std::uint8_t>& rgba) {
 SpriteBank::~SpriteBank() {
     for (auto& [key, tex] : textures_) glDeleteTextures(1, &tex);
     if (background_ != 0) glDeleteTextures(1, &background_);
+    if (font_.texture != 0) glDeleteTextures(1, &font_.texture);
 }
 
 bool SpriteBank::addAni(const std::string& path) {
@@ -66,6 +67,8 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
     addAni(ani + "shadow.ani");
     addAni(ani + "kick.ani");
     addAni(ani + "extras.ani");
+    addAni(ani + "kfont.ani");
+    addAni(ani + "hurry.ani");
     addAni(ani + "conveyor.ani");
     for (int n = 1; n <= 4; ++n) {
         addAni(ani + "punbomb" + std::to_string(n) + ".ani");
@@ -85,6 +88,27 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
         background_ = uploadRgba(pcx->width, pcx->height, rgba);
     } else {
         std::fprintf(stderr, "WARN  cannot read field%s.pcx\n", lv.c_str());
+    }
+    if (auto ff = loadFontFile(gameDir + "/font1.fon")) {
+        int total = 0;
+        for (const FontGlyph& g : ff->glyphs) total += g.width + 1;
+        std::vector<std::uint8_t> rgba(static_cast<std::size_t>(total * ff->height) * 4, 0);
+        int x = 0;
+        for (const FontGlyph& g : ff->glyphs) {
+            font_.x.push_back(x);
+            font_.width.push_back(g.width);
+            for (int yy = 0; yy < ff->height; ++yy)
+                for (int xx = 0; xx < g.width; ++xx) {
+                    const std::size_t o = static_cast<std::size_t>(yy * total + x + xx) * 4;
+                    rgba[o] = rgba[o + 1] = rgba[o + 2] = 255;
+                    rgba[o + 3] = g.alpha[static_cast<std::size_t>(yy * g.width + xx)];
+                }
+            x += g.width + 1;
+        }
+        font_.texture = uploadRgba(total, ff->height, rgba);
+        font_.height = ff->height;
+        font_.spacing = ff->spacing;
+        font_.atlasWidth = total;
     }
     loaded_ = ok;
     level_ = level;

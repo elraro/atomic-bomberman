@@ -35,6 +35,17 @@ public:
     int level() const { return level_; }
 
     unsigned background() const { return background_; }
+
+    // Text font (font1.fon) as one texture: glyphs side by side, white on transparent.
+    struct Font {
+        unsigned texture = 0;
+        int height = 0;
+        int spacing = 0;
+        int atlasWidth = 0;
+        std::vector<int> x;      // left edge of each glyph in the atlas
+        std::vector<int> width;
+    };
+    const Font& font() const { return font_; }
     int sequenceLength(const std::string& name) const;
     // Sprite for step `index` (wrapped) of a named sequence; colour -1 = unmodified,
     // 0-9 = player colour remap.
@@ -56,6 +67,7 @@ private:
     std::unordered_map<std::string, Ref> sequences_;
     std::map<std::tuple<std::size_t, int, int>, unsigned> textures_;
     unsigned background_ = 0;
+    Font font_;
 };
 
 }  // namespace ab

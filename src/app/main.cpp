@@ -256,7 +256,7 @@ int main(int argc, char** argv) {
             SDL_GetWindowSizeInPixels(window, &w, &h);
             audio.update();
             const float alpha = paused ? 1.0f : static_cast<float>(accumulatorMs / kStepMs);
-            renderer.draw(world, previous, alpha, w, h, &sprites);
+            renderer.draw(world, previous, alpha, w, h, &sprites, &wins);
             ++frame;
             if (opt.frames > 0 && frame >= opt.frames) {
                 if (!opt.screenshot.empty()) writePpm(opt.screenshot, w, h);

@@ -190,6 +190,32 @@ void testAniParser() {
     CHECK(!parseAni({1, 2, 3}).has_value());
 }
 
+void testFontParser() {
+    // Two glyphs, height 2: 'A' (index 0) is 3 px wide "#.#" / ".#."; index 1 is 9 px wide.
+    std::vector<std::uint8_t> d;
+    auto put32 = [&](unsigned x) { for (int k = 0; k < 4; ++k) d.push_back((x >> (8 * k)) & 0xFF); };
+    put32(2); put32(2); put32(1); put32(0); put32(0);
+    put32(3); put32(0);
+    put32(9); put32(2);
+    d.insert(d.end(), {0xA0, 0x40});                 // glyph 0
+    d.insert(d.end(), {0xFF, 0x80, 0x00, 0x80});     // glyph 1: full first row, last pixel of second row
+    const auto f = parseFont(d);
+    CHECK(f.has_value());
+    if (!f) return;
+    CHECK_EQ(f->height, 2);
+    CHECK_EQ(f->spacing, 1);
+    CHECK_EQ(f->glyphs.size(), 2u);
+    CHECK_EQ(f->glyphs[0].width, 3);
+    CHECK_EQ(f->glyphs[0].alpha[0], 255);
+    CHECK_EQ(f->glyphs[0].alpha[1], 0);
+    CHECK_EQ(f->glyphs[0].alpha[2], 255);
+    CHECK_EQ(f->glyphs[0].alpha[4], 255);
+    CHECK_EQ(f->glyphs[1].alpha[8], 255);
+    CHECK_EQ(f->glyphs[1].alpha[9], 0);
+    CHECK_EQ(f->glyphs[1].alpha[17], 255);
+    CHECK(!parseFont({1, 2, 3}).has_value());
+}
+
 void testStartFreeze() {  // T1
     World w{Values::defaults(), 1};
     w.startRound(Scheme::pillars(), false);
@@ -1186,6 +1212,7 @@ int main() {
         {"values parser", testValuesParser},
         {"scheme file", testSchemeFile},
         {"ani parser", testAniParser},
+        {"font parser", testFontParser},
         {"start freeze", testStartFreeze},
         {"speed", testSpeed},
         {"tick length sensitivity", testFrameRateIndependenceIsApproximate},

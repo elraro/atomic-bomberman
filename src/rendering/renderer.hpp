@@ -32,7 +32,7 @@ public:
     // alpha in [0,1]: how far the frame is between the previous and the current step.
     // With a loaded SpriteBank the original artwork is used; otherwise flat shapes.
     void draw(const World& world, const RenderSnapshot& previous, float alpha, int windowW, int windowH,
-              SpriteBank* sprites = nullptr);
+              SpriteBank* sprites = nullptr, const std::array<int, kMaxPlayers>* wins = nullptr);
 
 private:
     struct Vertex {
@@ -42,11 +42,12 @@ private:
     };
     void quad(float x, float y, float w, float h, float r, float g, float b, float a = 1.0f);
     void textured(unsigned texture, float x, float y, float w, float h);
+    void text(const SpriteBank& bank, const std::string& s, float x, float y, float r, float g, float b);
     // Draws a sprite with its hot-spot at (x, y). Returns false if the sequence is unknown.
     bool sprite(SpriteBank& bank, const std::string& sequence, int index, int colour, float x, float y);
     void setTexture(unsigned texture);
     void flush();
-    void drawHud(const World& world);
+    void drawHud(const World& world, SpriteBank* bank, const std::array<int, kMaxPlayers>* wins);
     void digit(int value, float x, float y, float r, float g, float b);
     void drawShapes(const World& world, const RenderSnapshot& previous, float alpha);
     void drawSprites(const World& world, const RenderSnapshot& previous, float alpha, SpriteBank& bank);
