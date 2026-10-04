@@ -38,6 +38,8 @@ With game files the program opens on the main menu. Choose **Start Game**, set u
 | KEY 0 | arrow keys | Space or Right Ctrl | Enter or Right Shift |
 | KEY 1 | W A S D | Tab or Left Ctrl | Q or Left Shift |
 
+Connected gamepads appear in the player list as `JOY n` (left stick or d-pad to move, A / cross to bomb, B or X / circle or square for the action). Gamepad support is untested: no controller was available.
+
 The action button punches the bomb ahead (punch), stops your kicked bombs (kicker) and detonates trigger bombs. Pressing the bomb button while standing on your own bomb picks it up (grab; release to throw) or lays a line (spooge).
 
 In a match: `Esc` returns to the menu, `R` restarts the round, `P` pauses, `N` advances one step while paused. A decided round restarts after three seconds; the first player to `--wins` rounds takes the match.

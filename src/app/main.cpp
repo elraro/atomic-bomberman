@@ -100,6 +100,23 @@ ab::PlayerInput keyboardInput(const bool* keys, int player) {
     return in;
 }
 
+// Gamepad as a player's controller. Directions follow the original's joystick rule
+// (axis below 30 % or above 70 % of its range), plus the d-pad.
+ab::PlayerInput gamepadInput(SDL_Gamepad* pad) {
+    ab::PlayerInput in;
+    if (pad == nullptr) return in;
+    const int x = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
+    const int y = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
+    const int dead = 13107;  // 40 % of full deflection
+    in.dir = {y < -dead || SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP),
+              x > dead || SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT),
+              y > dead || SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN),
+              x < -dead || SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)};
+    in.button1 = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_SOUTH);
+    in.button2 = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_EAST) || SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST);
+    return in;
+}
+
 // Sound id ranges of the original's soundlst.res for each gameplay event.
 void playEvents(ab::World& world, ab::Audio& audio) {
     for (const ab::Event& e : world.takeEvents()) {
@@ -156,13 +173,17 @@ std::string findGameDir(const std::string& requested) {
 }
 
 // How each player slot is controlled, as on the original's player list.
-enum class Control { Off, Key0, Key1, Ai };
+enum class Control { Off, Key0, Key1, Ai, Pad0, Pad1, Pad2, Pad3 };
 
 const char* controlName(Control c) {
     switch (c) {
         case Control::Key0: return "KEY 0";
         case Control::Key1: return "KEY 1";
         case Control::Ai: return "AI";
+        case Control::Pad0: return "JOY 0";
+        case Control::Pad1: return "JOY 1";
+        case Control::Pad2: return "JOY 2";
+        case Control::Pad3: return "JOY 3";
         default: return "OFF";
     }
 }
@@ -232,7 +253,7 @@ int main(int argc, char** argv) {
         if (!extras.empty()) std::fprintf(stderr, "INFO  Loaded level extras count=%zu\n", extras.size());
     }
 
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         std::fprintf(stderr, "ERROR SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
@@ -292,6 +313,17 @@ int main(int argc, char** argv) {
         };
         ab::Audio audio;
         const bool sound = !opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir);
+        // Up to four gamepads, opened once at start.
+        std::array<SDL_Gamepad*, 4> pads{};
+        int padCount = 0;
+        if (SDL_JoystickID* ids = SDL_GetGamepads(&padCount)) {
+            padCount = std::min(padCount, 4);
+            for (int i = 0; i < padCount; ++i) pads[static_cast<std::size_t>(i)] = SDL_OpenGamepad(ids[i]);
+            SDL_free(ids);
+        } else {
+            padCount = 0;
+        }
+        if (padCount > 0) std::fprintf(stderr, "INFO  Gamepads found count=%d\n", padCount);
         ab::World world(values, opt.seed);
         std::vector<ab::AiPlayer> ai;
         for (int i = 0; i < ab::kMaxPlayers; ++i)
@@ -376,7 +408,16 @@ int main(int argc, char** argv) {
                     if (key == SDLK_DOWN) listRow = (listRow + 1) % ab::kMaxPlayers;
                     if (key == SDLK_LEFT) c = Control::Off;
                     if (key == SDLK_RIGHT)  // AI -> KEY 0 -> KEY 1 -> OFF -> AI, as observed on the original
-                        c = c == Control::Ai ? Control::Key0 : c == Control::Key0 ? Control::Key1 : c == Control::Key1 ? Control::Off : Control::Ai;
+                    {
+                        // then any connected gamepads before OFF
+                        const int k = static_cast<int>(c);
+                        if (c == Control::Ai) c = Control::Key0;
+                        else if (c == Control::Key0) c = Control::Key1;
+                        else if (c == Control::Key1) c = padCount > 0 ? Control::Pad0 : Control::Off;
+                        else if (k >= static_cast<int>(Control::Pad0))
+                            c = k - static_cast<int>(Control::Pad0) + 1 < padCount ? static_cast<Control>(k + 1) : Control::Off;
+                        else c = Control::Ai;
+                    }
                     if (key == SDLK_ESCAPE) screen = Screen::MainMenu;
                     if (key == SDLK_RETURN) {
                         int n = 0;
@@ -437,6 +478,8 @@ int main(int argc, char** argv) {
                         if (c == Control::Ai) input[static_cast<std::size_t>(i)] = ai[static_cast<std::size_t>(i)].decide(world, i, kStepMs);
                         if (c == Control::Key0) input[static_cast<std::size_t>(i)] = keyboardInput(keys, 0);
                         if (c == Control::Key1) input[static_cast<std::size_t>(i)] = keyboardInput(keys, 1);
+                        if (c >= Control::Pad0)
+                            input[static_cast<std::size_t>(i)] = gamepadInput(pads[static_cast<std::size_t>(static_cast<int>(c) - static_cast<int>(Control::Pad0))]);
                     }
                     previous.capture(world);
                     world.tick(kStepMs, input);
@@ -567,6 +610,8 @@ int main(int argc, char** argv) {
         }
         std::fprintf(stderr, "INFO  Exiting frames=%d steps=%d alive=%d bombs=%d\n", frame, step, world.alivePlayers(),
                      world.activeBombs());
+        for (SDL_Gamepad* pad : pads)
+            if (pad != nullptr) SDL_CloseGamepad(pad);
     }
     SDL_GL_DestroyContext(gl);
     SDL_DestroyWindow(window);

@@ -405,3 +405,8 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - 49 handlers registered through `0x40E412`; type and payload size of every sender recovered from its call to `0x40CE27`. Meanings assigned from the gameplay call sites already understood (bomb created, detonation, death, pickup, kick, punch, clock, level, values).
 - Roles: 1 client, 2 host. Host owns map generation, clock, level choice, tuning values; each machine owns its players.
 - Documented in `networking.md`. Nothing observed on the wire.
+
+### Session 14 addendum: gamepads
+
+- Application: SDL3 gamepads as controllers (`JOY n` in the player list), using the original's axis thresholds. Compiles and the program runs with no pad attached; never exercised with a real controller.
+- Ghidra: 24 network and helper functions named (`Net_QueueMessage`, `Net_ReceiveAndDispatch`, `Net_Send…`, `Net_GetRole`, …).
