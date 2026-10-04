@@ -23,6 +23,7 @@ add_library(ab_game
     src/game/values.cpp
     src/game/world.cpp
     src/game/ai.cpp
+    src/game/roulette.cpp
 )
 target_include_directories(ab_game PUBLIC src)
 ab_warnings(ab_game)

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "game/ai.hpp"
+#include "game/roulette.hpp"
 #include "game/world.hpp"
 #include "resources/ani_file.hpp"
 #include "resources/scheme_file.hpp"
@@ -838,6 +839,39 @@ void testTrappedAnimation() {  // P: cornerhead
     CHECK_EQ(f.w.player(0).action, 0);      // a way out: back to normal
 }
 
+void testRoulette() {
+    const Values v = Values::defaults();
+    for (std::uint32_t seed = 1; seed <= 40; ++seed) {
+        Roulette r(v, seed);
+        for (int i = 0; i < 200; ++i) r.step();
+        CHECK(r.state() == Roulette::State::Spinning);  // spins until the key is pressed
+        CHECK_EQ(r.prize(), -1);
+        CHECK(!r.press());
+        int frames = 0;
+        while (r.state() != Roulette::State::Stopped && frames < 5000) {
+            r.step();
+            ++frames;
+        }
+        CHECK(r.state() == Roulette::State::Stopped);
+        CHECK_EQ(r.wheel() % 70, 0);                    // both rings rest on a slot
+        CHECK_EQ(r.pointer() % 70, 0);
+        int slot = -1;
+        for (int s = 0; s < Roulette::kSlots; ++s)
+            if (r.slotPosition(s) == r.pointer()) slot = s;
+        CHECK(slot >= 0);
+        if (slot >= 0) CHECK_EQ(r.prize(), Roulette::kPrize[static_cast<std::size_t>(slot)]);
+        CHECK(r.press());                               // now the key leaves the screen
+    }
+    Roulette r(v, 7);
+    float x = 0, y = 0;
+    r.screenPosition(0, &x, &y);
+    CHECK_EQ(static_cast<int>(x), 520);                 // centre (320,240), radii 200 x 150
+    CHECK_EQ(static_cast<int>(y), 240);
+    r.screenPosition(105, &x, &y);                      // a quarter turn
+    CHECK_EQ(static_cast<int>(x), 320);
+    CHECK_EQ(static_cast<int>(y), 390);
+}
+
 void testSpooge() {  // B18
     Fixture f;
     f.w.player(0).inventory[kPowSpooge] = 1;
@@ -1333,6 +1367,7 @@ int main() {
         {"punch bounce and wrap", testPunchBouncesAndWraps},
         {"grab and throw", testGrabAndThrow},
         {"trapped animation", testTrappedAnimation},
+        {"roulette", testRoulette},
         {"spooge", testSpooge},
         {"diseases", testDiseases},
         {"death animation", testDeathAnimationChosen},
