@@ -458,3 +458,23 @@ Evidence: full decompile; call site `0x40B38A` passes depth 20.
 Confidence: HIGH
 
 Modern: `AiPlayer::stepToSafety` now follows this rule (it used a guessed "half the current danger" rule before). Six AI-only demo rounds ran to a result afterwards. Details in `ai.md`.
+
+### Discovery: exit sound
+
+Where: `0x412987`. Confirmation box (message 10 "Are you sure you want to exit?"), then music off, random sound of the 2600 series, 4000 ms wait, exit. Confidence: HIGH (static). Implemented.
+
+### Discovery: roulette ("goldman")
+
+Where: `FUN_004034BC` (called from round setup `0x410FB8` when option `0x4648BC` is on, not in campaign), position formula `0x403382`/`0x40341F`, prize getter `0x403A9C`, prize applied in player init `0x4216DE`, sparkles `0x420D4E`/`0x420E39`.
+
+Evidence:
+- State at `0x45E024…0x45E03C`: wheel position, direction ±1, prize (-1), wheel speed (rand%20+20), state (0 spin, 1 slowing, 2 stopped), ring position, ring speed (wheel speed + rand%20).
+- Circle of value 1004 × 6 positions; x = v1000 + v1002·cos(2π·pos·v1006/N), y = v1001 + v1003·sin(2π·pos·v1007/N) (constants 3.1415926 and 2.0 at `0x4580FC`).
+- Slot table `0x45B7BC` = {0, 1, 3, 8, 4, 13}: bomb, flame, kicker, goldflame, skate, clog. This confirms inventory slot 13 as the clog.
+- Sprites: `power <name>` for the slots, `ring` for the pointer, picture `roulette.pcx`; texts 790, 800+prize, 791; sounds 1300 tick, 1310 applause, 1320 buzzer (clog), 20 on any key.
+- Keys: Enter/Space (slow down, then leave), Esc (abort the match).
+- Next round: `inventory[prize]++` for the previous winner (team: members whose team colour equals the winner), no cap check. Sparkles: per update, first free of 100 slots, skipped once value 1010 seconds have passed, 5-in-6 chance; position x-20…+19, y-48…+1; sequence `goldman` (13 frames), one frame per 50 ms.
+
+Confidence: HIGH (static). Not observed running in the original.
+
+Modern: `src/game/roulette.*` (tested), screen in the application (`--roulette`), sparkles in the renderer.

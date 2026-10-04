@@ -21,7 +21,7 @@ Ids and names come from the name table at `0x45A31C` (used to build animation na
 | 10 | jelly | 0 | 1 | 1 | Bombs bounce off obstacles when kicked, veer randomly when punched. Removes trigger | HIGH |
 | 11 | disease3 ("super bad disease") | 0 | −4 | – | Three random diseases | HIGH |
 | 12 | random | 0 | −2 | – | Becomes a random type 0-11 that the scheme does not forbid | HIGH |
-| 13 | clog | – | – | – | Speed −150 each. Not placed on the map; believed to come from the roulette (HYPOTHESIS) | MEDIUM |
+| 13 | clog | – | – | – | Speed −150 each. Not placed on the map; it is one of the six roulette prizes (see `JOURNAL.md`, "roulette") | HIGH |
 
 A cap of 0 means no limit. "Removes X" means the conflicting powerup is taken away and scattered back onto the map (`Maybe_Player_RemovePowerup 0x41E16A` → `0x425BED`).
 

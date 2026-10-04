@@ -151,6 +151,7 @@ struct Player {
     int team = 0;       // 0 or 1; only meaningful in team play
     int kills = 0;
     int killedBy = -1;  // player index, or -1
+    bool gold = false;   // won the roulette before this round (twinkles at the start)
     bool dying = false;  // death animation running
     int dyingFrames = 0;
     int dyingAcc = 0;
@@ -220,6 +221,11 @@ public:
     // powerups under bricks. Removes all players, bombs and flames.
     void startRound(const Scheme& scheme, bool generatePowerups);
     void addPlayer(int index);
+    // Roulette prize for the winner of the previous round: one more of a powerup
+    // type in the starting inventory (no cap is applied, as in the original).
+    void grantPrize(int index, int powerupType);
+    // True while the gold player's sparkles are still spawned (value 1010 seconds; 0 = always).
+    bool goldTwinkling() const;
     // Team play: the round is decided when one team is left. Teams come from the
     // scheme (two teams, 0 and 1). Set before adding players.
     void setTeamPlay(bool on, const std::array<int, kMaxPlayers>& teams = {});

@@ -17,6 +17,7 @@
 
 #include "audio/audio.hpp"
 #include "game/ai.hpp"
+#include "game/roulette.hpp"
 #include "game/world.hpp"
 #include "rendering/renderer.hpp"
 #include "resources/asset_import.hpp"
@@ -43,6 +44,8 @@ struct Options {
     bool native = false;      // 640x480 window, the original's resolution
     int level = 0;            // level theme 0-10 (graphics)
     int wins = 2;             // round wins needed to take the match (original value 310)
+    bool rouletteShot = false;  // automated: capture the roulette once it has stopped, then exit
+    bool roulette = false;    // the "goldman" roulette between rounds (original option goldman)
     bool mute = false;
     bool shapes = false;      // draw flat shapes even when original graphics are available
     std::uint32_t seed = 1;
@@ -64,6 +67,7 @@ Options parseArgs(int argc, char** argv) {
                       "  --players N          number of players (default 4)\n"
                       "  --humans N           keyboard players, 0-2\n"
                       "  --wins N             round wins needed for the match\n"
+                      "  --roulette           the round winner spins for a prize before the next round\n"
                       "  --seed N             random seed\n"
                       "  --mute               no sound\n"
                       "  --native             640x480 window\n"
@@ -101,6 +105,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--level") o.level = std::clamp(std::atoi(next().c_str()), 0, 10);
         else if (a == "--wins") o.wins = std::max(1, std::atoi(next().c_str()));
         else if (a == "--native") o.native = true;
+        else if (a == "--roulette") o.roulette = true;
+        else if (a == "--roulette-shot") o.roulette = o.rouletteShot = true;
         else {
             std::fprintf(stderr, "ERROR unknown argument %s (see --help)\n", a.c_str());
             std::exit(2);
@@ -228,7 +234,7 @@ const char* controlName(Control c) {
     }
 }
 
-enum class Screen { MainMenu, PlayerList, LevelSetup, Match };
+enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette };
 
 // Level names, original messages 150-160.
 const char* const kLevelName[11] = {"Green Acres",   "Classic Green Acres", "The Hockey Rink",  "Ancient Egypt",
@@ -409,6 +415,13 @@ int main(int argc, char** argv) {
         std::array<int, ab::kMaxPlayers> wins{};  // round wins in the current match
         int roundOverSteps = 0;
         bool matchOver = false;
+        // The roulette between rounds, and what it gave the last round's winner.
+        bool goldman = opt.roulette;
+        std::unique_ptr<ab::Roulette> roulette;
+        int rouletteFrames = 0;
+        double rouletteMs = 0.0;
+        int prizeWinner = -1;  // player, or team in team play
+        int prizeType = -1;
         auto beginMatch = [&]() {
             world.startRound(scheme, true);
             world.setExtras(extras);
@@ -419,6 +432,11 @@ int main(int argc, char** argv) {
                     world.addPlayer(i);
                     ++n;
                 }
+            // The roulette prize goes to the last winner (to every member of the winning team).
+            for (int i = 0; i < ab::kMaxPlayers && prizeType >= 0; ++i)
+                if (world.player(i).present && (teamPlay ? world.player(i).team : i) == prizeWinner) world.grantPrize(i, prizeType);
+            prizeWinner = -1;
+            prizeType = -1;
             previous.capture(world);
             roundOverSteps = 0;
             std::fprintf(stderr, "INFO  Round started players=%d\n", n);
@@ -491,6 +509,29 @@ int main(int argc, char** argv) {
                         int n = 0;
                         for (Control k : control) n += k != Control::Off ? 1 : 0;
                         if (n >= 2) screen = Screen::LevelSetup;
+                    }
+                } else if (screen == Screen::Roulette && roulette) {
+                    if (sound) audio.playRange(20, 20);
+                    if (key == SDLK_RETURN || key == SDLK_SPACE) {
+                        if (roulette->press()) {
+                            prizeType = roulette->prize();
+                            std::fprintf(stderr, "INFO  Roulette prize winner=%d type=%d\n", prizeWinner, prizeType);
+                            roulette.reset();
+                            screen = Screen::Match;
+                            beginMatch();
+                            if (sound) audio.playMusic(1100 + level);
+                        }
+                    } else if (key == SDLK_ESCAPE) {
+                        // Leaves the match, as on the original.
+                        roulette.reset();
+                        prizeWinner = -1;
+                        wins = {};
+                        if (haveMenu) {
+                            screen = Screen::MainMenu;
+                            if (sound) audio.playMusic(1010);
+                        } else {
+                            running = false;
+                        }
                     }
                 } else if (screen == Screen::LevelSetup) {
                     // Level, scheme and match length, as on the original's second pre-game screen.
@@ -587,9 +628,45 @@ int main(int argc, char** argv) {
                                 break;
                             }
                         }
+                        const int lastWin = world.teamPlay() ? world.winningTeam() : world.winner();
+                        if (goldman && lastWin >= 0 && spritesPtr->loaded()) {
+                            // Original round setup (0x410FB8): with the option on and a winner, the roulette first.
+                            prizeWinner = lastWin;
+                            roulette = std::make_unique<ab::Roulette>(values, opt.seed * 7919u + static_cast<std::uint32_t>(step));
+                            rouletteFrames = 0;
+                            rouletteMs = 0.0;
+                            screen = Screen::Roulette;
+                            break;
+                        }
                         beginMatch();
                         if (sound) audio.playMusic(1100 + level);
                     }
+                }
+            }
+            if (screen == Screen::Roulette && roulette) {
+                // The original advances the wheel once per drawn frame, with no frame limit;
+                // 25 steps a second is this implementation's choice.
+                rouletteMs += frameMs;
+                bool leave = false;
+                while (rouletteMs >= 40.0) {
+                    rouletteMs -= 40.0;
+                    ++rouletteFrames;
+                    const bool wasStopped = roulette->state() == ab::Roulette::State::Stopped;
+                    const int ticks = roulette->step();
+                    if (sound && ticks > 0) audio.playRange(1300, 1300);
+                    if (!wasStopped && roulette->state() == ab::Roulette::State::Stopped && sound)
+                        audio.playRange(roulette->prize() == ab::kPowClog ? 1320 : 1310, roulette->prize() == ab::kPowClog ? 1320 : 1310);
+                    // Unattended runs press the key themselves.
+                    if (opt.demo && (rouletteFrames == 50 || (roulette->state() == ab::Roulette::State::Stopped && rouletteFrames % 50 == 0)))
+                        leave = roulette->press();
+                }
+                if (leave) {
+                    prizeType = roulette->prize();
+                    std::fprintf(stderr, "INFO  Roulette prize winner=%d type=%d\n", prizeWinner, prizeType);
+                    roulette.reset();
+                    screen = Screen::Match;
+                    beginMatch();
+                    if (sound) audio.playMusic(1100 + level);
                 }
             }
             audio.update();
@@ -632,6 +709,34 @@ int main(int argc, char** argv) {
                     }
                     renderer.end();
                 }
+            } else if (screen == Screen::Roulette && roulette) {
+                static const char* const kPower[ab::kPowTypeCount] = {"bomb", "flame", "disease", "kicker", "skate", "punch", "grab",
+                                                                    "spooge", "goldflame", "trigger", "jelly", "disease3", "random", "clog"};
+                // Original messages 800-813.
+                static const char* const kPrizeText[ab::kPowTypeCount] = {
+                    "an extra bomb", "longer flame length", "a disease", "the ability to kick bombs", "extra speed",
+                    "the ability to punch bombs", "the ability to grab bombs", "the spooger", "goldflame", "a trigger mechanism",
+                    "jelly (bouncy) bombs", "super bad disease", "random", "a speed brake (slowness)"};
+                renderer.begin(w, h);
+                renderer.image(spritesPtr->picture("roulette"));
+                float x = 0, y = 0;
+                for (int s = 0; s < ab::Roulette::kSlots; ++s) {
+                    roulette->screenPosition(roulette->slotPosition(s), &x, &y);
+                    renderer.sprite(*spritesPtr, std::string("power ") + kPower[ab::Roulette::kPrize[static_cast<std::size_t>(s)]], 0, -1, x, y);
+                }
+                roulette->screenPosition(roulette->pointer(), &x, &y);
+                renderer.sprite(*spritesPtr, "ring", 0, -1, x, y);
+                if (roulette->state() == ab::Roulette::State::Stopped && roulette->prize() >= 0) {
+                    // Messages 790, 800 + prize, 791, centred on the wheel 20 px apart.
+                    const std::string lines[3] = {"The Gold Player has", kPrizeText[roulette->prize()], "for the next match!!"};
+                    for (int r = 0; r < 3; ++r) {
+                        const float tx = 320.0f - 4.0f * static_cast<float>(lines[r].size());
+                        const float ty = 220.0f + 20.0f * static_cast<float>(r);
+                        renderer.text(*spritesPtr, lines[r], tx + 1, ty + 1, 0, 0, 0);
+                        renderer.text(*spritesPtr, lines[r], tx, ty, 1.0f, 0.95f, 0.3f);
+                    }
+                }
+                renderer.end();
             } else if (screen == Screen::LevelSetup) {
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue1"));
@@ -677,6 +782,10 @@ int main(int argc, char** argv) {
 
             ++frame;
             if (opt.resultShot && screen == Screen::Match && world.roundOver() && roundOverSteps == 50) {
+                if (!opt.screenshot.empty()) writePpm(opt.screenshot, w, h);
+                running = false;
+            }
+            if (opt.rouletteShot && screen == Screen::Roulette && roulette && roulette->state() == ab::Roulette::State::Stopped) {
                 if (!opt.screenshot.empty()) writePpm(opt.screenshot, w, h);
                 running = false;
             }

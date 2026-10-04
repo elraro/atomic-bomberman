@@ -56,6 +56,17 @@ private:
     void drawShapes(const World& world, const RenderSnapshot& previous, float alpha);
     void drawSprites(const World& world, const RenderSnapshot& previous, float alpha, SpriteBank& bank);
 
+    // Sparkles around the gold player (original: up to 100, sequence "goldman").
+    struct Sparkle {
+        bool active = false;
+        float x = 0;
+        float y = 0;
+        int frame = 0;
+    };
+    std::array<Sparkle, 100> sparkles_{};
+    int sparkleTick_ = -1;
+    std::uint32_t sparkleRng_ = 99;
+
     unsigned program_ = 0;
     unsigned vao_ = 0;
     unsigned vbo_ = 0;

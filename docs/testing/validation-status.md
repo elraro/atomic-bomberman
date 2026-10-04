@@ -72,4 +72,4 @@ Levels as defined in AGENTS.md §53: 1 static (read from the original's code or 
 
 ## Not implemented
 
-Campaign mode, networking, options and manual screens, the roulette ("goldman") feature. Gamepad input is implemented but has never been run with a controller.
+Campaign mode, networking, options and manual screens. Gamepad input is implemented but has never been run with a controller.

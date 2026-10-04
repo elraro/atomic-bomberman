@@ -426,6 +426,37 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
                 sprite(bank, "stand " + dir, 0, colour, px, py);
         }
     }
+
+    // Gold sparkles: once per simulation step each gold player has a 5-in-6 chance of a
+    // new one near the body (x -20..19, y -48..1); each lives for the 13 frames of "goldman".
+    if (world.tickCount() != sparkleTick_) {
+        if (world.tickCount() < sparkleTick_)
+            for (Sparkle& sp : sparkles_) sp.active = false;  // a new round
+        sparkleTick_ = world.tickCount();
+        const int length = std::max(1, bank.sequenceLength("goldman"));
+        for (Sparkle& sp : sparkles_)
+            if (sp.active && ++sp.frame > length) sp.active = false;
+        auto rnd = [this](unsigned n) {
+            sparkleRng_ = sparkleRng_ * 1664525u + 1013904223u;
+            return (sparkleRng_ >> 16) % n;
+        };
+        for (int i = 0; i < kMaxPlayers && world.goldTwinkling(); ++i) {
+            const Player& p = world.player(i);
+            if (!p.present || !p.alive || !p.gold) continue;
+            for (Sparkle& sp : sparkles_) {
+                if (sp.active) continue;
+                if (rnd(6) != 0) {
+                    sp.active = true;
+                    sp.frame = 0;
+                    sp.x = static_cast<float>(p.x + static_cast<int>(rnd(40)) - 20);
+                    sp.y = static_cast<float>(p.y + static_cast<int>(rnd(50)) - 48);
+                }
+                break;
+            }
+        }
+    }
+    for (const Sparkle& sp : sparkles_)
+        if (sp.active) sprite(bank, "goldman", sp.frame, -1, sp.x, sp.y);
 }
 
 void Renderer::drawShapes(const World& world, const RenderSnapshot& prev, float alpha) {

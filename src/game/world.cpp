@@ -111,6 +111,18 @@ int World::winningTeam() const {
     return -1;
 }
 
+void World::grantPrize(int i, int powerupType) {
+    Player& p = players_[static_cast<std::size_t>(i)];
+    if (!p.present || powerupType < 0 || powerupType >= kPowTypeCount) return;
+    ++p.inventory[static_cast<std::size_t>(powerupType)];
+    p.gold = true;
+}
+
+bool World::goldTwinkling() const {
+    const int seconds = values_.get(vid::kGoldTwinkleSeconds);
+    return seconds == 0 || roundMs_ < seconds * 1000;
+}
+
 void World::addPlayer(int i) {
     Player& p = players_[static_cast<std::size_t>(i)];
     p = Player{};

@@ -48,7 +48,7 @@ Confidence: HIGH for the formula, MEDIUM for which disease is which.
 ```text
 speed = base (923)
       + skates × value 90 (150)
-      − inventory[13] × value 91 (150)        # roulette "clogs" (HYPOTHESIS for the slot)
+      − inventory[13] × value 91 (150)        # roulette "clogs" (slot confirmed: prize table 0x45B7BC)
 if disease flag +0x84:           speed = speed / 3
 if disease flag +0x85 or +0x89:  speed = speed × 3 / 2
 acc += speed × frame_ms / 50
