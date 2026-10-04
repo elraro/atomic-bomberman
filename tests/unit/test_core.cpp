@@ -921,6 +921,74 @@ void testUpcomingWalls() {
     CHECK(ahead[0].y == 0 && ahead[1].y == 0 && ahead[1].x == ahead[0].x + 1);  // along the top row, eastward
 }
 
+void testCampaignEnemies() {
+    // A rover walks along a corridor, turns at walls, and kills a human it touches.
+    World w(Values::defaults(), 77);
+    w.setValue(vid::kAlienTurnChance, 1000000);         // never turns of its own accord
+    w.setCampaign(true);
+    w.startRound(Scheme::pillars(), false);
+    w.addPlayer(0);
+    w.addPlayer(1);
+    w.setHuman(1, false);                               // a computer player
+    w.endStartFreeze();
+    w.player(0).x = cellToPixelX(4);
+    w.player(0).y = cellToPixelY(0);
+    w.player(1).x = cellToPixelX(14);
+    w.player(1).y = cellToPixelY(10);
+    w.spawnAliens(AlienType::Rover, 1, 200);
+    CHECK_EQ(static_cast<int>(w.aliens().size()), 1);
+    const Cell born = pixelToCell(w.aliens()[0].x, w.aliens()[0].y);
+    CHECK(std::abs(born.x - 4) + std::abs(born.y - 0) > 3);   // not near a player
+    Inputs in{};
+    // Put it on the top row heading east toward the human.
+    Alien& a = const_cast<Alien&>(w.aliens()[0]);
+    a.x = cellToPixelX(0);
+    a.y = cellToPixelY(0);
+    a.dir = 1;
+    const int x0 = a.x;
+    w.tick(50, in);
+    CHECK_EQ(a.x - x0, 2);                              // speed 200 = 2 px per 50 ms
+    for (int t = 0; t < 200 && w.player(0).alive; ++t) w.tick(50, in);
+    CHECK(!w.player(0).alive);                          // touched
+    CHECK(w.player(1).alive);
+    CHECK_EQ(w.campaignResult(), 0);                    // the human is still in play (dying, then back)
+    // The human comes back at the start cell after the death animation.
+    for (int t = 0; t < 120 && !w.player(0).alive; ++t) w.tick(50, in);
+    CHECK(w.player(0).alive);
+    CHECK(pixelToCell(w.player(0).x, w.player(0).y) == (Cell{0, 0}));
+}
+
+void testCampaignStageClear() {
+    World w(Values::defaults(), 5);
+    w.setCampaign(true);
+    w.startRound(Scheme::pillars(), false);
+    w.addPlayer(0);                                     // the human, out of the way
+    w.addPlayer(1);
+    w.setHuman(1, false);                               // a computer player does the burning
+    w.endStartFreeze();
+    w.spawnAliens(AlienType::Ghost, 1, 0);              // a ghost that stands still
+    Inputs in{};
+    w.tick(50, in);
+    CHECK(!w.roundOver());
+    const Alien& g = w.aliens()[0];
+    w.setTile(pixelToCell(g.x, g.y), Tile::Blank);      // ghosts may stand in bricks
+    w.player(1).x = g.x;                                // enemies do not hurt computer players
+    w.player(1).y = g.y;
+    in[1].button1 = true;
+    w.tick(50, in);
+    in[1].button1 = false;
+    CHECK(w.player(1).alive);
+    for (int t = 0; t < 45; ++t) w.tick(50, in);
+    CHECK(!w.aliens()[0].active);
+    CHECK_EQ(w.player(1).score, 25);                    // value 1320, to the bomb's owner
+    CHECK(!w.player(1).alive);                          // it stood on its own bomb
+    CHECK(w.player(1).lives == 0);                      // and computer players do not come back
+    CHECK_EQ(w.campaignResult(), 0);                    // one player left does not end a stage
+    for (int t = 0; t < 45; ++t) w.tick(50, in);        // two seconds without enemies
+    CHECK_EQ(w.campaignResult(), 1);
+    CHECK(w.roundOver());
+}
+
 void testSettings() {
     Settings s;
     s.parse("levelno=4\nnum_to_win_match=3\nenclosement_depth=9\nconveyor_speed=2\nteam_play=1\nrandom_start=1\n"
@@ -1444,6 +1512,8 @@ int main() {
         {"trapped animation", testTrappedAnimation},
         {"roulette", testRoulette},
         {"settings", testSettings},
+        {"campaign enemies", testCampaignEnemies},
+        {"campaign stage clear", testCampaignStageClear},
         {"upcoming walls", testUpcomingWalls},
         {"help pages", testHelpPages},
         {"suicide score", testSuicideScore},

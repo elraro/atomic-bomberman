@@ -58,6 +58,10 @@ void World::startRound(const Scheme& scheme, bool generatePowerups) {
     walls_ = {};
     wallsClosed_ = 0;
     hurryAnnounced_ = false;
+    aliens_.clear();
+    campaignResult_ = 0;
+    campaignRetry_ = false;
+    campaignClearMs_ = 0;
     extras_.clear();
     events_.clear();
     players_ = {};
@@ -111,6 +115,137 @@ int World::winningTeam() const {
     return -1;
 }
 
+void World::clearStartArea(Cell c) {
+    auto clear = [this](Cell cc) {
+        if (!inGrid(cc) || tile(cc) == Tile::Solid) return;
+        setTile(cc, Tile::Blank);
+        powerups_[index(cc)] = {};
+    };
+    if (inGrid(c)) {
+        setTile(c, Tile::Blank);
+        powerups_[index(c)] = {};
+    }
+    for (Dir d = 0; d < 4; ++d) clear(step(c, d));
+}
+
+// ----------------------------------------------------------------- Campaign
+
+namespace {
+// Frames in each of the original's 24 death animations ("die green N"): a dead player
+// leaves play, and in campaign mode may come back, when its animation has run.
+constexpr std::array<int, 24> kDeathFrames{83, 62, 63, 93, 17, 79, 14, 12, 28, 77, 36, 63,
+                                           75, 36, 35, 69, 63, 85, 48, 20, 59, 54, 41, 75};
+}  // namespace
+
+void World::setHuman(int i, bool human) {
+    Player& p = players_[static_cast<std::size_t>(i)];
+    p.human = human;
+    if (!human) p.lives = 0;
+}
+
+bool World::alienPassable(AlienType type, Cell c) const {
+    if (!inGrid(c) || bombAt(c) != nullptr) return false;
+    return type == AlienType::Ghost ? tile(c) != Tile::Solid : tile(c) == Tile::Blank;  // ghosts pass bricks
+}
+
+void World::spawnAliens(AlienType type, int count, int speed) {
+    for (int n = 0; n < count && aliens_.size() < 100; ++n) {
+        for (int attempt = 0; attempt < 200; ++attempt) {
+            const Cell c{rng_.below(kGridW), rng_.below(kGridH)};
+            if (tile(c) == Tile::Solid) continue;
+            bool clear = true;
+            for (const Player& p : players_) {
+                if (!p.present) continue;
+                const Cell pc = pixelToCell(p.x, p.y);
+                if (std::abs(pc.x - c.x) + std::abs(pc.y - c.y) <= 3) clear = false;
+            }
+            if (!clear) continue;
+            Alien a;
+            a.active = true;
+            a.type = type;
+            a.x = cellToPixelX(c.x);
+            a.y = cellToPixelY(c.y);
+            a.speed = speed;
+            aliens_.push_back(a);
+            break;
+        }
+    }
+}
+
+void World::updateAliens(int dt) {
+    for (Alien& a : aliens_) {
+        if (!a.active) continue;
+        if (a.type == AlienType::Rover && !a.clearedStart) {
+            a.clearedStart = true;
+            clearStartArea(pixelToCell(a.x, a.y));
+        }
+        if (a.dead) {
+            a.active = false;
+            continue;
+        }
+        // The current pixel is looked at again every update (one step back, 100 extra).
+        a.moveAcc += dt * a.speed / frameMs_ + 100;
+        a.x -= kDx[static_cast<unsigned>(a.dir)];
+        a.y -= kDy[static_cast<unsigned>(a.dir)];
+        while (a.moveAcc > 0) {
+            const int nx = a.x + kDx[static_cast<unsigned>(a.dir)];
+            const int ny = a.y + kDy[static_cast<unsigned>(a.dir)];
+            ++a.anim;
+            a.moveAcc -= 100;
+            const Cell here = pixelToCell(nx, ny);
+            const int along = offsetInCellX(nx) * kDx[static_cast<unsigned>(a.dir)] + offsetInCellY(ny) * kDy[static_cast<unsigned>(a.dir)];
+            if (along == 0) {
+                // At a cell centre: stop at an obstacle, otherwise 1 chance in value 1200 to turn.
+                bool turn = false;
+                if (!alienPassable(a.type, step(here, a.dir))) {
+                    a.moveAcc = 0;
+                    turn = true;
+                } else if (rng_.below(std::max(1, values_.get(vid::kAlienTurnChance))) == 0) {
+                    turn = true;
+                }
+                if (turn) {
+                    a.dir = (a.dir + (rng_.below(2) == 0 ? 3 : 1)) & 3;
+                    if (!alienPassable(a.type, step(here, a.dir))) a.moveAcc = 0;
+                }
+            }
+            if (inGrid(here) && flames_[index(here)].active) {
+                a.dead = true;
+                const int owner = flames_[index(here)].owner;
+                if (owner >= 0 && owner < kMaxPlayers)
+                    players_[static_cast<std::size_t>(owner)].score +=
+                        values_.get(a.type == AlienType::Rover ? vid::kPointsRover : vid::kPointsGhost);
+            }
+            // Touching an enemy kills human players; computer players are left alone.
+            for (int i = 0; i < kMaxPlayers; ++i) {
+                const Player& p = players_[static_cast<std::size_t>(i)];
+                if (p.present && p.alive && p.human && pixelToCell(p.x, p.y) == here) killPlayer(i, -1);
+            }
+            a.x = nx;
+            a.y = ny;
+        }
+    }
+}
+
+void World::updateCampaign(int dt) {
+    updateAliens(dt);
+    const int left = secondsLeft();
+    if (left >= 0 && left <= 1) campaignResult_ = 2;
+    const bool anyAlien = std::any_of(aliens_.begin(), aliens_.end(), [](const Alien& a) { return a.active; });
+    if (!anyAlien) {
+        campaignClearMs_ += dt;
+        if (campaignClearMs_ > values_.get(kOutsurviveFrames) * frameMs_ * 2) campaignResult_ = 1;
+    } else {
+        campaignClearMs_ = 0;
+    }
+    // With no human player in play the stage is lost and will be played again.
+    for (const Player& p : players_) {
+        if (!p.present || !p.human) continue;
+        if (p.alive || (p.dying && p.dyingFrames < kDeathFrames[static_cast<std::size_t>(std::clamp(p.deathAnim, 1, 24) - 1)])) return;
+    }
+    campaignResult_ = 2;
+    campaignRetry_ = true;
+}
+
 void World::grantPrize(int i, int powerupType) {
     Player& p = players_[static_cast<std::size_t>(i)];
     if (!p.present || powerupType < 0 || powerupType >= kPowTypeCount) return;
@@ -140,16 +275,8 @@ void World::addPlayer(int i) {
 
     // The start cell and its non-solid orthogonal neighbours are cleared.
     // (The original does this on the player's first update.)
-    auto clear = [this](Cell cc) {
-        if (!inGrid(cc) || tile(cc) == Tile::Solid) return;
-        setTile(cc, Tile::Blank);
-        powerups_[index(cc)] = {};
-    };
-    if (inGrid(c)) {
-        setTile(c, Tile::Blank);
-        powerups_[index(c)] = {};
-    }
-    for (Dir d = 0; d < 4; ++d) clear(step(c, d));
+    clearStartArea(c);
+    p.lives = campaign_ ? 1 : 0;
     if (teamPlay_) {
         std::array<bool, 2> alive{};
         for (const Player& q : players_)
@@ -297,6 +424,7 @@ void World::tick(int dtMs, const std::array<PlayerInput, kMaxPlayers>& input) {
     updateFlames(dt);
     updateEnclosement(dt);
     updatePlayers(dt, input);
+    if (campaign_ && campaignResult_ == 0) updateCampaign(dt);
     if (hurry() && !hurryAnnounced_) {
         hurryAnnounced_ = true;
         emit(EventKind::Hurry);
@@ -758,6 +886,25 @@ void World::updatePlayers(int dt, const std::array<PlayerInput, kMaxPlayers>& in
                 p.dyingAcc -= frameMs_;
             }
         }
+        // Campaign: a human whose death animation has run comes back at the start cell while
+        // a life is left; a new life is granted as long as the clock is not in its last
+        // stretch (original 0x41F2FA-0x41F383).
+        if (campaign_ && !p.alive && p.dying && p.human && p.lives > 0 &&
+            p.dyingFrames >= kDeathFrames[static_cast<std::size_t>(std::clamp(p.deathAnim, 1, 24) - 1)]) {
+            --p.lives;
+            p.alive = true;
+            p.dying = false;
+            p.dyingFrames = 0;
+            p.dyingAcc = 0;
+            p.special = Special::None;
+            p.action = 0;
+            const Cell start = startCells_[static_cast<std::size_t>(i)];
+            p.x = cellToPixelX(start.x);
+            p.y = cellToPixelY(start.y);
+            clearStartArea(start);
+            const int left = secondsLeft();
+            if (left < 0 || left >= values_.get(vid::kHurrySeconds)) p.lives = 1;
+        }
         if (p.alive || (p.dying && p.dyingFrames < values_.get(kOutsurviveFrames))) {
             ++contenders;
             teamAlive[static_cast<std::size_t>(p.team & 1)] = true;
@@ -765,6 +912,7 @@ void World::updatePlayers(int dt, const std::array<PlayerInput, kMaxPlayers>& in
     }
     // In team play the contenders are the teams that still have someone standing.
     contenders_ = teamPlay_ ? (teamAlive[0] ? 1 : 0) + (teamAlive[1] ? 1 : 0) : contenders;
+    if (campaign_) contenders_ = 2;  // the original reports a constant 2 in campaign mode
 
     // Carried bombs follow their holder. A holder who died takes the bomb with them.
     for (Bomb& b : bombs_) {
@@ -800,8 +948,11 @@ void World::killPlayer(int i, int killer) {
     if (killer >= 0 && killer < kMaxPlayers) {
         if (killer == i) {
             if (!winByKills_) --p.kills;  // original 0x41DD23
-        } else
+        } else {
             ++players_[static_cast<std::size_t>(killer)].kills;
+            // Campaign: points for burning a computer player (original 0x41DD4A).
+            if (campaign_ && !p.human) players_[static_cast<std::size_t>(killer)].score += values_.get(vid::kPointsAi);
+        }
     }
 }
 

@@ -82,6 +82,22 @@ struct Extra {
     int animFrame = 0;    // trampolines: > 0 while the spring animation runs
 };
 
+// Campaign enemies (original aliens.c).
+enum class AlienType : std::uint8_t { Rover = 1, Ghost = 2 };
+
+struct Alien {
+    bool active = false;
+    AlienType type = AlienType::Rover;
+    int x = 0;
+    int y = 0;
+    Dir dir = 0;
+    int speed = 0;        // 100ths of a pixel per 50 ms frame, from the campaign file
+    int moveAcc = 0;
+    int anim = 0;         // +1 per pixel
+    bool dead = false;    // burnt: removed on its next update
+    bool clearedStart = false;
+};
+
 inline constexpr int kActionCornerhead = 20;
 inline constexpr int kCornerheadFrames = 50;  // length of every cornerhead sequence
 
@@ -151,6 +167,9 @@ struct Player {
     int team = 0;       // 0 or 1; only meaningful in team play
     int kills = 0;
     int killedBy = -1;  // player index, or -1
+    bool human = true;   // campaign: only human players respawn and are hurt by enemies
+    int lives = 0;       // campaign: respawns left
+    int score = 0;       // campaign points
     bool gold = false;   // won the roulette before this round (twinkles at the start)
     bool dying = false;  // death animation running
     int dyingFrames = 0;
@@ -270,6 +289,21 @@ public:
     // Skips the start-of-round input freeze (for tests and tools).
     void endStartFreeze() { startFreezeMs_ = 0; }
 
+    // --- campaign mode (original campaign.c / aliens.c) ---
+    // Set before the players are added. The last-player-standing rule is off; the stage
+    // is cleared two seconds after the last enemy dies and failed when the clock runs
+    // out or no human player is left.
+    void setCampaign(bool on) { campaign_ = on; }
+    bool campaign() const { return campaign_; }
+    void setHuman(int index, bool human);
+    // Places enemies on random non-solid cells more than three cells from every player.
+    void spawnAliens(AlienType type, int count, int speed);
+    const std::vector<Alien>& aliens() const { return aliens_; }
+    // 0 while the stage runs, 1 cleared, 2 failed.
+    int campaignResult() const { return campaignResult_; }
+    // After a failure: true if the same stage is to be played again (no human was left).
+    bool campaignRetry() const { return campaignRetry_; }
+
     // --- round clock and result ---
     // Seconds left on the round clock (whole seconds, as displayed); -1 when unlimited.
     int secondsLeft() const;
@@ -286,7 +320,10 @@ public:
     bool hurry() const;                  // the "hurry" warning is showing
     bool timeUp() const { return secondsLeft() == 0; }
     // The round ends when at most one contender is left, or when the clock reads 0:00 (a draw).
-    bool roundOver() const { return tickCount_ > 0 && (contenders_ <= 1 || timeUp()); }
+    bool roundOver() const {
+        if (campaign_) return campaignResult_ != 0;
+        return tickCount_ > 0 && (contenders_ <= 1 || timeUp());
+    }
     int winner() const;                  // index of the surviving player, or -1 for a draw
     int closedCells() const { return wallsClosed_; }
 
@@ -316,6 +353,10 @@ private:
     void updateFlames(int dt);
     void updateEnclosement(int dt);
     void closeCell(Cell c);
+    void clearStartArea(Cell c);
+    void updateAliens(int dt);
+    void updateCampaign(int dt);
+    bool alienPassable(AlienType type, Cell c) const;
     void killPlayer(int i, int killer);
 
     void updatePlayers(int dt, const std::array<PlayerInput, kMaxPlayers>& input);
@@ -345,6 +386,11 @@ private:
     int roundLimitMs_ = -1;
     int enclosementDepth_ = 0;
     bool winByKills_ = false;
+    bool campaign_ = false;
+    int campaignResult_ = 0;
+    bool campaignRetry_ = false;
+    int campaignClearMs_ = 0;
+    std::vector<Alien> aliens_;
 
     // Closing walls ("enclosement"): a cursor walking an inward clockwise spiral.
     struct Walls {
