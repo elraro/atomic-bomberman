@@ -542,3 +542,11 @@ Evidence:
 Confidence: HIGH for what the code does. The mode is unreachable without the hidden key sequence and was never observed running; value 1205 and the AI difficulty field are unused.
 
 Modern: core `World::setCampaign`, `spawnAliens`, `campaignResult` (tested); file reader `src/resources/campaign_file.*` (tested); application flow with the same hidden key sequence and `--campaign NAME`.
+
+### Discovery: intro and level-screen preview
+
+Intro (`0x42B060`, picture routine `0x42A088`): tune 1000, pictures `iplogo`, `hslogo`, then a random 2800-series voice ("Atomic Bomberman!") with picture `title`. Each picture waits for Enter/Space/Esc or value 12 (7) seconds. Confidence: HIGH (static).
+
+Level screen (`0x406DE4`): two rows from value 735 (55,170, 24 px apart): the level name (message 150 + level, 149 "Random Each Game" for -1) and message 211 "%u Wins/Kills to win match". Whenever the level choice changes, `0x406AA3` draws a sample arena at value 730 = (400,100), 5 × 5 cells: first a piece of that level's `field%u` picture (5 cells + 20 px wide, 5 cells + 18 px high, placed 20 px left of the sample), then `tile %u solid` at odd column and odd row and, elsewhere except the top-left 2 × 2 cells, `tile %u brick` with 4 chances in 5. With "random" selected every tile comes from a random level. Confidence: HIGH for the tiles; MEDIUM for which part of the field picture is used and its vertical position (arguments not fully recovered).
+
+Modern: both implemented; the scheme and team rows of the modern level screen are additions.

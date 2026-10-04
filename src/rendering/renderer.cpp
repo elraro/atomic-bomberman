@@ -212,6 +212,17 @@ void Renderer::picture(unsigned texture, float x, float y, float w, float h) {
     if (texture != 0) textured(texture, x, y, w, h);
 }
 
+void Renderer::pictureRegion(unsigned texture, int texW, int texH, int sx, int sy, int sw, int sh, float x, float y) {
+    if (texture == 0 || texW <= 0 || texH <= 0) return;
+    setTexture(texture);
+    const float u0 = static_cast<float>(sx) / static_cast<float>(texW), u1 = static_cast<float>(sx + sw) / static_cast<float>(texW);
+    const float v0 = static_cast<float>(sy) / static_cast<float>(texH), v1 = static_cast<float>(sy + sh) / static_cast<float>(texH);
+    const auto w = static_cast<float>(sw), h = static_cast<float>(sh);
+    const Vertex v[6] = {{x, y, u0, v0, 1, 1, 1, 1},     {x + w, y, u1, v0, 1, 1, 1, 1},     {x + w, y + h, u1, v1, 1, 1, 1, 1},
+                         {x, y, u0, v0, 1, 1, 1, 1},     {x + w, y + h, u1, v1, 1, 1, 1, 1}, {x, y + h, u0, v1, 1, 1, 1, 1}};
+    batch_.insert(batch_.end(), v, v + 6);
+}
+
 float Renderer::textWidth(const SpriteBank& bank, const std::string& s) const {
     const SpriteBank::Font& f = bank.font();
     float width = 0;

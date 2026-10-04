@@ -454,6 +454,12 @@ int main(int argc, char** argv) {
         Screen screen = haveMenu ? Screen::MainMenu : Screen::Match;
         int menuItem = 0;
         int optionRow = 0;
+        // Sample arena on the level screen (original 0x406AA3): 5 x 5 cells at (400,100)
+        // (value 730). Each cell holds the level a tile is taken from, or -1 for none;
+        // rebuilt whenever the level choice changes.
+        std::array<std::array<int, 5>, 5> previewBrick{};
+        int previewField = 0;
+        int previewFor = -99;
         // Help viewer (About Bomberman shows credits.bm; Online Manual lists every *.bm).
         std::vector<ab::HelpLine> helpLines;
         int helpTop = 0;
@@ -1209,19 +1215,51 @@ int main(int argc, char** argv) {
                 renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::LevelSetup) {
+                const int shownLevel = randomLevel ? -1 : level;
+                if (previewFor != shownLevel) {
+                    previewFor = shownLevel;
+                    auto pick = [&]() { return shownLevel >= 0 ? shownLevel : appRng.below(11); };
+                    previewField = pick();
+                    for (int py = 0; py < 5; ++py)
+                        for (int px = 0; px < 5; ++px) {
+                            // Solid at odd column and odd row; elsewhere, outside the top-left
+                            // 2 x 2 corner, a brick 4 times in 5.
+                            int cell = -1;
+                            if ((px & 1) != 0 && (py & 1) != 0) cell = pick() + 100;
+                            else if ((px > 1 || py > 1) && appRng.below(5) != 0) cell = pick();
+                            previewBrick[static_cast<std::size_t>(py)][static_cast<std::size_t>(px)] = cell;
+                        }
+                }
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue1"));
+                {
+                    // The piece of the level's field picture behind the sample, then the tiles.
+                    const std::string field = "field" + std::to_string(previewField);
+                    int fw = 0, fh = 0;
+                    if (spritesPtr->pictureSize(field, &fw, &fh))
+                        renderer.pictureRegion(spritesPtr->picture(field), fw, fh, 0, 50, 5 * 40 + 20, 5 * 36 + 18, 380.0f, 82.0f);
+                    for (int py = 0; py < 5; ++py)
+                        for (int px = 0; px < 5; ++px) {
+                            const int cell = previewBrick[static_cast<std::size_t>(py)][static_cast<std::size_t>(px)];
+                            if (cell < 0) continue;
+                            const int lv = cell % 100;
+                            spritesPtr->ensureTiles(lv);
+                            renderer.sprite(*spritesPtr, "tile " + std::to_string(lv) + (cell >= 100 ? " solid" : " brick"), 0, -1,
+                                            400.0f + 40.0f * static_cast<float>(px), 100.0f + 36.0f * static_cast<float>(py));
+                        }
+                }
                 const std::string lines[4] = {
                     randomLevel ? "Random Each Game" : kLevelName[level],
                     schemes.empty() ? std::string("(built-in arena)") : "Scheme: " + schemes[static_cast<std::size_t>(schemeIndex)].title,
                     std::to_string(winsNeeded) + " Wins to win match",
                     std::string("Team play: ") + (teamPlay ? "ON (teams from the scheme)" : "OFF")};
                 for (int r = 0; r < 4; ++r) {
-                    const float y = 180.0f + 24.0f * static_cast<float>(r);
-                    renderer.text(*spritesPtr, lines[r], 71, y + 1, 0, 0, 0);
-                    renderer.text(*spritesPtr, lines[r], 70, y, 1, 1, 1);
+                    // Rows from (55,170) every 24 px (original value 735).
+                    const float y = 170.0f + 24.0f * static_cast<float>(r);
+                    renderer.text(*spritesPtr, lines[r], 56, y + 1, 0, 0, 0);
+                    renderer.text(*spritesPtr, lines[r], 55, y, 1, 1, 1);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 56.0f, 195.0f + 24.0f * static_cast<float>(setupRow));
+                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 41.0f, 185.0f + 24.0f * static_cast<float>(setupRow));
                 renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Enter: start", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::MainMenu) {

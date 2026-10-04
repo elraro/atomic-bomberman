@@ -52,6 +52,12 @@ bool SpriteBank::pictureSize(const std::string& name, int* width, int* height) {
     return true;
 }
 
+void SpriteBank::ensureTiles(int level) {
+    if (level < 0 || level > 10 || level == level_ || tilesLoaded_[static_cast<std::size_t>(level)]) return;
+    tilesLoaded_[static_cast<std::size_t>(level)] = true;
+    addAni(gameDir_ + "/data/ani/tiles" + std::to_string(level) + ".ani");
+}
+
 SpriteBank::~SpriteBank() {
     for (auto& [name, tex] : pictures_)
         if (tex != 0) glDeleteTextures(1, &tex);
