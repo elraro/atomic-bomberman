@@ -177,7 +177,9 @@ public:
     void setRoundSeconds(int seconds) { roundLimitMs_ = seconds < 0 ? -1 : seconds * 1000; }
     void setEnclosementDepth(int depth) { enclosementDepth_ = depth; }
     bool hurry() const;                  // the "hurry" warning is showing
-    bool roundOver() const { return tickCount_ > 0 && contenders_ <= 1; }
+    bool timeUp() const { return secondsLeft() == 0; }
+    // The round ends when at most one contender is left, or when the clock reads 0:00 (a draw).
+    bool roundOver() const { return tickCount_ > 0 && (contenders_ <= 1 || timeUp()); }
     int winner() const;                  // index of the surviving player, or -1 for a draw
     int closedCells() const { return wallsClosed_; }
 

@@ -468,6 +468,7 @@ bool World::hurry() const {
 }
 
 int World::winner() const {
+    if (contenders_ > 1) return -1;  // time ran out
     for (int i = 0; i < kMaxPlayers; ++i)
         if (players_[static_cast<std::size_t>(i)].present && players_[static_cast<std::size_t>(i)].alive) return i;
     return -1;

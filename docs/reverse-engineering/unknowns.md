@@ -263,7 +263,4 @@ Evidence:
 `Match_Run` ends a round when the contender count is ≤ 1. No time-up branch has been identified yet; the clock code clamps at 0.
 
 Status:
-OPEN
-
-Next action:
-Scripted run with `playtime` at its minimum and enclosement depth 0, two idle players; watch what follows 0:00. Read the remainder of `Match_Run` (`0x42A6A9` onward).
+RESOLVED (session 7, dynamic). With two idle players and enclosement depth 0, the "DRAW GAME" screen (`draw.pcx`, `draw.rss`) appeared 59.02 s after the start of a round whose clock began at 1:00, i.e. when the displayed clock reached 0:00. The code path has not been located.

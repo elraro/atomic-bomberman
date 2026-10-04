@@ -68,6 +68,9 @@ Key sequence used to reach a match with two keyboard players and no AI: Enter ×
 | D27 | **Hurry and closing walls.** With a 70 s clock: hurry voice at +10.01 s (clock passes below 60 s); first wall block at +14.26 s, i.e. 0.25 s after the clock reaches 55 s; 71 blocks in the next 17.5 s with a mean spacing of 0.2500 s (min 0.201, max 0.299) | Timestamps of `zai01c.rss` and `sqrdrop*.rss` | R1; the 250 ms cadence |
 | D28 | **Spiral shape.** After 16 blocks the whole top row is solid and the right column has begun; after 36 the top row, right column and most of the bottom row; after 69 the outer ring is complete and the second ring's top row and right column are filling. Players standing inside are unharmed | Screenshots | R1, R2 (clockwise from the top-left corner, ring by ring) |
 
+| D29 | **Time up is a draw.** Two idle players, enclosement depth 0, 1:00 on the clock: the clock ran down with nothing else happening (no walls at 55 s), and 59.02 s after the round started the game showed "DRAW GAME" (`draw.pcx`, `draw.rss`) | Screenshots, timestamps | Resolves UNKNOWN-022; depth 0 disables the walls |
+| D30 | `playtime=12` in `options.ini` produced a clock starting at 1:00, so short values are raised to 60 s (or rejected in favour of 60) | Screenshot showing 0:51 at +8.5 s | – |
+
 ## Not yet possible
 
 Attaching a debugger, and reading game memory directly. Remaining scenarios of `docs/testing/original-behaviour.md` can now be scripted one by one.

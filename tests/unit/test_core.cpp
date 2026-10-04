@@ -767,6 +767,16 @@ void testRoundResult() {
     CHECK(f.w.roundOver());
     CHECK_EQ(f.w.winner(), 1);
 
+    Fixture t;                          // clock runs out with both alive: draw (observed on the original, D29)
+    t.w.setRoundSeconds(60);
+    t.w.setEnclosementDepth(0);
+    t.run(20 * 59);
+    CHECK(!t.w.roundOver());            // 59.0 s: the clock still reads 0:01
+    t.run(1);
+    CHECK(t.w.roundOver());
+    CHECK_EQ(t.w.winner(), -1);
+    CHECK_EQ(t.w.closedCells(), 0);     // depth 0: no walls
+
     Fixture d;                          // both die: draw
     d.place(0, {2, 2});
     d.place(1, {3, 2});
