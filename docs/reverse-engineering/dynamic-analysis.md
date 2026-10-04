@@ -85,6 +85,8 @@ Lab schemes `testpun.sch`, `testgrab.sch`, `testspg.sch` (working copy only) giv
 | D35 | **Corner slide.** Pillars-only scheme (`testpil.sch`, working copy). From (0,0), Down for 0.15 s leaves the player about 27 px below the row-0 line, beside the pillar at (1,1). Holding Right then moves the player back up into row 0 and on to the east (ends near x = 135 in row 0) instead of being stuck against the pillar | Screenshots | M5 |
 | D36 | **Lane alignment.** From there (x about 15 px past the centre of column 2), holding Down moves the player down between the pillars and pulls it onto the centre of column 2 | Screenshots | M4 |
 
+| D37 | **Conveyor.** Level 10 (`levelno=10`), open scheme. The belt cells of `extra10.res` are drawn as soon as the cells are open. A player standing on the east-moving belt in row 2 without input is carried east: about 115 px in 1.62 s and 114 px in 1.63 s, i.e. 70 px/s, keeping its facing | Screenshots with file timestamps | Extras: idle player carried at the belt speed (value 191 = 350 → 70 px/s) |
+
 ## Not yet possible
 
 Attaching a debugger, and reading game memory directly. Remaining scenarios of `docs/testing/original-behaviour.md` can now be scripted one by one.
