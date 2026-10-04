@@ -548,11 +548,12 @@ int main(int argc, char** argv) {
                     }
                     if (world.roundOver() && roundOverSteps == 20 && sound) {
                         // The result screen comes up: the original plays its end-of-round tune here
-                        // (sound 1130, draw.rss, for every result), a voice line for a draw
-                        // (1700 series) and a "we have a winner" line when the match is decided (320 series).
+                        // (sound 1130, draw.rss, for every result), then a random voice line: the
+                        // 1700 series for a draw, the 2000 series when somebody won (Match_Run 0x42A6D8,
+                        // 0x42A71C, 0x42ACB9).
                         audio.playMusic(1130);
-                        if (world.teamPlay() ? world.winningTeam() < 0 : world.winner() < 0) audio.playRange(1700, 1799);
-                        if (matchOver) audio.playRange(320, 339);
+                        if (world.teamPlay() ? world.winningTeam() < 0 : world.winner() < 0) audio.playRange(1700, 1999);
+                        else audio.playRange(2000, 2299);
                     }
                     if (world.roundOver() && ++roundOverSteps > 100) {
                         if (matchOver) {

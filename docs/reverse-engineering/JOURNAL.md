@@ -418,3 +418,18 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - `atomic --import-assets SRC [--assets-dir DEST]`: builds the game's asset folder from a copy of the original (case-insensitive lookup, lower-case output, `.rss` → `.wav`). Verified: 246 data files, 971 sounds, 281 MB; the game runs from the result with graphics, extras, sounds and music.
 - `.github/workflows/build.yml`: Linux and Windows packages, tests, release on `v*` tags. YAML parses; the workflow itself has not run (no GitHub remote), and the Windows build has never been compiled.
 - `INSTALL.md` written.
+
+### Discovery: end-of-round sounds
+
+Where: `Match_Run`, `0x42A6D8` (`mov eax,0x46A; call 0x42741E`), `0x42A71C` (`mov eax,0x6A4; call 0x427BFB`), `0x42ACB9` (`mov eax,0x7D0; call 0x427BFB`).
+
+Evidence:
+- Tune 1130 (`draw`) is started for every round result, before the winner is looked up.
+- No winner (lookup returns -1): random sound of the series starting at 1700 ("tie game/draw game" in `soundlst.res`).
+- A winner: random sound of the series starting at 2000 ("we have a winner"). It is played for every won round, not only the last of the match.
+- `0x427BFB` picks at random among the consecutive loaded ids from the given one.
+- Dynamic: a drawn round under Wine loaded `draw.rss` and then `zaa55a`/`zaa59b` (ids 1716, 1720).
+
+Confidence: HIGH
+
+Implication: ids 320-322 (same three files as 2000-2002) are not what the result screen uses.
