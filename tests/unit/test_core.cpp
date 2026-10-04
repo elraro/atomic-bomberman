@@ -11,6 +11,7 @@
 #include "game/ai.hpp"
 #include "game/roulette.hpp"
 #include "game/world.hpp"
+#include "resources/settings.hpp"
 #include "resources/ani_file.hpp"
 #include "resources/scheme_file.hpp"
 
@@ -872,6 +873,32 @@ void testRoulette() {
     CHECK_EQ(static_cast<int>(y), 390);
 }
 
+void testSettings() {
+    Settings s;
+    s.parse("levelno=4\nnum_to_win_match=3\nenclosement_depth=9\nconveyor_speed=2\nteam_play=1\nrandom_start=1\n"
+            "stomped_bombs_detonate=0\nwin_by_kills=1\ngoldman=1\nschemefilename=TESTLAB.SCH\nplaytime=20\n"
+            "diseases_destroyable=0\ndisable_game_music=1\nsmallmemory=0\n");
+    CHECK_EQ(s.level, 4);
+    CHECK_EQ(s.winsNeeded, 3);
+    CHECK_EQ(s.enclosementDepth, 3);   // clamped
+    CHECK_EQ(s.conveyorSpeed, 2);
+    CHECK(s.teamPlay && s.randomStart && !s.stompedBombsDetonate && s.winByKills && s.goldman);
+    CHECK(s.scheme == "TESTLAB");
+    CHECK_EQ(s.playTime, 60);          // below a minute becomes a minute
+    CHECK(!s.diseasesDestroyable && s.disableGameMusic);
+    Settings t;
+    t.parse(s.serialize());            // round trip
+    CHECK(t.serialize() == s.serialize());
+    // Play-time steps of the original's settings screen.
+    const int order[10] = {60, 90, 120, 150, 180, 240, 300, 600, Settings::kInfiniteTime, 60};
+    for (int i = 0; i < 9; ++i) {
+        CHECK_EQ(Settings::nextPlayTime(order[i], 1), order[i + 1]);
+        CHECK_EQ(Settings::nextPlayTime(order[i + 1], -1), order[i]);
+    }
+    CHECK(Settings::playTimeText(150) == "2:30");
+    CHECK(Settings::playTimeText(Settings::kInfiniteTime) == "Infinite");
+}
+
 void testSpooge() {  // B18
     Fixture f;
     f.w.player(0).inventory[kPowSpooge] = 1;
@@ -1368,6 +1395,7 @@ int main() {
         {"grab and throw", testGrabAndThrow},
         {"trapped animation", testTrappedAnimation},
         {"roulette", testRoulette},
+        {"settings", testSettings},
         {"spooge", testSpooge},
         {"diseases", testDiseases},
         {"death animation", testDeathAnimationChosen},
