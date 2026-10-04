@@ -76,6 +76,6 @@ A hidden, visibly unfinished mode of the original, recovered from `campaign.c` a
 - An enemy kills any **human** player whose cell it enters; computer players are not harmed.
 - **Lives**: a human player whose death animation has finished returns at the start cell, keeping the inventory, as long as a life is left; each return grants another life unless less than value 101 (60) seconds remain. Computer players do not return.
 - **Stage end**: cleared when no enemy has been left for 2 × value 25 frames (2 s), whatever the computer players are doing. Failed when the clock is down to its last second, or when no human player is in play; in the second case the same stage is played again, after "Oh Well! Campaign unsuccessful!". (After a clock failure the original moves on to the next stage.)
-- The last-player-standing rule and the closing walls are off (the original reports two contenders at all times).
+- The last-player-standing rule is off (the original reports two contenders at all times); the closing walls still run.
 - After the last stage: "Congratulations! You made it through the whole campaign!" and back to the menu.
 - The value 1205 ("chance that the direction change will NOT be towards a human") is not used by the code that was read.
