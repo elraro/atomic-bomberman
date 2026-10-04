@@ -686,7 +686,7 @@ int main(int argc, char** argv) {
             }
             SDL_GL_SwapWindow(window);
         }
-        if (farewell && sound && opt.frames == 0) {
+        if (farewell && sound && opt.frames <= 0) {
             // As the original's quit routine (0x412987): the music stops, one of the
             // "leaving the program" lines plays (2600 series) and the program waits 4 s.
             audio.stopMusic();
