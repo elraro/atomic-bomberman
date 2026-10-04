@@ -19,11 +19,11 @@ void AiPlayer::buildDanger(const World& w) {
     for (int y = 0; y < kGridH; ++y)
         for (int x = 0; x < kGridW; ++x)
             if (w.flame({x, y}).active) mark({x, y}, kFlameDanger);
-    // Every cell a bomb's blast would reach. The original writes a level here
-    // whose formula was not recovered; this uses "closer to exploding = worse".
+    // Every cell a bomb's blast would reach, at level 100 + elapsed fuse in
+    // milliseconds (original: 0x42429B), so bombs closer to exploding rank higher.
     for (const Bomb& b : w.bombs()) {
         if (!b.active) continue;
-        const int level = 1 + std::max(0, b.elapsedMs) / 50;
+        const int level = 100 + std::max(0, b.elapsedMs);
         const Cell origin = pixelToCell(b.x, b.y);
         mark(origin, level);
         for (Dir d = 0; d < 4; ++d) {

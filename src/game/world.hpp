@@ -69,6 +69,21 @@ private:
     std::uint32_t state_;
 };
 
+// Fixed features of a level theme (original extraN.res).
+enum class ExtraType : std::uint8_t { Arrow = 0, Warp = 1, Conveyor = 2, Trampoline = 3 };
+
+struct Extra {
+    ExtraType type = ExtraType::Arrow;
+    Cell cell{};
+    Dir dir = 0;          // arrows and conveyors
+    int id = 0;           // warps
+    int linkTo = 0;       // warps: id of the destination warp
+    bool prepared = false;
+    int animFrame = 0;    // trampolines: > 0 while the spring animation runs
+};
+
+enum class Special : std::uint8_t { None, Trampoline, WarpOut, WarpIn };
+
 // Things that happened during a tick, for the front end (sound, effects).
 // The core never depends on what is done with them.
 enum class EventKind : std::uint8_t {
@@ -121,6 +136,11 @@ struct Player {
     int action = 0;            // 0 none, 1 kicking, 2 punching (animation only)
     int actionFrames = 0;
     int actionAcc = 0;
+    Special special = Special::None;  // no input and no death while not None
+    int specialFrames = 0;
+    int specialAcc = 0;
+    int warpX = 0;                    // destination while warping
+    int warpY = 0;
     bool prevButton1 = false;
     bool prevButton2 = false;
     int kills = 0;
@@ -191,6 +211,10 @@ public:
     // powerups under bricks. Removes all players, bombs and flames.
     void startRound(const Scheme& scheme, bool generatePowerups);
     void addPlayer(int index);
+    // Level extras for this round (call after startRound). Speed setting 0-2 selects the conveyor speed.
+    void setExtras(const std::vector<Extra>& extras, int conveyorSpeedSetting = 1);
+    const std::vector<Extra>& extras() const { return extras_; }
+    const Extra* extraAt(Cell c) const;
 
     // Advances the simulation by dtMs milliseconds (clamped to value 31).
     void tick(int dtMs, const std::array<PlayerInput, kMaxPlayers>& input);
@@ -296,6 +320,10 @@ private:
     } walls_;
     int wallsClosed_ = 0;
     bool hurryAnnounced_ = false;
+    std::vector<Extra> extras_;
+    int conveyorSpeed_ = 0;
+    void updateExtras();
+    void updateSpecial(int i, int dt);
     std::vector<Event> events_;
     void emit(EventKind kind, int player = -1) { events_.push_back({kind, player}); }
 

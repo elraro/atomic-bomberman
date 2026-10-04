@@ -33,7 +33,7 @@ GL functions are taken from the system `GL/gl.h` + `GL/glext.h` prototypes (Mesa
 
 ## What the core covers
 
-Round generation (brick density, hidden powerups, start-area clearing), start freeze, player movement and collision, direction priority, bomb dropping, fuses, blast propagation, chain reactions, flames and death, the contender window, kicking, kick-stop, jelly bounce, trigger bombs, goldflame, powerup reveal (with early-round protection), pickup, caps and exclusive pairs, the round clock, the hurry warning, closing walls, the round result (winner or draw), punched, thrown and carried bombs, spooge lines, the head-hit stun, and diseases (nine effects, timer, spreading, cure on pickup).
+Round generation (brick density, hidden powerups, start-area clearing), start freeze, player movement and collision, direction priority, bomb dropping, fuses, blast propagation, chain reactions, flames and death, the contender window, kicking, kick-stop, jelly bounce, trigger bombs, goldflame, powerup reveal (with early-round protection), pickup, caps and exclusive pairs, the round clock, the hurry warning, closing walls, the round result (winner or draw), punched, thrown and carried bombs, spooge lines, the head-hit stun, diseases (nine effects, timer, spreading, cure on pickup), and level extras (arrows, conveyors, warps, trampolines).
 
 ## Computer players
 
@@ -41,7 +41,7 @@ Round generation (brick density, hidden powerups, start-area clearing), start fr
 
 ## Not covered yet
 
-Duds, level extras, team play, campaign, networking. Match flow exists only as a win counter in the application (no results or victory screens). What happens when the round clock reaches zero is not known yet (the modern clock simply stops at 0). Each is specified to some degree in `docs/specifications/` except game modes, AI and networking.
+Duds, team play, campaign, networking. Match flow exists only as a win counter in the application (no results or victory screens). What happens when the round clock reaches zero is not known yet (the modern clock simply stops at 0). Each is specified to some degree in `docs/specifications/` except game modes, AI and networking.
 
 ## Validation level
 

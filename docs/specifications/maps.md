@@ -25,6 +25,17 @@ Born-with, when greater than 0, replaces the starting amount of that powerup for
 
 A round also has a level theme (0-10), independent of the scheme, which selects graphics and optional extras (arrows, warp holes, conveyors, trampolines). [D] Two themes change rules: the hockey rink delays controls by V(452) [250] ms (`players.md`); the cemetery regenerates bricks every V(347) [4] seconds. [D]
 
+## Extras
+
+A level theme may place arrows, conveyors, warp holes and trampolines on fixed cells. They act only when their cell is open. [S]
+
+- **Arrow**: a sliding bomb arriving at the cell centre turns to the arrow's direction. [S]
+- **Conveyor**: carries resting bombs and idle players at the belt speed V(190..192) [250, 350, 450]; adds to or subtracts from a walking player's speed. [S][M]
+- **Warp hole**: clears its own cell and one random neighbour at round start. A player walking onto it disappears for 9 frames, reappears on the linked warp, and is out of play for 9 more frames. [S]
+- **Trampoline**: a player walking onto it is airborne for V(680) [30] frames and comes down on a random free cell up to two cells away in both axes. [S]
+
+A player in a warp or in the air ignores input and cannot be killed. [S]
+
 ## Round generation
 
 1. Solid and blank cells are copied from the scheme. [S]

@@ -99,8 +99,9 @@ void playEvents(ab::World& world, ab::Audio& audio) {
     }
 }
 
-void startRound(ab::World& world, const ab::Scheme& scheme, int players) {
+void startRound(ab::World& world, const ab::Scheme& scheme, int players, const std::vector<ab::Extra>& extras) {
     world.startRound(scheme, true);
+    world.setExtras(extras);
     for (int i = 0; i < players; ++i) world.addPlayer(i);
     std::fprintf(stderr, "INFO  Round started players=%d\n", players);
 }
@@ -141,6 +142,13 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Arrows, warps, conveyors and trampolines belong to the level theme.
+    std::vector<ab::Extra> extras;
+    if (!opt.gameDir.empty()) {
+        extras = ab::loadExtrasFile(opt.gameDir + "/data/res/extra" + std::to_string(opt.level) + ".res");
+        if (!extras.empty()) std::fprintf(stderr, "INFO  Loaded level extras count=%zu\n", extras.size());
+    }
+
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         std::fprintf(stderr, "ERROR SDL_Init: %s\n", SDL_GetError());
         return 1;
@@ -174,7 +182,7 @@ int main(int argc, char** argv) {
         ab::World world(values, opt.seed);
         std::vector<ab::AiPlayer> ai;
         for (int i = 0; i < ab::kMaxPlayers; ++i) ai.emplace_back(opt.seed * 31u + static_cast<std::uint32_t>(i) * 977u + 5u);
-        startRound(world, scheme, opt.players);
+        startRound(world, scheme, opt.players, extras);
         ab::RenderSnapshot previous;
         previous.capture(world);
 
@@ -195,7 +203,7 @@ int main(int argc, char** argv) {
                 if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
                     if (e.key.key == SDLK_ESCAPE) running = false;
                     if (e.key.key == SDLK_R) {
-                        startRound(world, scheme, opt.players);
+                        startRound(world, scheme, opt.players, extras);
                         roundOverSteps = 0;
                     }
                     if (e.key.key == SDLK_P) paused = !paused;
@@ -237,7 +245,7 @@ int main(int argc, char** argv) {
                     }
                 }
                 if (world.roundOver() && ++roundOverSteps > 60) {
-                    startRound(world, scheme, opt.players);
+                    startRound(world, scheme, opt.players, extras);
                     previous.capture(world);
                     roundOverSteps = 0;
                 }

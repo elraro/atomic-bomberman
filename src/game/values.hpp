@@ -49,11 +49,14 @@ inline constexpr int kDiseasesCurable = 124;
 inline constexpr int kDiseaseCureChance = 125;
 inline constexpr int kDiseasePassCooldown = 129;
 inline constexpr int kDiseaseFrames = 130;      // + disease number
+inline constexpr int kConveyorSpeed = 190;    // + speed setting 0-2
 inline constexpr int kKickSpeed = 300;
 inline constexpr int kPunchSpeed = 301;
 inline constexpr int kJellyTurnChance = 667;
 inline constexpr int kHeadHitLossMin = 670;
 inline constexpr int kHeadHitLossRandom = 671;
+inline constexpr int kTrampolineFrames = 680;
+inline constexpr int kTrampolineRise = 681;
 inline constexpr int kLevelCount = 400;       // + powerup id
 inline constexpr int kInventoryCap = 550;     // + powerup id
 }  // namespace vid

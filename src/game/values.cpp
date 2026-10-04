@@ -32,11 +32,16 @@ Values Values::defaults() {
     v.set(125, 10);
     v.set(129, 10);
     for (int i = 0; i < 9; ++i) v.set(130 + i, 300);
+    v.set(190, 250);
+    v.set(191, 350);
+    v.set(192, 450);
     v.set(300, 1000);
     v.set(301, 1300);
     v.set(667, 3);
     v.set(670, 1);
     v.set(671, 3);
+    v.set(680, 30);
+    v.set(681, 35);
     const int level[13] = {10, 10, 3, 4, 8, 2, 2, 1, -2, -4, 1, -4, -2};
     for (int i = 0; i < 13; ++i) v.set(400 + i, level[i]);
     const int cap[15] = {8, 8, 0, 1, 4, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0};

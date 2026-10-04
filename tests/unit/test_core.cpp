@@ -927,6 +927,118 @@ void testAiSurvivesOwnBombs() {
     CHECK(earlyWipe <= 2);    // they do not all blow themselves up at once
 }
 
+void testExtrasFile() {
+    const auto ex = parseExtrasText(
+        "; comment\r\n-A,S, 2, 2\r\n-A,W,-3, 2\r\n-C,E, 4, 4\r\n-W,1, 0, 2, 2, 3\r\n-W,1, 3, 2,-3, 2\r\n-T,2,2\r\n-T,H,H\r\n");
+    CHECK_EQ(ex.size(), 7u);
+    if (ex.size() != 7) return;
+    CHECK(ex[0].type == ExtraType::Arrow);
+    CHECK_EQ(ex[0].dir, 2);
+    CHECK(ex[1].cell == (Cell{12, 2}));            // -3 counts from the right edge
+    CHECK(ex[2].type == ExtraType::Conveyor);
+    CHECK_EQ(ex[2].dir, 1);
+    CHECK(ex[3].type == ExtraType::Warp);
+    CHECK_EQ(ex[3].id, 0);
+    CHECK_EQ(ex[3].linkTo, 3);
+    CHECK(ex[4].cell == (Cell{2, 8}));
+    CHECK(ex[5].type == ExtraType::Trampoline);
+    CHECK(ex[6].cell == (Cell{-1, -1}));           // "H": position chosen by the game
+}
+
+void testArrowTurnsSlidingBomb() {
+    Fixture f;
+    f.w.setExtras({Extra{ExtraType::Arrow, {6, 2}, 2}});
+    f.w.player(0).inventory[kPowKicker] = 1;
+    f.place(0, {2, 2});
+    f.place(1, {14, 10});
+    f.w.createBomb(0, {3, 2}, BombType::Regular, 1, 400);
+    f.hold(0, 1);
+    f.run(1);
+    f.hold(0, kNoDir);
+    f.run(60);
+    const Bomb& b = f.w.bombs()[0];
+    CHECK(b.mode == BombMode::Resting);
+    CHECK(pixelToCell(b.x, b.y) == (Cell{6, 10}));  // turned south at the arrow, slid to the bottom
+}
+
+void testConveyor() {
+    Fixture f;
+    std::vector<Extra> belt;
+    for (int x = 2; x <= 6; ++x) belt.push_back(Extra{ExtraType::Conveyor, {x, 2}, 1});
+    f.w.setExtras(belt, 1);                         // speed setting 1 = 350
+    f.place(0, {2, 2});
+    f.place(1, {14, 10});
+    f.run(20);                                      // standing still for one second
+    CHECK(f.w.player(0).x > cellToPixelX(2) + 60);  // carried about 70 px
+    CHECK_EQ(f.w.player(0).facing, 2);              // facing unchanged
+    const int x0 = f.w.player(0).x;
+    f.run(60);
+    CHECK(f.cellOf(0) == (Cell{7, 2}));             // set down at the end of the belt
+    CHECK(f.w.player(0).x >= x0);
+
+    Fixture g;                                      // walking with and against the belt
+    std::vector<Extra> long1;
+    for (int x = 0; x < kGridW; ++x) long1.push_back(Extra{ExtraType::Conveyor, {x, 2}, 1});
+    g.w.setExtras(long1, 1);
+    g.place(0, {0, 2});
+    g.hold(0, 1);
+    g.run(20);
+    CHECK_EQ(g.w.player(0).x - cellToPixelX(0), 255);   // (923 + 350) / 100 px per frame
+    g.place(0, {14, 2});
+    g.w.player(0).moveAcc = 0;
+    g.hold(0, 3);
+    g.run(20);
+    CHECK_EQ(cellToPixelX(14) - g.w.player(0).x, 115);  // (923 - 350) / 100 px per frame
+
+    Fixture h;                                      // a resting bomb is carried too
+    h.w.setExtras(belt, 1);
+    h.place(0, {0, 8});
+    h.place(1, {14, 10});
+    h.w.createBomb(0, {2, 2}, BombType::Regular, 1, 400);
+    h.run(80);
+    CHECK(pixelToCell(h.w.bombs()[0].x, h.w.bombs()[0].y) == (Cell{7, 2}));
+    CHECK(h.w.bombs()[0].mode == BombMode::Resting);
+}
+
+void testWarp() {
+    Scheme s = Scheme::pillars();
+    s.tiles[2][2] = Tile::Brick;
+    Fixture f(s);
+    f.w.setExtras({Extra{ExtraType::Warp, {2, 2}, 0, 0, 1}, Extra{ExtraType::Warp, {12, 8}, 0, 1, 0}});
+    f.place(0, {0, 2});
+    f.place(1, {14, 10});
+    f.run(1);
+    CHECK(f.w.tile({2, 2}) == Tile::Blank);          // a warp clears its own cell
+    f.hold(0, 1);
+    f.run(9);                                        // walk into the warp
+    CHECK(f.w.player(0).special == Special::WarpOut);
+    f.w.createBomb(1, {2, 2}, BombType::Regular, 1, 1);
+    f.run(3);
+    CHECK(f.w.player(0).alive);                      // untouchable while warping
+    f.run(10);
+    CHECK(f.cellOf(0) == (Cell{12, 8}));             // came out at the linked warp
+    f.run(12);
+    CHECK(f.w.player(0).special == Special::None);
+    f.run(4);
+    CHECK(f.cellOf(0).x >= 12);                      // walks on, no bounce back into the warp
+}
+
+void testTrampoline() {
+    Fixture f;
+    f.w.setExtras({Extra{ExtraType::Trampoline, {4, 4}}});
+    f.place(0, {3, 4});
+    f.place(1, {14, 10});
+    f.hold(0, 1);
+    f.run(5);
+    CHECK(f.w.player(0).special == Special::Trampoline);
+    f.run(31);                                       // 30 frames in the air
+    CHECK(f.w.player(0).special == Special::None);
+    const Cell c = f.cellOf(0);
+    CHECK(c.x != 4 && c.y != 4);                     // lands in another row and column
+    CHECK(std::abs(c.x - 4) <= 2 && std::abs(c.y - 4) <= 2);
+    CHECK(f.w.tile(c) == Tile::Blank);
+}
+
 void testEvents() {
     Fixture f;
     f.w.takeEvents();
@@ -1107,6 +1219,11 @@ int main() {
         {"diseases", testDiseases},
         {"death animation", testDeathAnimationChosen},
         {"ai plays rounds", testAiSurvivesOwnBombs},
+        {"extras file", testExtrasFile},
+        {"arrow", testArrowTurnsSlidingBomb},
+        {"conveyor", testConveyor},
+        {"warp", testWarp},
+        {"trampoline", testTrampoline},
         {"events", testEvents},
         {"clock and hurry", testClockAndHurry},
         {"closing walls", testClosingWalls},

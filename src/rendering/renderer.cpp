@@ -270,6 +270,19 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
             }
         }
 
+    // Level extras lie on the ground, visible once their cell is open.
+    for (const Extra& e : world.extras()) {
+        if (world.tile(e.cell) != Tile::Blank) continue;
+        const auto rx = static_cast<float>(cellToPixelX(e.cell.x));
+        const auto ry = static_cast<float>(cellToPixelY(e.cell.y));
+        switch (e.type) {
+            case ExtraType::Arrow: sprite(bank, std::string("extra arrow ") + kDirName[e.dir & 3], 0, -1, rx, ry); break;
+            case ExtraType::Conveyor: sprite(bank, std::string("extra conveyor ") + kDirName[e.dir & 3], frame / 3, -1, rx, ry); break;
+            case ExtraType::Warp: sprite(bank, "extra warp 1", frame, -1, rx, ry); break;
+            case ExtraType::Trampoline: sprite(bank, "extra trampoline", e.animFrame, -1, rx, ry); break;
+        }
+    }
+
     std::size_t bi = 0;
     for (const Bomb& b : world.bombs()) {
         const std::size_t idx = bi++;
@@ -296,9 +309,16 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
                 sprite(bank, seq, p.dyingFrames, i, static_cast<float>(p.x), static_cast<float>(p.y));
             continue;
         }
-        const float px = lerp(prev.players[static_cast<std::size_t>(i)].x, p.x, alpha);
-        const float py = lerp(prev.players[static_cast<std::size_t>(i)].y, p.y, alpha);
-        sprite(bank, "shadow", 0, -1, px, py);
+        if (p.special == Special::WarpOut || p.special == Special::WarpIn) continue;  // inside the warp
+        float px = lerp(prev.players[static_cast<std::size_t>(i)].x, p.x, alpha);
+        float py = lerp(prev.players[static_cast<std::size_t>(i)].y, p.y, alpha);
+        if (p.special == Special::Trampoline) {
+            // Up for the first half of the jump, down for the second (original values 680/681).
+            px = static_cast<float>(p.x);
+            const int f = p.specialFrames;
+            py = static_cast<float>(p.y) - static_cast<float>((f < 15 ? f : 30 - f) * 35);
+        }
+        sprite(bank, "shadow", 0, -1, px, static_cast<float>(p.y));
         const std::string dir = kDirName[static_cast<unsigned>(p.facing) & 3u];
         const bool carrying = p.holding >= 0;
         bool drawn = false;

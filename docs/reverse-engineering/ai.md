@@ -16,9 +16,9 @@ Confidence: HIGH.
 
 One integer per cell (`0x4621F4`), cleared at the start of every bomb update, then raised (never lowered) by:
 
-- every bomb, for each cell its blast would reach (`0x4242DE`, `0x4243B7`; the level passed is a computed value that was **not recovered**: UNKNOWN-023),
+- every bomb, for each cell its blast would reach, at level `100 + elapsed fuse in ms` (`0x42429B`-`0x4242DE`, `0x4243B7`),
 - every flame cell: level 1000 (`0x426E1E`, `0x42702F`),
-- the closing walls, for the next value-910 (15) cells ahead of the cursor.
+- the closing walls, for the next value-910 (15) cells ahead of the cursor, at a level that falls by 10 per cell of distance (`0x4269EF`-`0x4269FD`).
 
 "Safe to walk" (`0x40A59D`) means: no bomb, blank tile, no flame, danger 0.
 
@@ -42,7 +42,6 @@ The AI does **not** check for an escape route before dropping a bomb; it relies 
 ## Not read
 
 - The three search routines (`0x4092A1` path to a cell, `0x40970B` route to safety, `0x409C1F` nearest powerup): their expansion order and tie-breaking.
-- The bomb danger level formula.
 - AI use of kick, spooge and jelly, if any (no behaviour for them is in the table).
 
 ## Modern implementation (`src/game/ai.*`)
@@ -50,7 +49,7 @@ The AI does **not** check for an escape route before dropping a bomb; it relies 
 The same eight behaviours in the same order with the same probabilities, as an input source separate from the core. Differences, all in the unread parts:
 
 - Searches are plain breadth-first searches over unblocked cells.
-- A bomb's danger level is `1 + elapsed fuse in frames`; flames are 1000; the closing walls are not marked.
+- Bomb and flame danger levels follow the original; the closing walls are not marked.
 - The attack behaviour's first distance condition is omitted.
 
 Measured behaviour of the modern AI (four AIs, standard pillar scheme at 90 % bricks, 200 rounds): 149 rounds with a single survivor, 47 draws by simultaneous deaths, 4 by time; mean round length 78.5 s; 309 of 643 deaths were by the player's own bomb. No equivalent statistics have been taken from the original yet, so how close this is in *playing strength* is unknown.

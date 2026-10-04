@@ -57,6 +57,7 @@ void World::startRound(const Scheme& scheme, bool generatePowerups) {
     walls_ = {};
     wallsClosed_ = 0;
     hurryAnnounced_ = false;
+    extras_.clear();
     events_.clear();
     players_ = {};
     startCells_ = scheme.start;
@@ -121,6 +122,85 @@ void World::addPlayer(int i) {
     contenders_ = alivePlayers();
 }
 
+void World::setExtras(const std::vector<Extra>& extras, int conveyorSpeedSetting) {
+    extras_ = extras;
+    // Extras without a fixed position go on a random cell that is not solid and not taken.
+    for (Extra& e : extras_) {
+        if (inGrid(e.cell)) continue;
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            const Cell c{rng_.below(kGridW), rng_.below(kGridH)};
+            bool taken = tile(c) == Tile::Solid;
+            for (const Extra& o : extras_) taken = taken || (&o != &e && o.cell == c);
+            if (!taken) {
+                e.cell = c;
+                break;
+            }
+        }
+    }
+    extras_.erase(std::remove_if(extras_.begin(), extras_.end(), [](const Extra& e) { return !inGrid(e.cell); }),
+                  extras_.end());
+    conveyorSpeed_ = values_.get(vid::kConveyorSpeed + std::clamp(conveyorSpeedSetting, 0, 2));
+}
+
+const Extra* World::extraAt(Cell c) const {
+    for (const Extra& e : extras_)
+        if (e.cell == c) return &e;
+    return nullptr;
+}
+
+void World::updateExtras() {
+    for (Extra& e : extras_) {
+        if (e.type == ExtraType::Warp && !e.prepared) {
+            // A warp always stands on open ground with at least one open neighbour.
+            e.prepared = true;
+            setTile(e.cell, Tile::Blank);
+            Cell n{};
+            do {
+                n = step(e.cell, rng_.below(4));
+            } while (!inGrid(n));
+            setTile(n, Tile::Blank);
+        }
+        if (e.type == ExtraType::Trampoline && e.animFrame != 0 && ++e.animFrame > 12) e.animFrame = 0;
+    }
+}
+
+// Trampoline flight and warp travel: the player is out of play until it ends.
+void World::updateSpecial(int i, int dt) {
+    Player& p = players_[static_cast<std::size_t>(i)];
+    p.specialAcc += dt;
+    while (p.specialAcc > 0) {
+        ++p.specialFrames;
+        p.specialAcc -= frameMs_;
+    }
+    if (p.special == Special::Trampoline) {
+        const int total = values_.get(vid::kTrampolineFrames);
+        if (p.specialFrames >= total / 2 && p.warpX == 0) {
+            // At the top of the jump: come down on a random free cell nearby,
+            // in a different row and a different column.
+            p.warpX = 1;
+            const Cell from = pixelToCell(p.x, p.y);
+            for (int attempt = 0; attempt < 100; ++attempt) {
+                const Cell c{from.x + rng_.below(5) - 2, from.y + rng_.below(5) - 2};
+                if (c.x == from.x || c.y == from.y) continue;
+                if (tile(c) != Tile::Blank || bombAt(c) != nullptr) continue;
+                p.x = cellToPixelX(c.x);
+                p.y = cellToPixelY(c.y);
+                break;
+            }
+        }
+        if (p.specialFrames >= total) p.special = Special::None;
+    } else if (p.special == Special::WarpOut) {
+        if (p.specialFrames > 8) {
+            p.x = p.warpX;
+            p.y = p.warpY;
+            p.special = Special::WarpIn;
+            p.specialFrames = 0;
+        }
+    } else if (p.special == Special::WarpIn) {
+        if (p.specialFrames > 8) p.special = Special::None;
+    }
+}
+
 std::vector<Event> World::takeEvents() {
     std::vector<Event> out;
     out.swap(events_);
@@ -173,6 +253,7 @@ void World::tick(int dtMs, const std::array<PlayerInput, kMaxPlayers>& input) {
     const int dt = std::clamp(dtMs, 0, values_.get(vid::kMaxTickMs));
     ++tickCount_;
     roundMs_ += dt;
+    updateExtras();
     updateBombs(dt);
     updateFlames(dt);
     updateEnclosement(dt);
@@ -220,7 +301,22 @@ void World::updateBombs(int dt) {
 
     for (Bomb& b : bombs_) {
         if (!b.active) continue;
-        if (b.mode == BombMode::Sliding) slideBomb(b, dt);
+        if (b.mode == BombMode::Resting) {
+            // A resting bomb on a conveyor is carried along like a sliding one.
+            const Extra* e = extraAt(pixelToCell(b.x, b.y));
+            if (e != nullptr && e->type == ExtraType::Conveyor) {
+                const BombType type = b.type;
+                b.dir = e->dir;
+                b.speed = conveyorSpeed_;
+                b.mode = BombMode::Sliding;
+                b.type = BombType::Regular;  // no jelly bounce while merely carried
+                slideBomb(b, dt);
+                b.type = type;
+                if (b.mode == BombMode::Sliding) b.mode = BombMode::Resting;
+            }
+        } else if (b.mode == BombMode::Sliding) {
+            slideBomb(b, dt);
+        }
         if (b.mode == BombMode::Flying) flyBomb(b, dt);
         // Fuses only run, and bombs only explode, while the round is undecided.
         if (contenders_ > 1) {
@@ -253,6 +349,19 @@ void World::slideBomb(Bomb& b, int dt) {
         const int oy = offsetInCellY(ny);
         const int fwd = ox * kDx[d] + oy * kDy[d];
         const Cell cell = pixelToCell(nx, ny);
+        if (ox == 0 && oy == 0) {
+            // At a cell centre an arrow turns the bomb.
+            const Extra* e = extraAt(cell);
+            if (e != nullptr && e->type == ExtraType::Arrow && e->dir != b.dir) {
+                b.dir = e->dir;
+                b.stopRequested = false;
+                b.x = nx;
+                b.y = ny;
+                b.moveAcc -= 100;
+                slideBomb(b, 0);  // continue in the new direction with what is left
+                return;
+            }
+        }
         const Cell next = step(cell, b.dir);
 
         bool stop = false;
@@ -620,12 +729,13 @@ bool World::checkFlameDeath(int i) {
     const Cell c = pixelToCell(p.x, p.y);
     if (!inGrid(c) || !flames_[index(c)].active) return false;
     killPlayer(i, flames_[index(c)].owner);
-    return true;
+    return !p.alive;  // a player in the air or inside a warp survives
 }
 
 void World::killPlayer(int i, int killer) {
     Player& p = players_[static_cast<std::size_t>(i)];
     if (!p.alive) return;
+    if (p.special != Special::None) return;  // in the air or inside a warp
     p.alive = false;
     emit(EventKind::PlayerDied, i);
     p.deathAnim = 1 + rng_.below(std::max(1, values_.get(vid::kDeathAnimations)));
@@ -780,6 +890,31 @@ bool World::movePlayer(int i, Dir requested) {
         const int side = oy * kDx[d] - ox * kDy[d];   // offset across the direction of travel
         const Cell here = pixelToCell(p.x, p.y);
         const Cell next = step(here, requested);
+
+        if (fwd == -1) {
+            // One pixel before the centre of a cell holding a warp or a trampoline.
+            for (Extra& e : extras_) {
+                if (!(e.cell == here) || tile(here) != Tile::Blank) continue;
+                if (e.type == ExtraType::Warp) {
+                    Cell dest = e.cell;
+                    for (const Extra& o : extras_)
+                        if (&o != &e && o.type == ExtraType::Warp && o.id == e.linkTo) dest = o.cell;
+                    p.special = Special::WarpOut;
+                    p.warpX = cellToPixelX(dest.x);
+                    p.warpY = cellToPixelY(dest.y);
+                } else if (e.type == ExtraType::Trampoline) {
+                    e.animFrame = 1;
+                    p.special = Special::Trampoline;
+                    p.warpX = 0;
+                }
+                if (p.special != Special::None) {
+                    p.specialFrames = 0;
+                    p.specialAcc = 0;
+                    p.moveAcc = 0;
+                    return false;
+                }
+            }
+        }
 
         if (fwd == 0 && p.inventory[kPowKicker] > 0) {
             if (Bomb* b = findBomb(next); b != nullptr && playerPassable(step(next, requested))) {
@@ -953,12 +1088,34 @@ void World::updatePlayer(int i, int dt, const PlayerInput& in) {
         if (p.actionFrames >= (p.action == 1 ? 8 : 10)) p.action = 0;  // lengths of the kick / punch sequences
     }
 
+    if (p.special != Special::None) {
+        updateSpecial(i, dt);
+        p.prevButton1 = p.prevButton2 = false;
+        return;
+    }
+
     Dir requested = chooseDirection(p, effective);
     if (requested != kNoDir && p.disease[kDisReverse]) requested = opposite(requested);
     p.moving = false;
+    const Extra* under = extraAt(pixelToCell(p.x, p.y));
+    const bool onConveyor = under != nullptr && under->type == ExtraType::Conveyor;
     if (requested != kNoDir) {
-        p.moveAcc += playerSpeed(p) * dt / frameMs_;
+        int speed = playerSpeed(p);
+        if (onConveyor) {
+            // Faster with the belt, slower against it.
+            if (under->dir == requested) speed += conveyorSpeed_;
+            if (under->dir == opposite(requested)) speed -= conveyorSpeed_;
+        }
+        p.moveAcc += speed * dt / frameMs_;
         if (movePlayer(i, requested)) return;
+    } else if (onConveyor) {
+        // Standing still: carried along, facing unchanged.
+        const Dir facing = p.facing;
+        p.moveAcc += conveyorSpeed_ * dt / frameMs_;
+        const bool died = movePlayer(i, under->dir);
+        p.facing = facing;
+        p.moving = false;
+        if (died) return;
     }
     handleButtons(i, effective);
 }

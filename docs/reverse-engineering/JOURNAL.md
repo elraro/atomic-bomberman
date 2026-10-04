@@ -340,3 +340,10 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - Modern `AiPlayer` (`src/game/ai.*`) follows the same list. It is an input source; the core is unchanged.
 - Measured: 200 rounds of four AIs end with a single survivor 149 times; about half of all deaths are self-inflicted.
 - Tests: 42 tests, 762 checks.
+
+## 2026-10-04 — Session 10: level extras; AI danger formula
+
+- Bomb danger level for the AI is `100 + elapsed fuse ms` (`0x42429B`); closing walls mark cells ahead with a level falling by 10 per cell. Applied to the modern AI.
+- Level extras read from `extra.c` and their users; documented in `extras.md`, specified in `specifications/maps.md`, implemented in the core (`World::setExtras`) with a reader for `extraN.res`. Rendered for levels 3 and 10 and checked by eye.
+- Tests: 47 tests, 795 checks, all passing.
+- Not yet observed on the original: any of the extras.
