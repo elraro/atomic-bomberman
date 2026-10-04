@@ -122,10 +122,7 @@ Evidence:
 `Round_Init` waits for a level number from the network when the value is 1 and broadcasts when it is 2.
 
 Status:
-OPEN
-
-Next action:
-Decompile `0x40C06A` and the code that sets its backing variable.
+RESOLVED (session 14). 0 = no network, 1 = client, 2 = host; see `networking.md` (roles are inferred from which side generates the map, runs the clock and sends the level and values).
 
 # UNKNOWN-011
 
@@ -136,10 +133,10 @@ Evidence:
 `net1.c` strings: `*invalid packet*`, `init error: illegal token: %u`, `RETRANSMITTED A %u TYPE (crit was %d)!`, `Ignoring a network player's supposed death.` Small functions `0x40EE16`, `0x40EE59`, `0x40F064`, `0x40FB44`, `0x40FB90` each build one message type.
 
 Status:
-OPEN (do not implement any packet structure yet)
+IN PROGRESS (session 14). Packet framing, the reliable-message mechanism and a table of 49 message types with sizes and inferred meanings are in `networking.md`. Payload field layouts, the lobby messages and the transports' details are still open.
 
 Next action:
-After the core gameplay is understood, enumerate the message builder functions between `0x40EC00` and `0x40FE00` and the receive dispatcher `0x40E765`.
+Read the handlers of types 4, 33, 34 and 36 for their field layouts; capture real traffic between two instances if two machines (or two Wine prefixes with IPX) can be arranged.
 
 # UNKNOWN-012
 

@@ -398,3 +398,10 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - A scheme with powerup overrides (`testpow.sch`) makes every brick hide a skate, which makes pickup effects testable: reveal, pickup by cell and one-skate speed (about 212 px/s) observed (D47, D48).
 - Arrows: a kicked bomb followed three arrows on level 3 at 200 px/s (D49).
 - All four kinds of level extra have now been observed on the original (conveyor D37, warp D45, trampoline D46, arrow D49).
+
+## 2026-10-04 — Session 14: network message layer (static)
+
+- Packet framing (magic 0x536C, batched messages of length/type/sequence), reliable "critical" messages (types ≥ 32: acknowledged by type 12, resent after value 1100+protocol ms, dropped after 25 resends, de-duplicated by a 500-id ring per node), up to 5 nodes.
+- 49 handlers registered through `0x40E412`; type and payload size of every sender recovered from its call to `0x40CE27`. Meanings assigned from the gameplay call sites already understood (bomb created, detonation, death, pickup, kick, punch, clock, level, values).
+- Roles: 1 client, 2 host. Host owns map generation, clock, level choice, tuning values; each machine owns its players.
+- Documented in `networking.md`. Nothing observed on the wire.
