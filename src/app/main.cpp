@@ -29,6 +29,8 @@ struct Options {
     int frames = -1;          // stop after this many rendered frames (for automated runs)
     std::string screenshot;   // write the last frame as a PPM file
     bool demo = false;        // scripted input instead of the keyboard
+    bool native = false;      // 640x480 window, the original's resolution
+    bool shapes = false;      // draw flat shapes even when original graphics are available
     std::uint32_t seed = 1;
 };
 
@@ -44,6 +46,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--screenshot") o.screenshot = next();
         else if (a == "--seed") o.seed = static_cast<std::uint32_t>(std::atoi(next().c_str()));
         else if (a == "--demo") o.demo = true;
+        else if (a == "--shapes") o.shapes = true;
+        else if (a == "--native") o.native = true;
         else std::fprintf(stderr, "WARN  unknown argument %s\n", a.c_str());
     }
     o.players = std::clamp(o.players, 1, ab::kMaxPlayers);
@@ -123,7 +127,7 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_Window* window = SDL_CreateWindow("Atomic Bomberman (modern)", 960, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+    SDL_Window* window = SDL_CreateWindow("Atomic Bomberman (modern)", opt.native ? 640 : 960, opt.native ? 480 : 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     if (window == nullptr) {
         std::fprintf(stderr, "ERROR SDL_CreateWindow: %s\n", SDL_GetError());
         SDL_Quit();
@@ -142,6 +146,8 @@ int main(int argc, char** argv) {
     int rc = 0;
     {
         ab::Renderer renderer;
+        ab::SpriteBank sprites;
+        if (!opt.gameDir.empty() && !opt.shapes) sprites.load(opt.gameDir, 0);
         ab::World world(values, opt.seed);
         ab::Rng scriptRng(opt.seed + 77);
         startRound(world, scheme, opt.players);
@@ -190,7 +196,7 @@ int main(int argc, char** argv) {
             int h = 0;
             SDL_GetWindowSizeInPixels(window, &w, &h);
             const float alpha = paused ? 1.0f : static_cast<float>(accumulatorMs / kStepMs);
-            renderer.draw(world, previous, alpha, w, h);
+            renderer.draw(world, previous, alpha, w, h, &sprites);
             ++frame;
             if (opt.frames > 0 && frame >= opt.frames) {
                 if (!opt.screenshot.empty()) writePpm(opt.screenshot, w, h);

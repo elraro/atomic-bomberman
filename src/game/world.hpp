@@ -72,6 +72,8 @@ struct Player {
     int fuseFrames = 0;
     std::array<int, kPowTypeCount> inventory{};
     int moveAcc = 0;
+    int animCounter = 0;  // +1 per pixel walked (the walk animation advances every 3)
+    bool moving = false;  // moved during the last tick
     int triggerBombsLaid = 0;
     bool prevButton1 = false;
     bool prevButton2 = false;
@@ -108,6 +110,8 @@ struct Flame {
     bool burningBrick = false;
     int owner = -1;
     int ageMs = 0;
+    Dir dir = kNoDir;  // kNoDir: centre of the blast; otherwise the arm's direction
+    bool tip = false;  // last cell of an arm at full range
 };
 
 enum class PowerupState : std::uint8_t { None = 0, Hidden = 1, Revealed = 2 };
@@ -179,7 +183,7 @@ private:
     bool bombCanSlideInto(Cell c);
     void queueDetonation(Bomb& b, int arrivedFrom);
     void detonate(Bomb& b);
-    void createFlame(Cell c, int owner, bool burningBrick);
+    void createFlame(Cell c, int owner, bool burningBrick, Dir dir = kNoDir, bool tip = false);
     void destroyPowerup(Cell c);
     void revealPowerup(Cell c);
     void scatterPowerup(int type);

@@ -80,7 +80,8 @@ def decode_cimg(body, name=""):
     if kind & 7 != 4:
         raise ValueError(f"unsupported CIMG type {kind}")
     enctype, _pad, hdr_len, csize, usize = struct.unpack_from("<BBHII", body, off_data)
-    payload = body[off_data + hdr_len:off_data + hdr_len + csize]
+    # The stored size counts the sub-header as well as the pixel data.
+    payload = body[off_data + hdr_len:off_data + csize]
     if enctype == 0x00:
         raw = payload[:usize]
     elif enctype == 0x11:

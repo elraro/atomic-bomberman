@@ -16,16 +16,20 @@ constexpr float kScreenH = 480.0f;
 
 const char* kVertexSrc = R"(#version 330 core
 layout(location = 0) in vec2 aPos;
-layout(location = 1) in vec4 aColor;
+layout(location = 1) in vec2 aUv;
+layout(location = 2) in vec4 aColor;
 uniform mat4 uProj;
 out vec4 vColor;
-void main() { vColor = aColor; gl_Position = uProj * vec4(aPos, 0.0, 1.0); }
+out vec2 vUv;
+void main() { vColor = aColor; vUv = aUv; gl_Position = uProj * vec4(aPos, 0.0, 1.0); }
 )";
 
 const char* kFragmentSrc = R"(#version 330 core
 in vec4 vColor;
+in vec2 vUv;
+uniform sampler2D uTex;
 out vec4 oColor;
-void main() { oColor = vColor; }
+void main() { oColor = texture(uTex, vUv) * vColor; }
 )";
 
 unsigned compile(GLenum type, const char* src) {
@@ -76,25 +80,61 @@ Renderer::Renderer() {
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), nullptr);
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex),
                           reinterpret_cast<const void*>(2 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                          reinterpret_cast<const void*>(4 * sizeof(float)));
     glBindVertexArray(0);
+
+    const unsigned char whitePixel[4] = {255, 255, 255, 255};
+    glGenTextures(1, &white_);
+    glBindTexture(GL_TEXTURE_2D, white_);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, whitePixel);
+    current_ = white_;
 }
 
 Renderer::~Renderer() {
+    glDeleteTextures(1, &white_);
     glDeleteBuffers(1, &vbo_);
     glDeleteVertexArrays(1, &vao_);
     glDeleteProgram(program_);
 }
 
+void Renderer::setTexture(unsigned texture) {
+    if (texture == current_) return;
+    flush();
+    current_ = texture;
+}
+
 void Renderer::quad(float x, float y, float w, float h, float r, float g, float b, float a) {
-    const Vertex v[6] = {{x, y, r, g, b, a},         {x + w, y, r, g, b, a}, {x + w, y + h, r, g, b, a},
-                         {x, y, r, g, b, a},         {x + w, y + h, r, g, b, a}, {x, y + h, r, g, b, a}};
+    setTexture(white_);
+    const Vertex v[6] = {{x, y, 0, 0, r, g, b, a},     {x + w, y, 0, 0, r, g, b, a},     {x + w, y + h, 0, 0, r, g, b, a},
+                         {x, y, 0, 0, r, g, b, a},     {x + w, y + h, 0, 0, r, g, b, a}, {x, y + h, 0, 0, r, g, b, a}};
     batch_.insert(batch_.end(), v, v + 6);
+}
+
+void Renderer::textured(unsigned texture, float x, float y, float w, float h) {
+    setTexture(texture);
+    const Vertex v[6] = {{x, y, 0, 0, 1, 1, 1, 1},     {x + w, y, 1, 0, 1, 1, 1, 1},     {x + w, y + h, 1, 1, 1, 1, 1, 1},
+                         {x, y, 0, 0, 1, 1, 1, 1},     {x + w, y + h, 1, 1, 1, 1, 1, 1}, {x, y + h, 0, 1, 1, 1, 1, 1}};
+    batch_.insert(batch_.end(), v, v + 6);
+}
+
+bool Renderer::sprite(SpriteBank& bank, const std::string& sequence, int index, int colour, float x, float y) {
+    const auto s = bank.sprite(sequence, index, colour);
+    if (!s) return false;
+    textured(s->texture, x - static_cast<float>(s->hotX), y - static_cast<float>(s->hotY),
+             static_cast<float>(s->width), static_cast<float>(s->height));
+    return true;
 }
 
 void Renderer::flush() {
     if (batch_.empty()) return;
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, current_);
     glBindVertexArray(vao_);
     glBindBuffer(GL_ARRAY_BUFFER, vbo_);
     glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(batch_.size() * sizeof(Vertex)), batch_.data(),
@@ -104,7 +144,8 @@ void Renderer::flush() {
     batch_.clear();
 }
 
-void Renderer::draw(const World& world, const RenderSnapshot& prev, float alpha, int windowW, int windowH) {
+void Renderer::draw(const World& world, const RenderSnapshot& prev, float alpha, int windowW, int windowH,
+                    SpriteBank* sprites) {
     // Letterbox the 640x480 logical screen into the window.
     const float scale = std::min(static_cast<float>(windowW) / kScreenW, static_cast<float>(windowH) / kScreenH);
     const int vw = static_cast<int>(kScreenW * scale);
@@ -120,7 +161,88 @@ void Renderer::draw(const World& world, const RenderSnapshot& prev, float alpha,
     const float proj[16] = {2.0f / kScreenW, 0, 0, 0, 0, -2.0f / kScreenH, 0, 0, 0, 0, -1, 0, -1, 1, 0, 1};
     glUseProgram(program_);
     glUniformMatrix4fv(projLoc_, 1, GL_FALSE, proj);
+    glUniform1i(glGetUniformLocation(program_, "uTex"), 0);
 
+    if (sprites != nullptr && sprites->loaded())
+        drawSprites(world, prev, alpha, *sprites);
+    else
+        drawShapes(world, prev, alpha);
+    flush();
+}
+
+namespace {
+
+const char* const kDirName[4] = {"north", "east", "south", "west"};
+const char* const kPowerName[kPowTypeCount] = {"bomb",   "flame",     "disease", "kicker", "skate",    "punch",  "grab", "spooge",
+                                               "goldflame", "trigger", "jelly",  "disease3", "random", "clog", "clog"};
+
+}  // namespace
+
+void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float alpha, SpriteBank& bank) {
+    if (bank.background() != 0)
+        textured(bank.background(), 0, 0, kScreenW, kScreenH);
+    else
+        quad(0, 0, kScreenW, kScreenH, 0.10f, 0.12f, 0.16f);
+
+    const int level = 0;
+    const std::string lv = std::to_string(level);
+    const int frame = world.tickCount();  // one animation frame per 50 ms step
+
+    for (int y = 0; y < kGridH; ++y)
+        for (int x = 0; x < kGridW; ++x) {
+            const auto rx = static_cast<float>(cellToPixelX(x));
+            const auto ry = static_cast<float>(cellToPixelY(y));
+            const Tile t = world.tile({x, y});
+            const Flame& f = world.flame({x, y});
+            if (t == Tile::Solid) sprite(bank, "tile " + lv + " solid", 0, -1, rx, ry);
+            if (t == Tile::Brick && !(f.active && f.burningBrick)) sprite(bank, "tile " + lv + " brick", 0, -1, rx, ry);
+            const Powerup& pu = world.powerup({x, y});
+            if (pu.state == PowerupState::Revealed && t != Tile::Brick)
+                sprite(bank, std::string("power ") + kPowerName[pu.type], frame, -1, rx, ry);
+            if (f.active) {
+                const int age = f.ageMs / kFrameMs;
+                if (f.burningBrick) {
+                    const std::string seq = "flame brick " + lv;
+                    sprite(bank, seq, std::min(age, std::max(0, bank.sequenceLength(seq) - 1)), -1, rx, ry);
+                } else {
+                    std::string piece = "center";
+                    if (f.dir != kNoDir) piece = std::string(f.tip ? "tip" : "mid") + kDirName[f.dir];
+                    sprite(bank, "flame " + piece + " green", age, f.owner, rx, ry);
+                }
+            }
+        }
+
+    std::size_t bi = 0;
+    for (const Bomb& b : world.bombs()) {
+        const std::size_t idx = bi++;
+        if (!b.active) continue;
+        const float bx = lerp(prev.bombs[idx].x, b.x, alpha);
+        const float by = lerp(prev.bombs[idx].y, b.y, alpha);
+        const char* seq = b.type == BombType::Trigger ? "bomb trigger green"
+                        : b.type == BombType::Jelly   ? "bomb jelly green"
+                                                      : "bomb regular green";
+        sprite(bank, seq, frame - b.createdTick, b.owner, bx, by);
+    }
+
+    // Players are drawn back to front.
+    std::array<int, kMaxPlayers> order{};
+    for (int i = 0; i < kMaxPlayers; ++i) order[static_cast<std::size_t>(i)] = i;
+    std::sort(order.begin(), order.end(), [&](int a, int b2) { return world.player(a).y < world.player(b2).y; });
+    for (int i : order) {
+        const Player& p = world.player(i);
+        if (!p.present || !p.alive) continue;
+        const float px = lerp(prev.players[static_cast<std::size_t>(i)].x, p.x, alpha);
+        const float py = lerp(prev.players[static_cast<std::size_t>(i)].y, p.y, alpha);
+        sprite(bank, "shadow", 0, -1, px, py);
+        const std::string dir = kDirName[static_cast<unsigned>(p.facing) & 3u];
+        if (p.moving)
+            sprite(bank, "walk " + dir, p.animCounter / 3, i, px, py);
+        else
+            sprite(bank, "stand " + dir, 0, i, px, py);
+    }
+}
+
+void Renderer::drawShapes(const World& world, const RenderSnapshot& prev, float alpha) {
     quad(0, 0, kScreenW, kScreenH, 0.10f, 0.12f, 0.16f);
 
     const auto cw = static_cast<float>(kCellW);

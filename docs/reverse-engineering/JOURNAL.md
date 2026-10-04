@@ -293,3 +293,11 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - **Measured on the original**: walking speed ≈ 183 px/s (D17), fuse 2.000 s with a controlled bomb (D18), flame lifetime ≈ 500 ms (D19), blast shape and edge stop (D20).
 - Correction: `Match_PlayerSetupScreen` (player list) comes before the level/scheme screen, not after.
 - Validation level: fuse, flame lifetime, walking speed and basic blast propagation are now observed on the original, reproduced by the modern core and covered by unit tests (Level 4).
+
+## 2026-10-04 — Session 7: original graphics in the modern renderer
+
+- C++ readers for `.ani`, PCX and `color.pal`/`.rmp` (`src/resources/ani_file.*`), sprite textures built at run time (`src/rendering/sprites.*`), renderer draws background, tiles, powerups, flames, bombs and players with the original artwork.
+- Correction to the ANI format: the size field in the CIMG sub-header includes the 12-byte sub-header. The Python tool had been lenient about it; the C++ reader rejected every frame until this was fixed.
+- Palette model confirmed (UNKNOWN-012) and colour remap understood (UNKNOWN-021): only palette indices 100-174 are remapped.
+- Pixel comparison with the original's screenshot: 99.46 % identical playfield, sprite position exact. Sequence step offsets are not draw offsets.
+- Tests: 31 tests, 664 checks, all passing (new: ANI parser on a synthetic file).

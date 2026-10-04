@@ -261,9 +261,9 @@ void World::slideBomb(Bomb& b, int dt) {
     }
 }
 
-void World::createFlame(Cell c, int owner, bool burningBrick) {
+void World::createFlame(Cell c, int owner, bool burningBrick, Dir dir, bool tip) {
     if (!inGrid(c)) return;
-    flames_[index(c)] = {true, burningBrick, owner, 0};
+    flames_[index(c)] = {true, burningBrick, owner, 0, dir, tip};
 }
 
 void World::detonate(Bomb& b) {
@@ -289,11 +289,11 @@ void World::detonate(Bomb& b) {
             const Tile t = tile(c);
             if (t == Tile::Solid) break;
             if (t == Tile::Brick) {
-                createFlame(c, -1, true);  // the brick becomes blank when this flame ends
+                createFlame(c, -1, true, d);  // the brick becomes blank when this flame ends
                 revealPowerup(c);
                 break;
             }
-            createFlame(c, b.owner, false);
+            createFlame(c, b.owner, false, d, n == b.range - 1);
         }
     }
 }
@@ -533,6 +533,8 @@ bool World::movePlayer(int i, Dir requested) {
 
         p.x += mx;
         p.y += my;
+        ++p.animCounter;
+        if (mx != 0 || my != 0) p.moving = true;
         if (checkFlameDeath(i)) return true;
         checkPickup(i);
         p.moveAcc -= 100;
@@ -590,6 +592,7 @@ void World::updatePlayer(int i, int dt, const PlayerInput& in) {
     const PlayerInput effective = frozen ? PlayerInput{} : in;
 
     const Dir requested = chooseDirection(p, effective);
+    p.moving = false;
     if (requested != kNoDir) {
         p.moveAcc += playerSpeed(p) * dt / frameMs_;
         if (movePlayer(i, requested)) return;

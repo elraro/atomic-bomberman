@@ -150,10 +150,7 @@ Evidence:
 File size is exactly 768 + 32768. Palette bytes are ≤ 0x3F except the first entry (`FF FF FF`).
 
 Status:
-IN PROGRESS. The ANI loader maps RGB555 pixels through a 32 768-entry table at `0x495390`, which matches the size of the second part of `color.pal`.
-
-Next action:
-Trace the palette loader (`color.c`) to confirm the table is read from the file, and check the 6-bit scaling.
+RESOLVED (session 7). `color.pal` = 256 six-bit RGB triples + RGB555→index table. Evidence: every colour in the original's screenshots is a palette entry ×4; `field0.pcx`'s palette equals palette ×4 in 254 entries; sprites decoded through the table and palette reproduce the original's screenshot (99.46 % of pixels identical).
 
 # UNKNOWN-013
 
@@ -255,7 +252,4 @@ Evidence:
 Sequence names end in `green`; `0x415ED1` references `Remap table #%u (%u.rmp)`; draw calls pass a colour index (`OBJ+0x3C`).
 
 Status:
-OPEN
-
-Next action:
-Read `0x415A9F` (sprite queue), `0x4156C7` / `0x4158CF` (blitters with a remap argument) and the `.rmp` loader in `graf.c`.
+RESOLVED (session 7). `N.rmp` holds a 256-entry table that is non-zero only for palette indices 100-174 (the green band); a non-zero entry replaces the index. Player sprites, bombs and flames drawn through it match the original's colours. Where in the original's blitters the lookup happens was not traced.

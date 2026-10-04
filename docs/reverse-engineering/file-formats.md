@@ -57,7 +57,7 @@ Sub-chunks: `HEAD` (2 bytes, not decoded), `FNAM` (source image name, NUL-termin
 +0  u8   encoding        0x00 raw, 0x11 run-length
 +1  u8   0
 +2  u16  length of this sub-header (0x0C)
-+4  u32  compressed size
++4  u32  stored size, including this 12-byte sub-header
 +8  u32  uncompressed size = width × height × 2
 +12 data
 ```

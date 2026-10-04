@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "game/world.hpp"
+#include "resources/ani_file.hpp"
 #include "resources/scheme_file.hpp"
 
 using namespace ab;
@@ -118,6 +119,74 @@ void testSchemeFile() {
     CHECK(sf->scheme.start[1] == (Cell{14, 10}));
     CHECK_EQ(sf->team[1], 1);
     CHECK(!parseSchemeText("-N,missing rows\n").has_value());
+}
+
+// Builds a minimal .ANI in memory: one 3x2 frame (RLE) and one sequence.
+void testAniParser() {
+    std::vector<std::uint8_t> d;
+    auto put16 = [](std::vector<std::uint8_t>& v, unsigned x) { v.push_back(x & 0xFF); v.push_back((x >> 8) & 0xFF); };
+    auto put32 = [&](std::vector<std::uint8_t>& v, unsigned x) { put16(v, x & 0xFFFF); put16(v, x >> 16); };
+    auto chunk = [&](const char* tag, const std::vector<std::uint8_t>& body) {
+        std::vector<std::uint8_t> c(tag, tag + 4);
+        put32(c, static_cast<unsigned>(body.size()));
+        put16(c, 1);
+        c.insert(c.end(), body.begin(), body.end());
+        return c;
+    };
+    // pixels: 0x1111 x4 (run), then literals 0x2222, 0x7FFF
+    const std::vector<std::uint8_t> rle = {0x83, 0x11, 0x11, 0x01, 0x22, 0x22, 0xFF, 0x7F, 0xFF};
+    std::vector<std::uint8_t> cimg;
+    put16(cimg, 4); put16(cimg, 4); put32(cimg, 24); put32(cimg, 0);
+    put16(cimg, 3); put16(cimg, 2); put16(cimg, 1); put16(cimg, 1); put32(cimg, 0x7FFF);
+    cimg.push_back(0x11); cimg.push_back(0); put16(cimg, 12);
+    put32(cimg, static_cast<unsigned>(12 + rle.size()));  // stored size includes the sub-header
+    put32(cimg, 12);
+    cimg.insert(cimg.end(), rle.begin(), rle.end());
+    const auto fram = chunk("FRAM", chunk("CIMG", cimg));
+
+    std::vector<std::uint8_t> head(96, 0);
+    const char* name = "bomb regular green";
+    std::copy(name, name + 18, head.begin());
+    std::vector<std::uint8_t> ref;
+    put16(ref, 1); put16(ref, 0); put16(ref, 0xFFFF); put16(ref, 3); put32(ref, 0);
+    auto statBody = chunk("HEAD", std::vector<std::uint8_t>(46, 0));
+    const auto refChunk = chunk("FRAM", ref);
+    statBody.insert(statBody.end(), refChunk.begin(), refChunk.end());
+    auto seqBody = chunk("HEAD", head);
+    const auto stat = chunk("STAT", statBody);
+    seqBody.insert(seqBody.end(), stat.begin(), stat.end());
+    const auto seq = chunk("SEQ ", seqBody);
+
+    const char* magic = "CHFILEANI ";
+    d.assign(magic, magic + 10);
+    put32(d, static_cast<unsigned>(fram.size() + seq.size()));
+    put16(d, 0);
+    d.insert(d.end(), fram.begin(), fram.end());
+    d.insert(d.end(), seq.begin(), seq.end());
+
+    const auto f = parseAni(d);
+    CHECK(f.has_value());
+    if (!f) return;
+    CHECK_EQ(f->frames.size(), 1u);
+    CHECK_EQ(f->sequences.size(), 1u);
+    const AniFrame& fr = f->frames[0];
+    CHECK_EQ(fr.width, 3);
+    CHECK_EQ(fr.height, 2);
+    CHECK_EQ(fr.hotX, 1);
+    CHECK(fr.hasKey);
+    CHECK_EQ(fr.key, 0x7FFF);
+    CHECK_EQ(fr.pixels.size(), 6u);
+    if (fr.pixels.size() == 6) {
+        CHECK_EQ(fr.pixels[0], 0x1111);
+        CHECK_EQ(fr.pixels[3], 0x1111);
+        CHECK_EQ(fr.pixels[4], 0x2222);
+        CHECK_EQ(fr.pixels[5], 0x7FFF);
+    }
+    CHECK(f->sequences[0].name == "bomb regular green");
+    CHECK_EQ(f->sequences[0].steps.size(), 1u);
+    CHECK_EQ(f->sequences[0].steps[0].dx, -1);
+    CHECK_EQ(f->sequences[0].steps[0].dy, 3);
+    CHECK(!parseAni({1, 2, 3}).has_value());
 }
 
 void testStartFreeze() {  // T1
@@ -649,6 +718,7 @@ int main() {
         {"geometry", testGeometry},
         {"values parser", testValuesParser},
         {"scheme file", testSchemeFile},
+        {"ani parser", testAniParser},
         {"start freeze", testStartFreeze},
         {"speed", testSpeed},
         {"tick length sensitivity", testFrameRateIndependenceIsApproximate},
