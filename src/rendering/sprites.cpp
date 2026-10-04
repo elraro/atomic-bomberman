@@ -102,6 +102,7 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
     addAni(ani + "misc.ani");
     addAni(ani + "hurry.ani");
     addAni(ani + "conveyor.ani");
+    addAni(ani + "aliens1.ani");
     for (int n = 1; n <= 4; ++n) {
         addAni(ani + "punbomb" + std::to_string(n) + ".ani");
         addAni(ani + "bwalk" + std::to_string(n) + ".ani");

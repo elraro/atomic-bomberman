@@ -11,6 +11,7 @@
 #include "game/ai.hpp"
 #include "game/roulette.hpp"
 #include "game/world.hpp"
+#include "resources/campaign_file.hpp"
 #include "resources/help_file.hpp"
 #include "resources/settings.hpp"
 #include "resources/ani_file.hpp"
@@ -989,6 +990,22 @@ void testCampaignStageClear() {
     CHECK(w.roundOver());
 }
 
+void testCampaignFile() {
+    const auto stages = parseCampaignText("; comment\r\n-C,Just One Ghost,           1,basic,    0,  0, 1,150, 0, 50\r\n"
+                                          "-C,One Rover & Two Dudes,    1,CLEAR,    1,500, 0,  0, 2, 50\r\n"
+                                          "-C,too,few,fields\r\n-X,a,1,b,0,0,0,0,0,0\r\n\x1a-C,after eof,1,basic,0,0,0,0,0,0\r\n");
+    CHECK_EQ(static_cast<int>(stages.size()), 2);
+    CHECK(stages[0].name == "Just One Ghost");
+    CHECK_EQ(stages[0].level, 1);
+    CHECK(stages[0].scheme == "basic");
+    CHECK_EQ(stages[0].ghosts, 1);
+    CHECK_EQ(stages[0].ghostSpeed, 150);
+    CHECK(stages[1].scheme == "clear");
+    CHECK_EQ(stages[1].rovers, 1);
+    CHECK_EQ(stages[1].roverSpeed, 500);
+    CHECK_EQ(stages[1].computerPlayers, 2);
+}
+
 void testSettings() {
     Settings s;
     s.parse("levelno=4\nnum_to_win_match=3\nenclosement_depth=9\nconveyor_speed=2\nteam_play=1\nrandom_start=1\n"
@@ -1512,6 +1529,7 @@ int main() {
         {"trapped animation", testTrappedAnimation},
         {"roulette", testRoulette},
         {"settings", testSettings},
+        {"campaign file", testCampaignFile},
         {"campaign enemies", testCampaignEnemies},
         {"campaign stage clear", testCampaignStageClear},
         {"upcoming walls", testUpcomingWalls},

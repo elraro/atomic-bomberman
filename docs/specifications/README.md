@@ -26,4 +26,4 @@ Numbers written as `V(n)` are entries of the original `data/res/valuelst.res`; t
 | `powerups.md` | Types, generation, pickup, diseases |
 | `game-modes.md` | Pre-game screens, free-for-all, team play, match flow |
 
-Not written yet (insufficient knowledge): `networking.md`, campaign mode. The AI is described in `../reverse-engineering/ai.md`.
+Not written yet: `networking.md`. Campaign mode, the roulette and the settings are in `game-modes.md`. The AI is described in `../reverse-engineering/ai.md`.

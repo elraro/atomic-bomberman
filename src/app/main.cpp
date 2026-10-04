@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -22,6 +23,7 @@
 #include "game/world.hpp"
 #include "rendering/renderer.hpp"
 #include "resources/asset_import.hpp"
+#include "resources/campaign_file.hpp"
 #include "resources/help_file.hpp"
 #include "resources/scheme_file.hpp"
 #include "resources/settings.hpp"
@@ -49,6 +51,7 @@ struct Options {
     int wins = 2;             // round wins needed to take the match (original value 310)
     bool rouletteShot = false;  // automated: capture the roulette once it has stopped, then exit
     bool roulette = false;    // the "goldman" roulette between rounds (original option goldman)
+    std::string campaign;     // --campaign NAME: start that campaign file (data/res/NAME.cam) at once
     bool levelSet = false;    // --level, --wins, --scheme given: they win over the saved settings
     bool winsSet = false;
     bool schemeSet = false;
@@ -73,6 +76,7 @@ Options parseArgs(int argc, char** argv) {
                       "  --players N          number of players (default 4)\n"
                       "  --humans N           keyboard players, 0-2\n"
                       "  --wins N             round wins needed for the match\n"
+                      "  --campaign NAME      play a campaign file of the game data (simple, ghosts, crouton)\n"
                       "  --roulette           the round winner spins for a prize before the next round\n"
                       "  --seed N             random seed\n"
                       "  --mute               no sound\n"
@@ -112,6 +116,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--wins") o.wins = std::max(1, std::atoi(next().c_str())), o.winsSet = true;
         else if (a == "--native") o.native = true;
         else if (a == "--roulette") o.roulette = true;
+        else if (a == "--campaign") o.campaign = next();
         else if (a == "--roulette-shot") o.roulette = o.rouletteShot = true;
         else {
             std::fprintf(stderr, "ERROR unknown argument %s (see --help)\n", a.c_str());
@@ -241,7 +246,7 @@ const char* controlName(Control c) {
 }
 
 constexpr int kOptionRows = 10;
-enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList };
+enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList };
 
 // Level names, original messages 150-160.
 const char* const kLevelName[11] = {"Green Acres",   "Classic Green Acres", "The Hockey Rink",  "Ancient Egypt",
@@ -486,6 +491,14 @@ int main(int argc, char** argv) {
             rouletteFrames = 0;
             rouletteMs = 0.0;
         };
+        // Campaign mode (hidden in the original: C five times on the player list).
+        bool campaignMode = false;
+        std::vector<ab::CampaignStage> stages;
+        int stageIndex = -1;
+        std::array<int, ab::kMaxPlayers> campaignScore{};  // points from earlier stages
+        int campaignKeyCount = 0;
+        std::vector<std::string> campaignFiles;
+        int campaignRow = 0;
         std::array<int, ab::kMaxPlayers> matchKills{};  // kills over the rounds of the match
         int matchWinner = -1;                           // player or team once the match is decided
         std::array<ab::Cell, ab::kMaxPlayers> startCells = scheme.start;
@@ -528,6 +541,7 @@ int main(int argc, char** argv) {
             world.setWinByKills(cfg.winByKills);
             ab::Scheme placed = scheme;
             placed.start = startCells;
+            world.setCampaign(campaignMode);
             world.startRound(placed, true);
             if (cfg.playTime >= ab::Settings::kInfiniteTime) world.setRoundSeconds(-1);
             world.setExtras(extras, cfg.conveyorSpeed);
@@ -538,6 +552,13 @@ int main(int argc, char** argv) {
                     world.addPlayer(i);
                     ++n;
                 }
+            if (campaignMode) {
+                for (int i = 0; i < ab::kMaxPlayers; ++i)
+                    if (world.player(i).present) world.setHuman(i, control[static_cast<std::size_t>(i)] != Control::Ai);
+                const ab::CampaignStage& st = stages[static_cast<std::size_t>(stageIndex)];
+                world.spawnAliens(ab::AlienType::Ghost, st.ghosts, st.ghostSpeed);
+                world.spawnAliens(ab::AlienType::Rover, st.rovers, st.roverSpeed);
+            }
             // The roulette prize goes to the winner of the last match (to every member of the
             // winning team), in every round of this one.
             for (int i = 0; i < ab::kMaxPlayers && prizeType >= 0; ++i)
@@ -557,7 +578,71 @@ int main(int argc, char** argv) {
                 playLevelMusic();
             }
         };
-        if (screen == Screen::Match) {
+        bool running = true;
+        // A notice that waits for a key (the original's message boxes).
+        std::vector<std::string> messageLines;
+        std::function<void()> messageDone;
+        auto showMessage = [&](std::vector<std::string> lines, std::function<void()> done) {
+            messageLines = std::move(lines);
+            messageDone = std::move(done);
+            screen = Screen::Message;
+        };
+        // Next campaign stage (original 0x40133F and 0x40151B): level and scheme from the
+        // campaign file, the computer players replaced by the stage's number of them in
+        // random free seats, then the notice and the stage itself.
+        std::function<void()> startCampaignStage = [&]() {
+            ++stageIndex;
+            if (stageIndex >= static_cast<int>(stages.size())) {
+                showMessage({"Congratulations!", "You made it through the whole campaign!"}, [&]() {  // messages 1220, 1225
+                    campaignMode = false;
+                    if (haveMenu) {
+                        screen = Screen::MainMenu;
+                        if (sound) audio.playMusic(1010);
+                    } else {
+                        running = false;
+                    }
+                });
+                return;
+            }
+            const ab::CampaignStage& st = stages[static_cast<std::size_t>(stageIndex)];
+            level = std::clamp(st.level, 0, 10);
+            for (std::size_t i = 0; i < schemes.size(); ++i)
+                if (schemes[i].file == st.scheme) schemeIndex = static_cast<int>(i);
+            applySettings();
+            startCells = scheme.start;
+            if (cfg.randomStart)
+                for (int n = 0; n < 200; ++n)
+                    std::swap(startCells[static_cast<std::size_t>(appRng.below(ab::kMaxPlayers))],
+                              startCells[static_cast<std::size_t>(appRng.below(ab::kMaxPlayers))]);
+            for (Control& c : control)
+                if (c == Control::Ai) c = Control::Off;
+            for (int n = 0; n < st.computerPlayers; ++n)
+                for (int tries = 0; tries < 100; ++tries) {
+                    Control& c = control[static_cast<std::size_t>(appRng.below(ab::kMaxPlayers))];
+                    if (c != Control::Off) continue;
+                    c = Control::Ai;
+                    break;
+                }
+            std::fprintf(stderr, "INFO  Campaign stage=%d name=\"%s\"\n", stageIndex, st.name.c_str());
+            showMessage({"Prepare to begin Campaign!", "(" + st.name + ")"}, [&]() {  // messages 1230, 1235
+                screen = Screen::Match;
+                beginMatch();
+                playLevelMusic();
+            });
+        };
+        auto startCampaign = [&](const std::string& file) {
+            auto loaded = ab::loadCampaignFile(opt.gameDir + "/data/res/" + file);
+            if (!loaded || loaded->empty()) return false;
+            stages = std::move(*loaded);
+            campaignMode = true;
+            stageIndex = -1;
+            campaignScore = {};
+            teamPlay = false;
+            return true;
+        };
+        if (!opt.campaign.empty() && startCampaign(opt.campaign + ".cam")) {
+            startCampaignStage();
+        } else if (screen == Screen::Match) {
             newMatch();
             beginMatch();
             playLevelMusic();
@@ -565,7 +650,6 @@ int main(int argc, char** argv) {
             audio.playMusic(1010);  // main menu music
         }
 
-        bool running = true;
         bool paused = false;
         int frame = 0;
         int step = 0;
@@ -647,10 +731,32 @@ int main(int argc, char** argv) {
                         screen = Screen::MainMenu;
                         if (sound) audio.playMusic(1010);
                     }
+                    if (key == SDLK_C && ++campaignKeyCount == 5) {
+                        // The original's hidden campaign chooser (0x41186D): message 1250 and the *.cam files.
+                        campaignKeyCount = 0;
+                        campaignFiles.clear();
+                        std::error_code ec;
+                        for (const auto& entry : std::filesystem::directory_iterator(opt.gameDir + "/data/res", ec)) {
+                            std::string ext = entry.path().extension().string();
+                            for (char& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                            if (ext == ".cam") campaignFiles.push_back(entry.path().filename().string());
+                        }
+                        std::sort(campaignFiles.begin(), campaignFiles.end());
+                        campaignRow = 0;
+                        screen = Screen::CampaignList;
+                    }
                     if (key == SDLK_RETURN) {
-                        int n = 0;
-                        for (Control k : control) n += k != Control::Off ? 1 : 0;
-                        if (n >= 2) screen = Screen::LevelSetup;
+                        int n = 0, humans = 0;
+                        for (Control k : control) {
+                            n += k != Control::Off ? 1 : 0;
+                            humans += k != Control::Off && k != Control::Ai ? 1 : 0;
+                        }
+                        if (campaignMode) {
+                            // No level screen and no two-player minimum in a campaign.
+                            if (humans >= 1) startCampaignStage();
+                        } else if (n >= 2) {
+                            screen = Screen::LevelSetup;
+                        }
                     }
                 } else if (screen == Screen::Roulette && roulette) {
                     if (sound) audio.playRange(20, 20);
@@ -672,6 +778,22 @@ int main(int argc, char** argv) {
                         } else {
                             running = false;
                         }
+                    }
+                } else if (screen == Screen::Message) {
+                    if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_ESCAPE) {
+                        const std::function<void()> done = std::move(messageDone);
+                        messageDone = nullptr;
+                        if (done) done();
+                    }
+                } else if (screen == Screen::CampaignList) {
+                    const int n = static_cast<int>(campaignFiles.size());
+                    if (key == SDLK_UP && n > 0) campaignRow = (campaignRow + n - 1) % n;
+                    if (key == SDLK_DOWN && n > 0) campaignRow = (campaignRow + 1) % n;
+                    if (key == SDLK_ESCAPE) screen = Screen::PlayerList;
+                    if (key == SDLK_RETURN && n > 0 && startCampaign(campaignFiles[static_cast<std::size_t>(campaignRow)])) {
+                        for (Control& c : control)
+                            if (c == Control::Ai) c = Control::Off;
+                        showMessage({"NOTE!", "Campaign Mode Activated!"}, [&]() { screen = Screen::PlayerList; });  // messages 95, 1210
                     }
                 } else if (screen == Screen::Help) {
                     // Keys of the original's viewer: a line or a page at a time; Enter or Esc closes.
@@ -740,6 +862,7 @@ int main(int argc, char** argv) {
                     }
                 } else {
                     if (key == SDLK_ESCAPE) {
+                        campaignMode = false;
                         if (haveMenu) {
                             screen = Screen::MainMenu;
                             if (sound) audio.playMusic(1010);
@@ -781,6 +904,19 @@ int main(int argc, char** argv) {
                     playEvents(world, audio);
                     accumulatorMs -= kStepMs;
                     ++step;
+                    if (campaignMode && world.roundOver()) {
+                        // Stage result (original 0x42A63B): a notice on failure, then the next
+                        // stage, or the same one again if no human player was left.
+                        for (int i = 0; i < ab::kMaxPlayers; ++i)
+                            if (world.player(i).present) campaignScore[static_cast<std::size_t>(i)] += world.player(i).score;
+                        std::fprintf(stderr, "INFO  Campaign stage over result=%d retry=%d\n", world.campaignResult(), world.campaignRetry() ? 1 : 0);
+                        if (world.campaignRetry()) --stageIndex;
+                        if (world.campaignResult() == 2)
+                            showMessage({"Oh Well!", "Campaign unsuccessful!"}, [&]() { startCampaignStage(); });  // messages 1240, 1245
+                        else
+                            startCampaignStage();
+                        break;
+                    }
                     // A decided round stays on screen for three seconds, then the next one starts.
                     if (world.roundOver() && roundOverSteps == 0) {
                         const int win = world.teamPlay() ? world.winningTeam() : world.winner();
@@ -870,7 +1006,11 @@ int main(int argc, char** argv) {
 
             if (screen == Screen::Match) {
                 const float alpha = paused ? 1.0f : static_cast<float>(accumulatorMs / kStepMs);
-                renderer.draw(world, previous, alpha, w, h, spritesPtr.get(), &wins);
+                std::array<int, ab::kMaxPlayers> shown = wins;
+                if (campaignMode)  // the score boxes show campaign points
+                    for (int i = 0; i < ab::kMaxPlayers; ++i)
+                        shown[static_cast<std::size_t>(i)] = campaignScore[static_cast<std::size_t>(i)] + world.player(i).score;
+                renderer.draw(world, previous, alpha, w, h, spritesPtr.get(), &shown);
                 if (world.roundOver() && spritesPtr->loaded() && roundOverSteps > 20) {
                     // After a second on the frozen field: the original's result pictures.
                     const int win = world.teamPlay() ? world.winningTeam() : world.winner();
@@ -939,6 +1079,30 @@ int main(int argc, char** argv) {
                         renderer.text(*spritesPtr, lines[r], tx, ty, 1.0f, 0.95f, 0.3f);
                     }
                 }
+                renderer.end();
+            } else if (screen == Screen::Message) {
+                renderer.begin(w, h);
+                renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
+                const float boxH = 70.0f + 24.0f * static_cast<float>(messageLines.size());
+                renderer.quad(100, 180, 440, boxH, 0.0f, 0.0f, 0.10f, 0.88f);
+                for (std::size_t r = 0; r < messageLines.size(); ++r) {
+                    const float tx = 320.0f - renderer.textWidth(*spritesPtr, messageLines[r]) / 2.0f;
+                    renderer.text(*spritesPtr, messageLines[r], tx, 196.0f + 24.0f * static_cast<float>(r), r == 0 ? 1.0f : 0.9f, r == 0 ? 0.95f : 0.9f, r == 0 ? 0.3f : 0.9f);
+                }
+                const std::string ok = "Enter: Ok";
+                renderer.text(*spritesPtr, ok, 320.0f - renderer.textWidth(*spritesPtr, ok) / 2.0f, 180.0f + boxH - 30.0f, 0.4f, 1.0f, 1.0f);
+                renderer.end();
+            } else if (screen == Screen::CampaignList) {
+                renderer.begin(w, h);
+                renderer.image(spritesPtr->picture("glue0"));
+                renderer.quad(40, 60, 420, 40.0f + 22.0f * static_cast<float>(campaignFiles.size()), 0.0f, 0.0f, 0.10f, 0.82f);
+                renderer.text(*spritesPtr, "Please select a campaign file:", 55, 68, 1, 1, 1);  // message 1250
+                for (std::size_t r = 0; r < campaignFiles.size(); ++r) {
+                    const bool on = static_cast<int>(r) == campaignRow;
+                    renderer.text(*spritesPtr, campaignFiles[r], 80, 92.0f + 22.0f * static_cast<float>(r), on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
+                }
+                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, 107.0f + 22.0f * static_cast<float>(campaignRow));
+                renderer.text(*spritesPtr, "Up/Down: select   Enter: play   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::Help) {
                 renderer.begin(w, h);

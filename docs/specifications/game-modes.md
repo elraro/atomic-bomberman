@@ -32,7 +32,7 @@ Option `team_play`. [D]
 
 ## Not specified
 
-Campaign mode (ghosts, rovers, lives, points: values 1200-1320 and `.cam` files), network games.
+Network games.
 
 ## Roulette ("goldman" option, off by default)
 
@@ -63,3 +63,19 @@ The original keeps these in `options.ini` and edits them on the Options screen (
 
 Defaults are those of the tuning values and of an options file written by the original; the original's built-in defaults for a missing file were not all read. [M]
 Not carried over: node name, modem and protocol settings, keyboard layout editor, "enhanced memory model", and "Adjust Audio" (a placeholder in the original: message 320).
+
+## Campaign mode
+
+A hidden, visibly unfinished mode of the original, recovered from `campaign.c` and `aliens.c`. All of it is [S] (read in the code, never seen running).
+
+- **Entering**: on the player list of a local game, press C five times; choose one of the `.cam` files (`simple`, `ghosts`, `crouton`); a notice confirms "Campaign Mode Activated!". Computer players are removed from the list and cannot be selected.
+- **Campaign file**: one stage per line, `-C,name,level,scheme,rovers,rover speed,ghosts,ghost speed,computer players,difficulty` (difficulty is not used).
+- **Stage start**: level and scheme come from the stage; the level screen is skipped and one human player is enough; the stage's number of computer players is seated at random free seats; a notice "Prepare to begin Campaign! (name)".
+- **Enemies**: ghosts and rovers are placed on random non-solid cells more than three cells (Manhattan) from every player. A rover clears its cell and neighbours like a player's start and walks blank cells only; a ghost also walks through bricks; neither enters a cell with a bomb. They move like players (speed in 100ths of a pixel per frame). At each cell centre: if the way ahead is blocked they stop and turn left or right at random; otherwise they turn with 1 chance in value 1200 (3). A turn into a blocked direction costs the rest of that update.
+- An enemy in a burning cell dies; the flame's owner scores value 1310 (15) for a rover, 1320 (25) for a ghost. Burning a computer player scores value 1300 (250).
+- An enemy kills any **human** player whose cell it enters; computer players are not harmed.
+- **Lives**: a human player whose death animation has finished returns at the start cell, keeping the inventory, as long as a life is left; each return grants another life unless less than value 101 (60) seconds remain. Computer players do not return.
+- **Stage end**: cleared when no enemy has been left for 2 × value 25 frames (2 s), whatever the computer players are doing. Failed when the clock is down to its last second, or when no human player is in play; in the second case the same stage is played again, after "Oh Well! Campaign unsuccessful!". (After a clock failure the original moves on to the next stage.)
+- The last-player-standing rule and the closing walls are off (the original reports two contenders at all times).
+- After the last stage: "Congratulations! You made it through the whole campaign!" and back to the menu.
+- The value 1205 ("chance that the direction change will NOT be towards a human") is not used by the code that was read.

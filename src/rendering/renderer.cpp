@@ -439,6 +439,13 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
         }
     }
 
+    // Campaign enemies: "ghost <dir>" / "rover <dir>", frame = pixels walked.
+    for (const Alien& a : world.aliens()) {
+        if (!a.active) continue;
+        sprite(bank, std::string(a.type == AlienType::Ghost ? "ghost " : "rover ") + kDirName[static_cast<unsigned>(a.dir) & 3u], a.anim, -1,
+               static_cast<float>(a.x), static_cast<float>(a.y));
+    }
+
     // Gold sparkles: once per simulation step each gold player has a 5-in-6 chance of a
     // new one near the body (x -20..19, y -48..1); each lives for the 13 frames of "goldman".
     if (world.tickCount() != sparkleTick_) {

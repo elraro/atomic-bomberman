@@ -527,3 +527,18 @@ Evidence:
 - `options.bm`, `roulette.bm` and the others are first-party descriptions of the game's features; `roulette.bm` confirms that the Gold Bomberman is "the player/team who won the last match".
 
 Confidence: HIGH (static). Modern: `src/resources/help_file.*` (tested) and the Help screens of the application. Existing asset folders need `--import-assets` again to get the `.bm` files.
+
+### Discovery: campaign mode (`campaign.c`, `aliens.c`)
+
+Where: chooser `0x4015C6` (reached from the player list when key `c` has been pressed five times, `0x41186D`, local games only), file reader `0x401085`, next stage `0x40133F`, stage setup `0x40151B`, per-tick update `0x4016DA`, enemy update `0x401B5C`, spawn `0x4019C2`, passability `0x4017FA`, results in `Match_Run` `0x42A63B`.
+
+Evidence:
+- Flag `0x46489C`; stage table `0x45E010` (0x70 bytes per stage: name, level +0x34, scheme +0x38, rovers +0x58, rover speed +0x5C, ghosts +0x60, ghost speed +0x64, computer players +0x68, difficulty +0x6C), count `0x45E014`, current stage `0x4648B0`, stage result `0x464894` (1 cleared, 2 failed), live enemy count `0x464820`, clear timer `0x4646C0`.
+- Enemy objects: 100 slots of the common 152-byte OBJ at `0x45E020`; kind at +4 (1 rover, 2 ghost), dead flag +8, speed +0x70, movement accumulator +0x74, direction +0x2C, animation counter +0x30.
+- Player field `OBJ+0x68` is a life counter: it is 1 at round init and is consumed by the first spawn; in campaign mode a human gets it back on every (re)spawn while the time left is at least value 101. `OBJ[0] == 0` with a life left means "spawn at the start position" (`0x41F2FA`). This also explains how players enter the field in normal play.
+- `Players_GetContendersLeft` returns 2 in campaign mode, the level screen `0x406DE4` returns at once, and the two-player minimum is skipped (`0x411BE5`).
+- A debug key sets the stage result to 1 (`0x42A5B5`).
+
+Confidence: HIGH for what the code does. The mode is unreachable without the hidden key sequence and was never observed running; value 1205 and the AI difficulty field are unused.
+
+Modern: core `World::setCampaign`, `spawnAliens`, `campaignResult` (tested); file reader `src/resources/campaign_file.*` (tested); application flow with the same hidden key sequence and `--campaign NAME`.
