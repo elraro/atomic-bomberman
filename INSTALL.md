@@ -16,7 +16,7 @@ You need:
 | `atomic-bomberman-modern-linux-x86_64.tar.gz` | 64-bit Linux with X11 or Wayland |
 | `atomic-bomberman-modern-windows-x64.zip` | 64-bit Windows 10 or later |
 
-They are attached to the workflow run (Actions → build → latest run → Artifacts) and, for tagged versions (`v*`), to the release page. Unpack the package anywhere; it holds the program (`atomic` or `atomic.exe`), the README and this file. Nothing else needs installing: SDL3 is built into the program. A graphics driver with OpenGL 3.3 is required.
+They are attached to the workflow run (Actions → build → latest run → Artifacts) and, for tagged versions (`v*`), to the release page. Unpack the package anywhere; it holds the program (`atomic` or `atomic.exe`), the README, the license and this file. Nothing else needs installing: SDL3 is built into the program. A graphics driver with OpenGL 3.3 is required.
 
 ## 2. Import the game data (once)
 
@@ -85,6 +85,8 @@ Controls and options are in `README.md`.
 | No sound | Run from a terminal and look for `WARN` lines; `--mute` disables sound on purpose. |
 
 ## Legal
+
+The modern game is free software under the GNU General Public License, version 3 or later (see `LICENSE`). It is an unofficial fan project, not affiliated with Interplay, Hudson Soft, Konami or any other rights holder; see the disclaimer in `README.md`.
 
 The original game's data is copyrighted by its owners. Import it only from a copy you own, and do not share the resulting asset folder. The packages built from this repository contain no original material.
 

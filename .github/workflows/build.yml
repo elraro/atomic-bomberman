@@ -43,7 +43,7 @@ jobs:
       - name: Package
         run: |
           mkdir -p package/atomic-bomberman-modern
-          cp build/atomic README.md INSTALL.md package/atomic-bomberman-modern/
+          cp build/atomic README.md INSTALL.md LICENSE package/atomic-bomberman-modern/
           tar -C package -czf atomic-bomberman-modern-linux-x86_64.tar.gz atomic-bomberman-modern
 
       - uses: actions/upload-artifact@v4
@@ -70,7 +70,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force package/atomic-bomberman-modern | Out-Null
-          Copy-Item build/Release/atomic.exe, README.md, INSTALL.md package/atomic-bomberman-modern/
+          Copy-Item build/Release/atomic.exe, README.md, INSTALL.md, LICENSE package/atomic-bomberman-modern/
           Compress-Archive -Path package/atomic-bomberman-modern -DestinationPath atomic-bomberman-modern-windows-x64.zip
 
       - uses: actions/upload-artifact@v4

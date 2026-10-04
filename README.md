@@ -50,8 +50,28 @@ In a match: `Esc` returns to the menu, `R` restarts the round, `P` pauses, `N` a
 
 Options: `--scheme NAME` (file in `data/schemes`, default `basic`), `--level N` (0-10: graphics, music and extras), `--wins N` (default 2), `--players N --humans H` (preset the player list; `--humans 0` or `--demo` is all computer players), `--start` (skip the menu), `--seed N`, `--mute`, `--shapes`, `--native` (640×480 window), `--frames N --screenshot out.ppm` (automated capture), `--result-shot` (capture the first result screen), `--script up,down,left,right,enter,esc` (scripted menu keys, one every 10 frames).
 
+## Disclaimer
+
+This is an unofficial, non-commercial fan project. It is **not affiliated with, endorsed by, sponsored by or connected to** Interplay Entertainment / Interplay Productions, Hudson Soft, Konami (which absorbed Hudson Soft in 2012), or any other company or person that holds or may hold rights in Atomic Bomberman or Bomberman.
+
+"Atomic Bomberman" and "Bomberman" are trademarks of their respective owners and are used here only to describe what this software is compatible with. The original game, its artwork, sounds, music, level data and documentation remain the property of their respective copyright holders.
+
+This repository and the packages built from it contain **no** original game code or assets. To use the original graphics and sounds you must supply them from a copy of the game that you own; see [INSTALL.md](INSTALL.md). Do not redistribute the original files or anything produced from them.
+
+If you hold rights in the original game and have a concern about this project, please open an issue on the repository.
+
+## License
+
+Copyright (C) 2026 the authors of this project.
+
+The source code, tools and documentation in this repository are free software: you can redistribute them and/or modify them under the terms of the **GNU General Public License** as published by the Free Software Foundation, either **version 3** of the License, or (at your option) any later version. They are distributed in the hope that they will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See [LICENSE](LICENSE) for the full text.
+
+The license covers only the new material in this repository. It grants no rights in the original game or its assets.
+
+The release packages include SDL3, which is under the zlib license.
+
 ## Status
 
 All knowledge of the original comes from static analysis; nothing has been confirmed against the running game yet. See `docs/reverse-engineering/unknowns.md`.
 
-This repository contains only new code and documentation. The original game is copyrighted by its owners and is not included.
+This repository contains only new code and documentation. The original game is copyrighted by its owners and is not included (see the Disclaimer above).
