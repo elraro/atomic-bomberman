@@ -1,0 +1,109 @@
+#include "audio/audio.hpp"
+
+#include <SDL3/SDL.h>
+
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <sstream>
+
+namespace ab {
+
+namespace {
+constexpr int kMaxVoices = 8;
+constexpr SDL_AudioSpec kRssSpec = {SDL_AUDIO_S16LE, 2, 22050};
+}  // namespace
+
+Audio::~Audio() {
+    for (SDL_AudioStream* v : voices_) SDL_DestroyAudioStream(v);
+    if (device_ != 0) SDL_CloseAudioDevice(device_);
+}
+
+bool Audio::init(const std::string& gameDir) {
+    soundDir_ = gameDir + "/data/sound/";
+    std::ifstream in(gameDir + "/data/res/soundlst.res", std::ios::binary);
+    if (!in) {
+        std::fprintf(stderr, "WARN  soundlst.res not found, audio disabled\n");
+        return false;
+    }
+    // Lines of "id,name"; ';' starts a comment.
+    std::string line;
+    while (std::getline(in, line)) {
+        if (auto semi = line.find(';'); semi != std::string::npos) line.erase(semi);
+        const auto comma = line.find(',');
+        if (comma == std::string::npos) continue;
+        char* end = nullptr;
+        const long id = std::strtol(line.c_str(), &end, 10);
+        if (end == line.c_str()) continue;
+        std::string name = line.substr(comma + 1);
+        name.erase(std::remove_if(name.begin(), name.end(), [](unsigned char ch) { return std::isspace(ch) != 0; }),
+                   name.end());
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) { return std::tolower(ch); });
+        if (!name.empty()) names_[static_cast<int>(id)] = name;
+    }
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+        std::fprintf(stderr, "WARN  SDL audio init failed (%s), audio disabled\n", SDL_GetError());
+        return false;
+    }
+    device_ = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
+    if (device_ == 0) {
+        std::fprintf(stderr, "WARN  no audio device (%s), audio disabled\n", SDL_GetError());
+        return false;
+    }
+    ready_ = true;
+    std::fprintf(stderr, "INFO  Audio ready sounds=%zu\n", names_.size());
+    return true;
+}
+
+const std::vector<std::uint8_t>* Audio::load(const std::string& name) {
+    auto it = cache_.find(name);
+    if (it != cache_.end()) return &it->second;
+    std::ifstream in(soundDir_ + name + ".rss", std::ios::binary);
+    if (!in) {
+        std::fprintf(stderr, "WARN  sound file missing name=%s\n", name.c_str());
+        return nullptr;
+    }
+    std::vector<std::uint8_t> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return &cache_.emplace(name, std::move(data)).first->second;
+}
+
+void Audio::playRange(int firstId, int lastId) {
+    if (!ready_) return;
+    std::vector<const std::string*> candidates;
+    for (auto it = names_.lower_bound(firstId); it != names_.end() && it->first <= lastId; ++it)
+        candidates.push_back(&it->second);
+    if (candidates.empty()) return;
+    rng_ = rng_ * 1664525u + 1013904223u;
+    const std::string& name = *candidates[(rng_ >> 16) % candidates.size()];
+    const std::vector<std::uint8_t>* data = load(name);
+    if (data == nullptr || data->empty()) return;
+
+    update();
+    if (voices_.size() >= static_cast<std::size_t>(kMaxVoices)) {
+        SDL_DestroyAudioStream(voices_.front());  // oldest voice gives way
+        voices_.erase(voices_.begin());
+    }
+    SDL_AudioStream* stream = SDL_CreateAudioStream(&kRssSpec, &kRssSpec);
+    if (stream == nullptr || !SDL_BindAudioStream(device_, stream)) {
+        if (stream != nullptr) SDL_DestroyAudioStream(stream);
+        return;
+    }
+    SDL_PutAudioStreamData(stream, data->data(), static_cast<int>(data->size()));
+    SDL_FlushAudioStream(stream);
+    voices_.push_back(stream);
+}
+
+void Audio::update() {
+    voices_.erase(std::remove_if(voices_.begin(), voices_.end(),
+                                 [](SDL_AudioStream* s) {
+                                     if (SDL_GetAudioStreamQueued(s) > 0) return false;
+                                     SDL_DestroyAudioStream(s);
+                                     return true;
+                                 }),
+                  voices_.end());
+}
+
+}  // namespace ab

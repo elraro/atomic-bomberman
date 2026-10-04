@@ -802,6 +802,24 @@ void testSpooge() {  // B18
     CHECK_EQ(f.w.bombAt({7, 2})->elapsedMs - f.w.bombAt({5, 2})->elapsedMs, -100);  // staggered by one frame each
 }
 
+void testEvents() {
+    Fixture f;
+    f.w.takeEvents();
+    f.press1(0);
+    auto ev = f.w.takeEvents();
+    CHECK_EQ(ev.size(), 1u);
+    if (!ev.empty()) {
+        CHECK(ev[0].kind == EventKind::BombDropped);
+        CHECK_EQ(ev[0].player, 0);
+    }
+    f.place(0, {6, 6});
+    f.run(40);
+    ev = f.w.takeEvents();
+    CHECK_EQ(ev.size(), 1u);
+    if (!ev.empty()) CHECK(ev[0].kind == EventKind::BombExploded);
+    CHECK(f.w.takeEvents().empty());
+}
+
 void testClockAndHurry() {
     Fixture f;
     f.w.setRoundSeconds(70);
@@ -961,6 +979,7 @@ int main() {
         {"punch bounce and wrap", testPunchBouncesAndWraps},
         {"grab and throw", testGrabAndThrow},
         {"spooge", testSpooge},
+        {"events", testEvents},
         {"clock and hurry", testClockAndHurry},
         {"closing walls", testClosingWalls},
         {"round result", testRoundResult},

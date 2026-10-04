@@ -320,3 +320,9 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - Code detail: the hop counter comparison at `0x423961`-`0x423983` compares a cell index with a pixel coordinate saved at launch, so it is always "different" and the counter advances at every cell centre. The landing attempt therefore starts at the third centre; the original's behaviour matches (D31).
 - Observed on the original: punch (D31), grab and throw (D32), spooge line (D33). A 3 s "stall" seen in the first punch run was my own screenshot polling, not the game.
 - Tests: 38 tests, 734 checks, all passing.
+
+### Session 8 addendum: events and audio
+
+- Core records gameplay events per tick; the application maps them to the original's sound id ranges and plays the `.rss` files through SDL3 (`src/audio/`).
+- Checked: device opens, 1051 names parsed (matches the original's own log line), no missing files in a scripted round. Not checked: how it sounds.
+- Tests: 39 tests, 740 checks.

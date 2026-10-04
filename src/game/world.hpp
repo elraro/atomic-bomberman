@@ -55,6 +55,29 @@ private:
     std::uint32_t state_;
 };
 
+// Things that happened during a tick, for the front end (sound, effects).
+// The core never depends on what is done with them.
+enum class EventKind : std::uint8_t {
+    BombDropped,
+    BombExploded,
+    BombKicked,
+    BombStopped,
+    BombPunched,
+    BombBounced,
+    BombGrabbed,
+    BombThrown,
+    WallBlock,
+    Hurry,
+    PlayerDied,
+    HeadHit,
+    Pickup,
+};
+
+struct Event {
+    EventKind kind;
+    int player = -1;
+};
+
 struct PlayerInput {
     std::array<bool, 4> dir{};  // north, east, south, west held
     bool button1 = false;       // bomb
@@ -172,6 +195,9 @@ public:
     // Returns false when no slot is free.
     bool createBomb(int owner, Cell c, BombType type, int range, int fuseFrames);
 
+    // Events since the last call; the list is cleared.
+    std::vector<Event> takeEvents();
+
     // Skips the start-of-round input freeze (for tests and tools).
     void endStartFreeze() { startFreezeMs_ = 0; }
 
@@ -244,6 +270,9 @@ private:
         int ring = 0;
     } walls_;
     int wallsClosed_ = 0;
+    bool hurryAnnounced_ = false;
+    std::vector<Event> events_;
+    void emit(EventKind kind, int player = -1) { events_.push_back({kind, player}); }
 
     std::array<Tile, kGridW * kGridH> tiles_{};
     std::array<Flame, kGridW * kGridH> flames_{};

@@ -56,6 +56,8 @@ void World::startRound(const Scheme& scheme, bool generatePowerups) {
     enclosementDepth_ = values_.get(vid::kEnclosementDepth);
     walls_ = {};
     wallsClosed_ = 0;
+    hurryAnnounced_ = false;
+    events_.clear();
     players_ = {};
     startCells_ = scheme.start;
     std::fill(bombs_.begin(), bombs_.end(), Bomb{});
@@ -119,6 +121,12 @@ void World::addPlayer(int i) {
     contenders_ = alivePlayers();
 }
 
+std::vector<Event> World::takeEvents() {
+    std::vector<Event> out;
+    out.swap(events_);
+    return out;
+}
+
 Tile World::tile(Cell c) const { return inGrid(c) ? tiles_[index(c)] : Tile::Solid; }
 
 void World::setTile(Cell c, Tile t) {
@@ -169,6 +177,10 @@ void World::tick(int dtMs, const std::array<PlayerInput, kMaxPlayers>& input) {
     updateFlames(dt);
     updateEnclosement(dt);
     updatePlayers(dt, input);
+    if (hurry() && !hurryAnnounced_) {
+        hurryAnnounced_ = true;
+        emit(EventKind::Hurry);
+    }
 }
 
 // ----------------------------------------------------------------- Bombs
@@ -257,10 +269,13 @@ void World::slideBomb(Bomb& b, int dt) {
             nx = cellToPixelX(cell.x);
             ny = cellToPixelY(cell.y);
             b.moveAcc = 0;
-            if (b.type == BombType::Jelly)
+            if (b.type == BombType::Jelly) {
                 b.dir = opposite(b.dir);
-            else
+                emit(EventKind::BombBounced, b.owner);
+            } else {
                 b.mode = BombMode::Resting;
+                emit(EventKind::BombStopped, b.owner);
+            }
         }
         b.x = nx;
         b.y = ny;
@@ -313,6 +328,7 @@ void World::flyBomb(Bomb& b, int dt) {
                 if (b.type == BombType::Jelly && inGrid(c) && rng_.below(std::max(1, values_.get(vid::kJellyTurnChance))) == 0)
                     b.dir = (b.dir + rng_.below(2) * 2 - 1) & 3;
                 b.flightPx = 0;
+                emit(EventKind::BombBounced, b.owner);
                 const bool blocked = tile(c) != Tile::Blank || bombAt(c) != nullptr ||
                                      (inGrid(c) && powerups_[index(c)].state != PowerupState::None);
                 if (!blocked) {
@@ -342,6 +358,7 @@ void World::flyBomb(Bomb& b, int dt) {
 void World::hitOnHead(int playerIndex) {
     Player& p = players_[static_cast<std::size_t>(playerIndex)];
     p.stunTicks = 16;
+    emit(EventKind::HeadHit, playerIndex);
     int lose = values_.get(vid::kHeadHitLossMin) + rng_.below(std::max(1, values_.get(vid::kHeadHitLossRandom)));
     while (lose-- > 0) {
         for (int attempt = 0; attempt < 200; ++attempt) {
@@ -363,6 +380,7 @@ void World::createFlame(Cell c, int owner, bool burningBrick, Dir dir, bool tip)
 
 void World::detonate(Bomb& b) {
     b.active = false;
+    emit(EventKind::BombExploded, b.owner);
     const Cell origin = pixelToCell(b.x, b.y);
     for (Dir d = 0; d < 4; ++d) {
         if (b.arrivedFrom != 0 && d + 1 == b.arrivedFrom) continue;
@@ -547,6 +565,7 @@ void World::killPlayer(int i, int killer) {
     Player& p = players_[static_cast<std::size_t>(i)];
     if (!p.alive) return;
     p.alive = false;
+    emit(EventKind::PlayerDied, i);
     p.dying = true;
     p.killedBy = killer;
     if (killer >= 0 && killer < kMaxPlayers) {
@@ -580,6 +599,7 @@ int World::winner() const {
 void World::closeCell(Cell c) {
     setTile(c, Tile::Solid);
     ++wallsClosed_;
+    emit(EventKind::WallBlock);
     for (int i = 0; i < kMaxPlayers; ++i) {
         const Player& p = players_[static_cast<std::size_t>(i)];
         if (p.present && p.alive && pixelToCell(p.x, p.y) == c) killPlayer(i, -1);
@@ -643,6 +663,7 @@ void World::checkPickup(int i) {
     if (!inGrid(c) || powerups_[index(c)].state != PowerupState::Revealed) return;
     const int type = powerups_[index(c)].type;
     powerups_[index(c)] = {};
+    emit(EventKind::Pickup, i);
     pickUp(p, type);
 }
 
@@ -676,6 +697,7 @@ void World::kickBomb(Bomb& b, Dir d) {
         b.mode = BombMode::Resting;
         b.moveAcc = 0;
     }
+    if (b.mode != BombMode::Sliding || b.dir != d) emit(EventKind::BombKicked, b.owner);
     b.dir = d;
     b.mode = BombMode::Sliding;
     b.speed = values_.get(vid::kKickSpeed);
@@ -744,6 +766,7 @@ void World::dropBomb(int i, Cell cell, int delayFrames) {
     }
     const int range = p.inventory[kPowGoldflame] > 0 ? std::max(kGridW, kGridH) : p.inventory[kPowFlame];
     if (createBomb(i, cell, type, range, p.fuseFrames)) {
+        emit(EventKind::BombDropped, i);
         // The newest bomb of this owner in that cell gets the start delay.
         for (Bomb& b : bombs_)
             if (b.active && b.owner == i && b.createdTick == tickCount_ && pixelToCell(b.x, b.y) == cell)
@@ -765,7 +788,10 @@ void World::handleButtons(int i, const PlayerInput& in) {
                     b.stopRequested = true;
         if (p.inventory[kPowPunch] > 0 && !in.button1) {
             const Cell ahead = step(pixelToCell(p.x, p.y), p.facing);
-            if (Bomb* b = findBomb(ahead)) launchBomb(*b, p.facing);
+            if (Bomb* b = findBomb(ahead)) {
+                launchBomb(*b, p.facing);
+                emit(EventKind::BombPunched, i);
+            }
         }
         if (p.inventory[kPowTrigger] > 0) {
             Bomb* oldest = nullptr;
@@ -787,6 +813,7 @@ void World::handleButtons(int i, const PlayerInput& in) {
         b.y = p.y;
         b.elapsedMs = 0;
         launchBomb(b, p.facing);
+        emit(EventKind::BombThrown, i);
     }
 
     if (press1) {
@@ -798,6 +825,7 @@ void World::handleButtons(int i, const PlayerInput& in) {
             underfoot->holder = i;
             underfoot->stopRequested = false;
             p.holding = static_cast<int>(underfoot - bombs_.data());
+            emit(EventKind::BombGrabbed, i);
         } else if (p.inventory[kPowSpooge] > 0 && own) {
             // A line of bombs ahead; each starts one frame further behind.
             Cell c = here;

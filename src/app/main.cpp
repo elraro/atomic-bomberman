@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "audio/audio.hpp"
 #include "game/world.hpp"
 #include "rendering/renderer.hpp"
 #include "resources/scheme_file.hpp"
@@ -30,6 +31,7 @@ struct Options {
     std::string screenshot;   // write the last frame as a PPM file
     bool demo = false;        // scripted input instead of the keyboard
     bool native = false;      // 640x480 window, the original's resolution
+    bool mute = false;
     bool shapes = false;      // draw flat shapes even when original graphics are available
     std::uint32_t seed = 1;
 };
@@ -47,6 +49,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--seed") o.seed = static_cast<std::uint32_t>(std::atoi(next().c_str()));
         else if (a == "--demo") o.demo = true;
         else if (a == "--shapes") o.shapes = true;
+        else if (a == "--mute") o.mute = true;
         else if (a == "--native") o.native = true;
         else std::fprintf(stderr, "WARN  unknown argument %s\n", a.c_str());
     }
@@ -76,6 +79,27 @@ ab::PlayerInput scriptedInput(int player, int step, ab::Rng& rng) {
     in.dir[static_cast<std::size_t>(dir[static_cast<std::size_t>(player)])] = true;
     in.button1 = rng.below(40) == 0;
     return in;
+}
+
+// Sound id ranges of the original's soundlst.res for each gameplay event.
+void playEvents(ab::World& world, ab::Audio& audio) {
+    for (const ab::Event& e : world.takeEvents()) {
+        switch (e.kind) {
+            case ab::EventKind::BombDropped: audio.playRange(100, 109); break;
+            case ab::EventKind::BombKicked: audio.playRange(122, 129); break;
+            case ab::EventKind::BombStopped: audio.playRange(130, 134); break;
+            case ab::EventKind::BombPunched: audio.playRange(150, 159); break;
+            case ab::EventKind::BombBounced: audio.playRange(160, 169); break;
+            case ab::EventKind::BombGrabbed: audio.playRange(170, 171); break;
+            case ab::EventKind::BombThrown: audio.playRange(172, 175); break;
+            case ab::EventKind::BombExploded: audio.playRange(200, 299); break;
+            case ab::EventKind::WallBlock: audio.playRange(140, 142); break;
+            case ab::EventKind::Hurry: audio.playRange(2700, 2799); break;
+            case ab::EventKind::PlayerDied: audio.playRange(300, 301); break;
+            case ab::EventKind::HeadHit: audio.playRange(360, 369); break;
+            case ab::EventKind::Pickup: audio.playRange(400, 499); break;
+        }
+    }
 }
 
 void startRound(ab::World& world, const ab::Scheme& scheme, int players) {
@@ -147,6 +171,8 @@ int main(int argc, char** argv) {
     {
         ab::Renderer renderer;
         ab::SpriteBank sprites;
+        ab::Audio audio;
+        if (!opt.gameDir.empty() && !opt.mute) audio.init(opt.gameDir);
         if (!opt.gameDir.empty() && !opt.shapes) sprites.load(opt.gameDir, 0);
         ab::World world(values, opt.seed);
         ab::Rng scriptRng(opt.seed + 77);
@@ -192,6 +218,7 @@ int main(int argc, char** argv) {
                     input[static_cast<std::size_t>(i)] = opt.demo ? scriptedInput(i, step, scriptRng) : keyboardInput(keys, i);
                 previous.capture(world);
                 world.tick(kStepMs, input);
+                playEvents(world, audio);
                 accumulatorMs -= kStepMs;
                 ++step;
                 // A decided round stays on screen for three seconds, then a new one starts.
@@ -212,6 +239,7 @@ int main(int argc, char** argv) {
             int w = 0;
             int h = 0;
             SDL_GetWindowSizeInPixels(window, &w, &h);
+            audio.update();
             const float alpha = paused ? 1.0f : static_cast<float>(accumulatorMs / kStepMs);
             renderer.draw(world, previous, alpha, w, h, &sprites);
             ++frame;

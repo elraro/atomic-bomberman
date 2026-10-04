@@ -7,7 +7,7 @@ A study of the original Atomic Bomberman (Interplay, 1997) and a clean new imple
 - `docs/specifications/` — the game's behaviour, written independently of the original code.
 - `docs/testing/original-behaviour.md` — scenarios to check against the original.
 - `src/game/` — gameplay core (C++20, no platform dependencies).
-- `src/app/`, `src/rendering/`, `src/resources/` — SDL3 window and input, OpenGL 3.3 renderer, readers for original data files.
+- `src/app/`, `src/rendering/`, `src/audio/`, `src/resources/` — SDL3 window and input, OpenGL 3.3 renderer, SDL3 audio, readers for original data files.
 - `tools/diagnostics/` — scripts to run and measure the original under Wine.
 - `tests/unit/` — tests that encode the specified rules.
 - `tools/asset-extractor/` — reader/extractor for the original `.ani` files.
@@ -30,7 +30,9 @@ Requires CMake 3.20+ and a C++20 compiler. The front end additionally needs SDL3
 ./build/atomic                            # built-in defaults, empty arena
 ```
 
-Options: `--scheme NAME` (file in `data/schemes`, default `basic`), `--players N` (1-10), `--seed N`, `--demo` (scripted input), `--frames N --screenshot out.ppm` (automated capture).
+Options: `--scheme NAME` (file in `data/schemes`, default `basic`), `--players N` (1-10), `--seed N`, `--mute`, `--shapes`, `--native`, `--demo` (scripted input), `--frames N --screenshot out.ppm` (automated capture).
+
+Player 1 with the default keys can also punch, grab and throw once the matching powerups are collected: Enter punches the bomb ahead; pressing Space while standing on your own bomb picks it up (grab) or lays a line (spooge); releasing Space throws.
 
 | | Move | Bomb | Action |
 |---|---|---|---|
