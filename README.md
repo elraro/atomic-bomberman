@@ -4,8 +4,7 @@
 
 **A clean, from-scratch reimplementation of Atomic Bomberman (1997), rebuilt by reverse engineering the original and checking every rule against it.**
 
-<!-- Build badge: replace OWNER/REPO with the repository path once it is on GitHub. -->
-[![build](https://github.com/OWNER/REPO/actions/workflows/build.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/build.yml)
+[![build](https://github.com/elraro/atomic-bomberman/actions/workflows/build.yml/badge.svg)](https://github.com/elraro/atomic-bomberman/actions/workflows/build.yml)
 ![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C)
 ![SDL3](https://img.shields.io/badge/SDL-3-1a5fb4)

@@ -19,7 +19,7 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build tools and SDL3 build dependencies
         run: |
@@ -46,7 +46,7 @@ jobs:
           cp build/atomic README.md INSTALL.md LICENSE package/atomic-bomberman-modern/
           tar -C package -czf atomic-bomberman-modern-linux-x86_64.tar.gz atomic-bomberman-modern
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: atomic-bomberman-modern-linux-x86_64
           path: atomic-bomberman-modern-linux-x86_64.tar.gz
@@ -55,7 +55,7 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure
         run: cmake -S . -B build -A x64 -DAB_FETCH_SDL3=ON
@@ -73,7 +73,7 @@ jobs:
           Copy-Item build/Release/atomic.exe, README.md, INSTALL.md, LICENSE package/atomic-bomberman-modern/
           Compress-Archive -Path package/atomic-bomberman-modern -DestinationPath atomic-bomberman-modern-windows-x64.zip
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: atomic-bomberman-modern-windows-x64
           path: atomic-bomberman-modern-windows-x64.zip
@@ -87,10 +87,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             atomic-bomberman-modern-linux-x86_64.tar.gz
