@@ -376,3 +376,9 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - Core: `setTeamPlay`, contenders counted per team, `winningTeam`, team colours after value 32 frames (team 0 → colour 0, team 1 → colour 2, from `Players_InitRound`). AI skips team-mates. Application: toggle on the level screen, team result pictures.
 - Checked by a scripted four-AI team match (two white, two red, bombs in team colours). Tests: 49 tests, 818 checks.
 - `docs/specifications/game-modes.md` written.
+
+### Session 12 addendum 3: a scripted run of the original lost keyboard focus
+
+- A team-play run produced no screenshots: the game stayed on its main menu, so the injected keys never reached it. The Wine window did not have X keyboard focus (in earlier runs it did). The keys of that run (Enter, Down, Right, Alt+C; no text) went to whatever window had focus on the desktop.
+- `drive_original.py` now checks before every key that the focused window is the Wine desktop or the game, and aborts without sending anything otherwise.
+- Team-play colours on the original remain unobserved.
