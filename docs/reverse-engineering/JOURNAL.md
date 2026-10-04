@@ -1,0 +1,270 @@
+# Reverse Engineering Journal
+
+Append-only. Newest entries at the bottom. Addresses are VAs in `bm95.exe` (SHA-256 `d1ff5f6f…6b3857`).
+
+## 2026-10-04 — Session 1: reconnaissance
+
+All findings in this session are static (validation Level 1). The original was not executed.
+
+### Tooling notes
+
+- Ghidra MCP is connected to project `atomic-bomberman-claude-ghidra`, program `/bm95.exe` (1307 functions, already auto-analysed).
+- `run_script_inline` is disabled on the MCP server (`GHIDRA_MCP_ALLOW_SCRIPTS` not set). Bulk export of decompilation was therefore not possible; work was done with individual MCP calls.
+- Because Watcom's register calling convention makes Ghidra's decompiler output very noisy (hundreds of `extraout_ECX_n` locals), a plain `objdump -d -M intel` listing plus a small Python cross-reference index (call targets, string references, import users) was used alongside Ghidra. Game code is unoptimised, so the assembly reads almost like source.
+- No Wine or Windows VM on this machine: dynamic analysis is blocked (UNKNOWN-001).
+
+### Discovery: main executable and toolchain
+
+- `bm95.exe`, PE32 i386 GUI, linked 1997-07-12, Watcom C/C++32 runtime (copyright string 1988-1995), sections `BEGTEXT`/`DGROUP`.
+- Imports DDRAW, DSOUND, DINPUT, WINMM, WSOCK32 (ordinals), USER32, KERNEL32 (incl. Comm API), GDI32.
+- Confidence: CONFIRMED.
+
+### Discovery: source module map
+
+- 22 source-file name strings (`bombs.c`, `flame.c`, `you.c`, `net1.c`, …) are passed to a debug allocator. Mapping each string's referencing functions gives an address range per source file. Table in `architecture.md` §2.
+- Confidence: HIGH.
+- Implication: any function can be attributed to a subsystem by address before it is understood.
+
+### Discovery: startup path
+
+- `entry 0x44BDCC` → `WinMain 0x443C70` → `Game_Main 0x42BE22` → `Game_InitAll 0x41095A`, intro `0x42B060`, `Menu_MainMenuLoop 0x42B9CE`, `GNW_Shutdown 0x43C668`.
+- WinMain creates mutex `GNW95MUTEX`, registers class `GNW95 Class` (wndproc `0x443E3C`), checks for Win95/NT4.
+- Confidence: CONFIRMED (decompiled).
+- The engine layer is Interplay's GNW library (window class name, `win_init()` string).
+
+### Discovery: main loop is a background process
+
+- Screens call `GNW_GetInput 0x43A508`, which pumps Windows messages and then runs all registered background processes (`GNW_RunBkProcesses 0x43A6A4`, list head `0x4A37A8`).
+- `Match_Run 0x42A3F6` registers `Game_Tick 0x42A191` with `GNW_AddBkProcess 0x43A6FC` (`mov eax,0x42a191; call 0x43a6fc` at `0x42A457`) and removes it at `0x42B04D`.
+- `Game_Tick` performs the whole simulate + draw + present + network step.
+- Confidence: HIGH.
+- Next: confirm at runtime; confirm identity of each callee.
+
+### Discovery: timing mechanism
+
+- `Game_Tick` computes `frame_ms = timeGetTime() - last`, clamps to `Value_Get(31)` (= 150), stores in `0x464958`.
+- `Game_InitAll` computes `0x46494C = 1000 / Value_Get(30)` (= 50 ms per standard frame) at `0x410B36`.
+- `valuelst.res` comments (first-party): speeds are 1/100 pixel per frame; value 25 is the "nominal frame rate used as a reference"; value 31 "prevents a disk hit from moving everybody a whole huge distance".
+- Conclusion: variable timestep in milliseconds, authored in 20 Hz frame units, 150 ms cap, no frame limiter found in the match path.
+- Confidence: HIGH (static).
+- Modern implication: bomb fuse (value 41 = 40 frames) is 2000 ms of game time, not 40 render frames.
+
+### Discovery: valuelst.res is the tuning table
+
+- `data/res/valuelst.res` is a commented text file of `id,value` pairs loaded by `Value_LoadList 0x4121FF` and read through `Value_Get 0x412135` (bounds-checked: `invalid valueno requested: %u`).
+- Contains fuse length, speeds, starting inventory, powerup counts and caps, start positions, round time, hurry time, disease rules, net resend timeouts, UI coordinates.
+- Confidence: CONFIRMED as data. How each value is applied in code: mostly untraced.
+
+### Discovery: graphics
+
+- `DDraw_Init 0x443038`: `DirectDrawCreate`, then vtable +0x50 (`SetCooperativeLevel`), +0x54 (`SetDisplayMode`), +0x18 (`CreateSurface`), +0x14 (`CreatePalette`).
+- Graf init `0x414DF4` stores 640 and 480 to `0x464A70`/`0x464A6C`, loads `color.pal`, creates GNW window "win1".
+- Confidence: HIGH for 640×480; MEDIUM for 8-bit palettised.
+
+### Discovery: audio
+
+- `Sound_InitDirectSound 0x418FF7` (`DirectSoundCreate`, primary buffer `SetFormat`). Error table uses HMI SOS wording, so the library is an Interplay DirectSound port of an older DOS sound layer.
+- Sounds: 2027 `.rss` files, raw 22 kHz stereo 16-bit signed LE according to `soundlst.res`. `tunes.c` manages a cache (values 5-9) and can copy sounds from CD to disk ("stage up").
+- Confidence: HIGH.
+
+### Discovery: input
+
+- Keyboard hook installed at `0x43B44C` (`SetWindowsHookExA`, also `timeBeginPeriod`), hook proc `0x43B518` uses `GetAsyncKeyState`.
+- `DInput_Init 0x444760` calls `DirectInputCreateA`.
+- Joystick: `joyGetNumDevs` `0x42971F`, `joyGetDevCapsA` `0x42965C`, `Joy_Poll 0x429790` (`joyGetPosEx`).
+- Confidence: HIGH that these exist; which keyboard path gameplay uses is open (UNKNOWN-004).
+
+### Discovery: networking
+
+- `Net_IpxOpenSocket 0x43BDDE`: `socket(6, 2, 1000)` = AF_IPX, SOCK_DGRAM, NSPROTO_IPX; then `bind`, `getsockname`, `setsockopt`, `ioctlsocket`. Send/receive use `sendto`/`recvfrom` (`0x43B99C`, `0x43BFC9`).
+- Serial and modem use the Win32 Comm API through a bundled comm library (`\\.\COM%d`, `ATS0=0`, baud table 9600-115200).
+- `net1.c` implements nodes and "critical" packets that are retransmitted after a timeout (`valuelst.res` 1100-1104).
+- `valuelst.res` lists four protocols: IPX, modem, serial, TCP/IP. No AF_INET socket creation was found.
+- Confidence: HIGH (IPX, serial). TCP/IP: UNKNOWN-005.
+
+### Discovery: resource system and formats
+
+- Loose files under `data/`; path builder `Path_BuildResourceName 0x411D17`; roots from `cfg.ini` (`hdhome`, `cdhome`).
+- Text formats (`.sch`, `.res`, `.cam`, `.ali`, `messages.txt`) are self-documenting.
+- `.ani` is a chunk container (`CHFILEANI `, chunks `HEAD`/`PAL `/`TPAL`/`CBOX`/`FRAM`/`SEQ `).
+- Details in `initial-analysis.md` §8.
+- Confidence: HIGH for text formats and ANI container; pixel encoding not decoded.
+
+### Discovery: players array and OBJ
+
+- The game logs `sizeof(OBJ) = %u` with 0x98 (push at `0x410B23`).
+- `Players_Update 0x420F07` loops 10 times over `0x461BC4 + i*0x98` and calls `0x41F29B` per player.
+- Position appears to be 16.16 fixed point at +0x68 / +0x6A.
+- Confidence: HIGH (array, size, count), MEDIUM (position fields).
+
+### Ghidra renames applied (saved)
+
+`Game_Main`, `Game_InitAll`, `Game_Tick`, `Game_SetTickPaused`, `Game_FatalExit`, `Menu_MainMenuLoop`, `Match_Run`, `Match_PlayerSetupScreen`, `Round_Init`, `Players_Update`, `Time_GetMs`, `Value_Get`, `Value_LoadList`, `Path_BuildResourceName`, `Debug_Printf`, `GNW_GetInput`, `GNW_PumpMessages`, `GNW_RunBkProcesses`, `GNW_AddBkProcess`, `GNW_RemoveBkProcess`, `GNW_Shutdown`, `DDraw_Init`, `DInput_Init`, `Sound_InitDirectSound`, `Joy_Poll`, `Net_Pump`, `Net_IpxOpenSocket`, `Maybe_Net_GetRole`.
+
+Not renamed on purpose: the `Game_Tick` callees (bombs/flames/powerups/map/extras updates). Their identity rests on address range only; rename after reading them.
+
+### Next
+
+1. Read each `Game_Tick` callee and confirm its role; rename.
+2. Recover the `OBJ` layout from `0x41F29B` (player update) and the bomb/flame code.
+3. Set up a way to run the original (UNKNOWN-001).
+
+## 2026-10-04 — Session 2: tick callees, OBJ layout, core mechanics
+
+Still static only (Level 1).
+
+### Tooling
+
+- Ghidra was restarted with `GHIDRA_MCP_ALLOW_SCRIPTS=1`. A script dumped all 1178 function bodies (decompiled) and the function table to the session scratch directory; reading was done from that dump with the `extraout_*` noise filtered out, cross-checked against the disassembly where register arguments were lost (notably `Value_Get` ids).
+- Inline scripts leave copies in `~/ghidra_scripts/` (`McpScriptCheck.java`, `DumpAllBm95.java`, `RenameSession2.java`).
+
+### Correction: positions are integer pixels
+
+- Session 1 recorded player position as 16.16 fixed point at `+0x68/+0x6A`. Wrong.
+- Evidence: `Players_InitRound` writes `Map_CellToPixelX/Y` results to `+0x14/+0x18`; `Player_MoveSteps` adds ±1 to `+0x1C/+0x20`; the `mov eax,[obj+N]; sar eax,16` pattern is a sign-extending read of the i16 at `N+2`.
+- Confidence: HIGH.
+
+### Discovery: time-to-progress rules (resolves UNKNOWN-002)
+
+- Timers: `acc += frame_ms; while acc > 0 { frame++; acc -= 50 }`.
+- Movement: `acc += speed * frame_ms / 50; while acc > 0 { one pixel step; acc -= 100 }`.
+- Seen identically in `Player_Update`, `Bombs_Update`, `Flames_Update`.
+- Confidence: HIGH.
+- Implication: behaviour is defined per pixel step and per millisecond, so a fixed-step modern simulation can reuse the same rules.
+
+### Discovery: map geometry
+
+- 15 × 11 cells of 40 × 36 px, origin (20, 68); tiles 0/1/2 = blank/solid/brick; outside = solid.
+- Constants written at `0x426488`–`0x4264EB`; conversions `0x426524`, `0x42655F`, `0x42665C`, `0x4266A3`, `0x426599`, `0x4265EB`.
+- Confidence: HIGH. Documented in `maps.md`.
+
+### Discovery: bomb fuse, detonation, chain reactions
+
+- `Bomb_Create 0x422EDE`: `fuse_ms = frames × 50`; dud chance; range byte; owner.
+- `Bombs_Update 0x42331C`: fuse pauses for trigger bombs, duds, flying/held bombs, network bombs, and when ≤ 1 contender is left.
+- Blast: per direction, up to `range` cells; stops at bomb (queued), powerup (destroyed), solid, brick (burns).
+- Chain reactions go through a queue (`Bomb_QueueDetonation 0x423209`) and fire on the next tick; no flame is sent back toward the triggering bomb; kill credit moves to the triggering owner.
+- Confidence: HIGH. Documented in `bombs.md`, `explosions.md`.
+
+### Discovery: flames are per-cell and kill by cell
+
+- One flame slot per cell (`0x46224C`). Lifetime 10 frames = 500 ms (values 10 and 20, ids confirmed in the disassembly at `0x426E62` and `0x426DDB`).
+- A player dies when the cell under its position has an active flame; checked at the start of the player update and after every pixel moved.
+- Confidence: HIGH.
+
+### Discovery: player movement and collision
+
+- `Player_MoveSteps 0x41EC84` fully read: point-based movement along cell centre lines with diagonal lane alignment, corner sliding when blocked off-centre, kick trigger at the cell centre, warp/trampoline one pixel before the centre.
+- Speed formula with skates (value 90), a speed-down counter (value 91) and disease multipliers.
+- Confidence: HIGH for the step rules. Documented in `players.md`.
+
+### Discovery: enclosement
+
+- `Map_UpdateEnclosement 0x426818`: inward clockwise spiral from (0,0), one cell per 250 ms of **wall-clock** time, max 4 per tick; turns tiles solid, kills players, removes powerups and flames, detonates or removes bombs.
+- Confidence: MEDIUM-HIGH. Start condition MEDIUM.
+
+### Ghidra renames applied (saved)
+
+48 functions: `Bombs_Update`, `Bombs_UpdateFree`, `Bombs_UpdateHeld`, `Bomb_Create`, `Bomb_QueueDetonation`, `Bomb_FindAtCell`, `Maybe_Bomb_Kick`, `Maybe_Bomb_Remove`, `Map_GetTile`, `Maybe_Map_SetTile`, `Maybe_Map_StartBrickDestroy`, `Map_CellToPixelX/Y`, `Map_PixelToCellX/Y`, `Map_PixelOffsetInCellX/Y`, `Map_UpdateEnclosement`, `Flame_Create`, `Flame_FindAtCell`, `Flames_Update`, `Maybe_Flame_Remove`, `Powerup_FindAtCell`, `Maybe_Powerup_Remove`, `Maybe_Powerup_RevealAtCell`, `Powerups_Update`, `Player_Update`, `Player_MoveSteps`, `Player_IsCellPassable`, `Player_DropBomb`, `Player_Kill`, `Player_PickupPowerup`, `Maybe_Player_ReadInput`, `Player_FindAtCell`, `Players_InitRound`, `Players_GetContendersLeft`, `Maybe_Round_GetTimeLeft`, `Extras_Update`, `Extra_FindAtCell`, `Maybe_AI_MarkDangerCell`, `Ani_FindSequence`, `Ani_GetSequenceFrame`, `Ani_GetSequenceLength`, `Maybe_Graf_QueueSprite`, `Sound_PlayById`.
+
+`Maybe_` marks names based on call context only; the body was not read.
+
+### Next
+
+1. Finish `Player_Update` (second half) and read `Maybe_Player_ReadInput 0x41E61E`: bomb drop conditions, punch, grab/throw, trigger detonation.
+2. `power.c`: powerup placement under bricks, pickup effects, caps, diseases list.
+3. Then write `docs/specifications/` for map, movement, bombs, explosions; these four are understood well enough.
+4. Dynamic validation remains blocked (UNKNOWN-001).
+
+## 2026-10-04 — Session 3: player input and actions, powerups, round generation
+
+Static only (Level 1).
+
+### Discovery: controller types and direction priority
+
+- `Player_ReadInput 0x41E61E`: 0 off, 1 AI, 2 keyboard (two key sets), 3 joystick (thresholds 30/70 of 100), 4 network (state copied from packets).
+- Several directions held: blocked ones are dropped if any is open; then the highest direction index wins (W > S > E > N).
+- Confidence: HIGH.
+
+### Discovery: action rules
+
+- Button 1 (edge): grab own bomb underfoot → else spooge line → else drop if `active < capacity`, cell passable and no warp.
+- Button 2 (edge): stop own sliding bombs (kicker), punch bomb ahead (punch, only if button 1 not held), detonate oldest trigger bomb.
+- Active bombs are counted by scanning the bomb array by owner (`0x4245DA`).
+- Held bomb is thrown when button 1 is released.
+- Confidence: HIGH. Documented in `players.md`.
+
+### Discovery: powerup table, generation, reveal, pickup, diseases
+
+- 14 types named in the exe (`bomb … random, clog`); counts from values 400-412 (negative = that many 1-in-10 attempts); always under bricks.
+- Early-round protection swaps punch/grab/disease3 away when revealed.
+- Pickup is cell-based; caps from values 550-564; mutual exclusions (punch↔trigger, grab↔spooge, trigger↔jelly).
+- 9 diseases, 15 s each, shared timer; effects identified at their points of use.
+- Confidence: HIGH for mechanics, MEDIUM-HIGH for disease table. Documented in `powerups.md`.
+
+### Discovery: round generation
+
+- Brick kept if `rand() % 100 < density` (`0x4262FF`); start cell and its non-solid neighbours cleared.
+- Confidence: HIGH. Documented in `maps.md`.
+
+### Observation: tick-counted behaviours
+
+- Stun (16), disease pass cooldown (value 129), chain-reaction links are per tick, not per millisecond. Recorded as UNKNOWN-020 because it ties gameplay feel to the original's real frame rate.
+
+### Ghidra renames applied (saved)
+
+23 functions, including `Player_ReadInput`, `Bombs_CountOwnedBy`, `Bombs_StopKickedBy`, `Player_PunchBombAhead`, `Bombs_DetonateOldestTrigger`, `Bomb_AttachToHolder`, `Bomb_Launch`, `Bomb_Kick`, `Bomb_CanSlideInto`, `Player_HitOnHead`, `Powerup_RevealAtCell`, `Powerup_Remove`, `Powerup_RespawnOnRandomCell`, `Powerup_PlaceRevealed`, `Powerups_GenerateForRound`, `Map_GenerateForRound`, `Map_ClearStartArea`, `Map_SetTileRaw`, `Scheme_GetCell`.
+
+### Next
+
+Write the behavioural specifications for map, physics, players, bombs, explosions and powerups from the reverse-engineering notes.
+
+### Session 3 addendum: specifications written, three rules re-checked
+
+- `docs/specifications/` created: `README.md`, `gameplay.md`, `maps.md`, `physics.md`, `players.md`, `bombs.md`, `explosions.md`, `powerups.md`. Each rule carries a tag ([S] code, [D] data, [M] medium, [?] open).
+- Bomb type selection read at `0x41EB2A`: jelly takes precedence; trigger bombs are limited to "bomb capacity" bombs per trigger pickup (`OBJ+0x55`). Confidence: HIGH.
+- Spooge: `Player_DropBomb` receives the line index in ECX and passes it as the fuse delay, so bomb n starts n frames behind (`0x420B48`-`0x420B5A`). Confidence: HIGH.
+- Corner-slide direction verified for the eastward case in `Player_MoveSteps`. Confidence: HIGH.
+- Dud: only value 323 is read in `Bombs_Update`; no reader of value 324 was found in the bomb code. Confidence: MEDIUM.
+- Not specified yet: game modes, networking, AI, level extras.
+
+### Session 3 addendum 2: four unknowns closed
+
+- Round clock (`0x4105D2`): real-time milliseconds; `0x4601A4` seconds left, `0x4601BC` seconds elapsed, `0x4601A8` total (1001 = unlimited). Confidence: HIGH.
+- Closing walls start at 55 s left (`0x42685D`). Confidence: HIGH.
+- Early-round powerup protection lasts the first 40 s. Confidence: HIGH.
+- Invulnerability and kill scoring are in `0x41DCB2`. Confidence: HIGH.
+- No frame limiter or vsync anywhere in the present path; the DirectDraw layer only locks and unlocks the surface. Confidence: HIGH (static).
+
+### Session 3 addendum 3: .ANI format decoded, extractor tool
+
+- Container, FRAM/CIMG header, RLE (encoding 0x11) and SEQ/STAT frame references recovered from `0x41C837` and `0x41C0BA` and from the data.
+- Implemented in `tools/asset-extractor/ani.py` and `ani_extract.py` (new code, Python + Pillow).
+- Validation: 94 of 95 files decode (2299 frames, 235 sequences); bomb and walk sheets inspected visually and are correct. `classics.ani` uses a type the game itself rejects.
+- Hot-spot of full-cell frames is (20, 35), matching the cell anchor used by the map code.
+- Confidence: HIGH. This is the first finding validated by something other than reading code: the decoder's output is a recognisable image.
+- Documented in `file-formats.md`.
+
+### Session 3 addendum 4: scheme overrides, synced values
+
+- Scheme application writes born-with into values 50+type and overrides into 400+type via `Value_Set 0x4121BF` (`0x404679`-`0x4046BC`). Forbidden is only consulted by the "random" powerup. Confidence: HIGH.
+- In a network game the host sends 79 value ids (table at `0x45B7D4`, count 0x4F at `0x40478B`) to the clients. `valuelst.res` contains exactly 79 lines marked `; PGT`, so that marker almost certainly flags the values that are synchronised. Confidence: MEDIUM-HIGH (count match; table contents not compared).
+- Renamed: `Value_Set`, `Player_StartDying`, `Round_GetTimeLeft`.
+
+## 2026-10-04 — Session 4: gameplay core started
+
+### Decision: begin the modern gameplay core
+
+- The behavioural specification now covers loop, timing, map, movement, bombs, explosions and powerups (AGENTS.md §33 milestone). Implementation of the SDL-independent core began; no SDL/OpenGL code was written (SDL3 is not installed on this machine).
+- `src/game/` (`geometry.hpp`, `values.*`, `world.*`), `tests/unit/test_core.cpp`, `CMakeLists.txt`. Builds with `-Wall -Wextra -Wpedantic -Wconversion -Wshadow` without warnings; 29 tests, 637 checks, all passing.
+
+### Discovery made while implementing: the contender window
+
+- `Player_Update` keeps counting a dying player as alive until its death animation frame reaches value 25 (20 frames). The developer comment on value 25 reads "how many frames do you have to out-survive the other guy".
+- Consequence: bombs keep ticking for 1 s after the second-to-last player dies, and a draw results if the last player dies within that second.
+- The frame counter advances in the tick of death itself (the code jumps to the dying branch immediately).
+- Confidence: HIGH. Added to `docs/specifications/gameplay.md`.
+
+### Correction: bomb type precedence
+
+- `Player_DropBomb` sets jelly first and then overwrites with trigger, so trigger wins when both are held. The specification had it the other way round. Fixed.
