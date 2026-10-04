@@ -82,6 +82,9 @@ struct Extra {
     int animFrame = 0;    // trampolines: > 0 while the spring animation runs
 };
 
+inline constexpr int kActionCornerhead = 20;
+inline constexpr int kCornerheadFrames = 50;  // length of every cornerhead sequence
+
 enum class Special : std::uint8_t { None, Trampoline, WarpOut, WarpIn };
 
 // Things that happened during a tick, for the front end (sound, effects).
@@ -133,7 +136,8 @@ struct Player {
     int diseaseDurationMs = 0;
     int diseaseCooldown = 0;   // ticks before the disease can be passed on
     int deathAnim = 0;         // 1..value 105, chosen at death
-    int action = 0;            // 0 none, 1 kicking, 2 punching, 3 picking up a bomb
+    // 0 none, 1 kicking, 2 punching, 3 picking up a bomb, kActionCornerhead + n: trapped animation n
+    int action = 0;
     PlayerInput lastInput{};   // what the player last acted on (kept during the pickup pause)
     int actionFrames = 0;
     int actionAcc = 0;

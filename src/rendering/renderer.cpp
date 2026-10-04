@@ -415,6 +415,8 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
         if (p.action == 2) drawn = sprite(bank, "punch " + dir, p.actionFrames, colour, px, py);
         // Picking up a bomb: the original indexes this sequence with the walk counter (0x4202F3 -> 0x4200F1).
         if (p.action == 3) drawn = sprite(bank, "pickup " + dir, p.animCounter / 3, colour, px, py);
+        if (p.action >= kActionCornerhead)
+            drawn = sprite(bank, "cornerhead " + std::to_string(p.action - kActionCornerhead), p.actionFrames, colour, px, py);
         if (!drawn && carrying)
             drawn = sprite(bank, std::string(p.moving ? "walkbomb " : "standbomb ") + dir, p.moving ? p.animCounter / 3 : 0, colour, px, py);
         if (!drawn) {

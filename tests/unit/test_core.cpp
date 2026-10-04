@@ -820,6 +820,24 @@ void testGrabAndThrow() {  // B16
     CHECK(pixelToCell(b.x, b.y) == (Cell{(from.x + 3) % kGridW, from.y}));
 }
 
+void testTrappedAnimation() {  // P: cornerhead
+    Fixture f;
+    f.place(0, {0, 0});
+    f.place(1, {14, 10});
+    f.w.setTile({0, 1}, Tile::Brick);
+    f.run(2);
+    CHECK_EQ(f.w.player(0).action, 0);      // east is still open
+    f.w.setTile({1, 0}, Tile::Brick);
+    f.run(1);
+    const int a = f.w.player(0).action;
+    CHECK(a >= kActionCornerhead && a < kActionCornerhead + 13);
+    f.run(10);
+    CHECK_EQ(f.w.player(0).action, a);      // keeps playing
+    f.w.setTile({1, 0}, Tile::Blank);
+    f.run(1);
+    CHECK_EQ(f.w.player(0).action, 0);      // a way out: back to normal
+}
+
 void testSpooge() {  // B18
     Fixture f;
     f.w.player(0).inventory[kPowSpooge] = 1;
@@ -1314,6 +1332,7 @@ int main() {
         {"punch", testPunch},
         {"punch bounce and wrap", testPunchBouncesAndWraps},
         {"grab and throw", testGrabAndThrow},
+        {"trapped animation", testTrappedAnimation},
         {"spooge", testSpooge},
         {"diseases", testDiseases},
         {"death animation", testDeathAnimationChosen},

@@ -1139,6 +1139,23 @@ void World::updatePlayer(int i, int dt, const PlayerInput& in) {
     p.lastInput = effective;
 
     updateDisease(i, dt);
+    // Trapped: with all four neighbouring cells blocked a random "cornerhead" animation
+    // starts; it is dropped as soon as a neighbour opens.
+    {
+        const Cell here = pixelToCell(p.x, p.y);
+        int blocked = 0;
+        for (Dir d = 0; d < 4; ++d)
+            if (!playerPassable(step(here, d))) ++blocked;
+        if (blocked == 4) {
+            if (p.action == 0) {
+                p.action = kActionCornerhead + rng_.below(std::max(1, values_.get(vid::kCornerheadCount)));
+                p.actionFrames = 0;
+                p.actionAcc = 0;
+            }
+        } else if (p.action >= kActionCornerhead) {
+            p.action = 0;
+        }
+    }
     if (p.action != 0) {
         p.actionAcc += dt;
         while (p.actionAcc > 0) {
@@ -1146,7 +1163,8 @@ void World::updatePlayer(int i, int dt, const PlayerInput& in) {
             p.actionAcc -= frameMs_;
         }
         // Lengths of the kick / punch sequences; the pickup state lasts one frame past its 10.
-        if (p.actionFrames >= (p.action == 1 ? 8 : p.action == 2 ? 10 : 11)) p.action = 0;
+        const int length = p.action == 1 ? 8 : p.action == 2 ? 10 : p.action == 3 ? 11 : kCornerheadFrames;
+        if (p.actionFrames >= length) p.action = 0;
     }
 
     if (p.special != Special::None) {

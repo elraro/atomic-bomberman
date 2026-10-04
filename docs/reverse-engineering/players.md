@@ -144,7 +144,7 @@ Diseases 3 and 5 force button 1 to register as a fresh press every tick, which a
 | Picking up a bomb | State 4, set when a bomb is grabbed (`0x420A1F`). Lasts until its frame counter (one per 50 ms) passes the length of `pickup <dir>` (10). The controls are not read while the counter is ≤ value 665 (2), i.e. for 3 frames (`0x41FA3B`); the previous input stays in effect. The sprite is `pickup <dir>` indexed by the walk counter / 3, not by the state's own counter (`0x4202F3` → `0x4200F1`). Confidence: MEDIUM (static only) |
 | Trampoline | Lasts value 680 (30) frames; drawn value 681 (35) px higher per frame up to the midpoint, then lower. At the midpoint the player is moved to a random blank, bomb-free cell within ±2 columns and ±2 rows, differing in both column and row. Cannot be killed meanwhile |
 | Warp | States 6 and 7, drawn with `spin` (4 frames, wrapping) indexed by the state's frame counter. 9 frames "spin" out, jump to the linked warp's cell centre, 9 frames in. Cannot be killed meanwhile |
-| Trapped | If none of the 4 neighbouring cells is passable, a random "cornerhead" animation plays; it is cancelled when a neighbour opens |
+| Trapped | Checked every update (`0x41F8E5`): a neighbour is passable when it is a blank tile without a bomb (`0x41E5C3`). With all four blocked and animation state 0, the state becomes 20 + rand() % value 330 (13): `cornerhead N`, one frame per 50 ms, 50 frames, then state 0 (so another one starts while still trapped). A state 20-39 is reset to 0 as soon as a neighbour is passable. Input is still read. Confidence: HIGH (static) |
 
 ## Diseases
 
