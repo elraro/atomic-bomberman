@@ -32,6 +32,7 @@ public:
     // files needed in a match. Returns false if the essential files are missing.
     bool load(const std::string& gameDir, int level);
     bool loaded() const { return loaded_; }
+    int level() const { return level_; }
 
     unsigned background() const { return background_; }
     int sequenceLength(const std::string& name) const;
@@ -48,6 +49,7 @@ private:
     unsigned makeTexture(const AniFrame& f, int colour);
 
     bool loaded_ = false;
+    int level_ = 0;
     GamePalette palette_;
     std::array<std::vector<std::uint8_t>, 10> remap_;
     std::vector<AniFile> files_;

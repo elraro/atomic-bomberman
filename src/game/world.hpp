@@ -36,6 +36,20 @@ enum PowerupType : int {
     kPowTypeCount = 15,
 };
 
+// Diseases, by the original's number.
+enum Disease : int {
+    kDisSlow = 0,        // speed / 3
+    kDisFast = 1,        // speed x 1.5
+    kDisNoBombs = 2,     // cannot drop bombs
+    kDisDropBombs = 3,   // drops a bomb whenever it can
+    kDisShortFlame = 4,  // blast range 1
+    kDisFastDrop = 5,    // fast and drops bombs
+    kDisShortFuse = 6,   // fuse / 3
+    kDisSwap = 7,        // swap places with another player (instant)
+    kDisReverse = 8,     // reversed controls
+    kDiseaseCount = 9,
+};
+
 inline constexpr int kMaxPlayers = 10;
 inline constexpr int kMaxBombs = 100;
 inline constexpr int kFrameMs = 50;  // derived from value 30 at construction
@@ -99,6 +113,14 @@ struct Player {
     int triggerBombsLaid = 0;
     int holding = -1;     // index of the bomb being carried, or -1
     int stunTicks = 0;    // no input while > 0 (after a bomb lands on the player)
+    std::array<bool, kDiseaseCount> disease{};
+    int diseaseMs = 0;         // 0 = healthy; otherwise time since infection
+    int diseaseDurationMs = 0;
+    int diseaseCooldown = 0;   // ticks before the disease can be passed on
+    int deathAnim = 0;         // 1..value 105, chosen at death
+    int action = 0;            // 0 none, 1 kicking, 2 punching (animation only)
+    int actionFrames = 0;
+    int actionAcc = 0;
     bool prevButton1 = false;
     bool prevButton2 = false;
     int kills = 0;
@@ -225,6 +247,9 @@ private:
     void flyBomb(Bomb& b, int dt);
     void launchBomb(Bomb& b, Dir d);
     void hitOnHead(int playerIndex);
+    void giveDisease(int playerIndex);
+    void cureDiseases(Player& p);
+    void updateDisease(int playerIndex, int dt);
     int playerAt(Cell c) const;  // index of a living player in the cell, or -1
     bool bombCanSlideInto(Cell c);
     void queueDetonation(Bomb& b, int arrivedFrom);
@@ -245,7 +270,7 @@ private:
     bool movePlayer(int i, Dir requested);  // returns true if the player died
     bool checkFlameDeath(int i);
     void checkPickup(int i);
-    void pickUp(Player& p, int type);
+    void pickUp(int playerIndex, int type);
     void removeFromInventory(Player& p, int type);
     void kickBomb(Bomb& b, Dir d);
     void handleButtons(int i, const PlayerInput& in);

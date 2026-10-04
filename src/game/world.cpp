@@ -489,13 +489,75 @@ void World::removeFromInventory(Player& p, int type) {
     }
 }
 
-void World::pickUp(Player& p, int type) {
-    if (type == kPowRandom) {
-        // Becomes a random type 0-11 (scheme "forbidden" flags are not modelled yet).
-        pickUp(p, rng_.below(12));
+void World::cureDiseases(Player& p) {
+    p.disease = {};
+    p.diseaseMs = 0;
+    p.diseaseDurationMs = 0;
+}
+
+void World::giveDisease(int playerIndex) {
+    Player& p = players_[static_cast<std::size_t>(playerIndex)];
+    const int d = rng_.below(kDiseaseCount);
+    if (d == kDisSwap) {
+        // Trade places with a random other living player.
+        for (int attempt = 0; attempt < 200; ++attempt) {
+            const int o = rng_.below(kMaxPlayers);
+            Player& other = players_[static_cast<std::size_t>(o)];
+            if (o == playerIndex || !other.present || !other.alive) continue;
+            std::swap(p.x, other.x);
+            std::swap(p.y, other.y);
+            break;
+        }
         return;
     }
-    if (type == kPowDisease || type == kPowSuperDisease) return;  // diseases: not implemented
+    p.disease[static_cast<std::size_t>(d)] = true;
+    p.diseaseMs = 1;
+    p.diseaseDurationMs = values_.get(vid::kDiseaseFrames + d) * frameMs_;
+    p.diseaseCooldown = values_.get(vid::kDiseasePassCooldown);
+}
+
+void World::updateDisease(int playerIndex, int dt) {
+    Player& p = players_[static_cast<std::size_t>(playerIndex)];
+    if (p.diseaseCooldown > 0) --p.diseaseCooldown;
+    if (p.diseaseMs == 0) return;
+    p.diseaseMs += dt;
+    if (p.diseaseDurationMs < p.diseaseMs) {
+        cureDiseases(p);
+        return;
+    }
+    if (p.diseaseCooldown != 0) return;
+    // Passed on by proximity to any other living, healthy player.
+    for (int o = 0; o < kMaxPlayers; ++o) {
+        Player& other = players_[static_cast<std::size_t>(o)];
+        if (o == playerIndex || !other.present || !other.alive || other.diseaseMs != 0) continue;
+        if (std::abs(other.x - p.x) > kCellW - 10 || std::abs(other.y - p.y) > kCellH - 10) continue;
+        other.diseaseCooldown = values_.get(vid::kDiseasePassCooldown);
+        other.diseaseMs = p.diseaseMs;
+        other.diseaseDurationMs = p.diseaseDurationMs;
+        other.disease = p.disease;
+        if (values_.get(vid::kDiseasesMultiply) == 0) {
+            cureDiseases(p);  // handed over rather than copied
+            break;
+        }
+    }
+}
+
+void World::pickUp(int playerIndex, int type) {
+    Player& p = players_[static_cast<std::size_t>(playerIndex)];
+    // Any pickup may cure the player's diseases.
+    if (values_.get(vid::kDiseasesCurable) != 0 &&
+        rng_.below(std::max(1, values_.get(vid::kDiseaseCureChance))) == 0)
+        cureDiseases(p);
+
+    if (type == kPowRandom) type = rng_.below(12);  // scheme "forbidden" flags are not modelled yet
+    if (type == kPowDisease) {
+        giveDisease(playerIndex);
+        return;
+    }
+    if (type == kPowSuperDisease) {
+        for (int n = 0; n < 3; ++n) giveDisease(playerIndex);
+        return;
+    }
 
     ++p.inventory[static_cast<std::size_t>(type)];
     switch (type) {
@@ -566,6 +628,7 @@ void World::killPlayer(int i, int killer) {
     if (!p.alive) return;
     p.alive = false;
     emit(EventKind::PlayerDied, i);
+    p.deathAnim = 1 + rng_.below(std::max(1, values_.get(vid::kDeathAnimations)));
     p.dying = true;
     p.killedBy = killer;
     if (killer >= 0 && killer < kMaxPlayers) {
@@ -658,13 +721,13 @@ void World::updateEnclosement(int dt) {
 }
 
 void World::checkPickup(int i) {
-    Player& p = players_[static_cast<std::size_t>(i)];
+    const Player& p = players_[static_cast<std::size_t>(i)];
     const Cell c = pixelToCell(p.x, p.y);
     if (!inGrid(c) || powerups_[index(c)].state != PowerupState::Revealed) return;
     const int type = powerups_[index(c)].type;
     powerups_[index(c)] = {};
     emit(EventKind::Pickup, i);
-    pickUp(p, type);
+    pickUp(i, type);
 }
 
 Dir World::chooseDirection(const Player& p, const PlayerInput& in) const {
@@ -685,8 +748,11 @@ Dir World::chooseDirection(const Player& p, const PlayerInput& in) const {
 }
 
 int World::playerSpeed(const Player& p) const {
-    return p.baseSpeed + p.inventory[kPowSkate] * values_.get(vid::kSkateSpeed) -
-           p.inventory[kPowClog] * values_.get(vid::kClogSpeed);
+    int speed = p.baseSpeed + p.inventory[kPowSkate] * values_.get(vid::kSkateSpeed) -
+                p.inventory[kPowClog] * values_.get(vid::kClogSpeed);
+    if (p.disease[kDisSlow]) speed /= 3;
+    if (p.disease[kDisFast] || p.disease[kDisFastDrop]) speed = speed * 3 / 2;
+    return speed;
 }
 
 void World::kickBomb(Bomb& b, Dir d) {
@@ -716,7 +782,14 @@ bool World::movePlayer(int i, Dir requested) {
         const Cell next = step(here, requested);
 
         if (fwd == 0 && p.inventory[kPowKicker] > 0) {
-            if (Bomb* b = findBomb(next); b != nullptr && playerPassable(step(next, requested))) kickBomb(*b, requested);
+            if (Bomb* b = findBomb(next); b != nullptr && playerPassable(step(next, requested))) {
+                kickBomb(*b, requested);
+                if (p.action != 1) {
+                    p.action = 1;
+                    p.actionFrames = 0;
+                    p.actionAcc = 0;
+                }
+            }
         }
 
         int mx = 0;
@@ -764,8 +837,11 @@ void World::dropBomb(int i, Cell cell, int delayFrames) {
         type = BombType::Trigger;
         ++p.triggerBombsLaid;
     }
-    const int range = p.inventory[kPowGoldflame] > 0 ? std::max(kGridW, kGridH) : p.inventory[kPowFlame];
-    if (createBomb(i, cell, type, range, p.fuseFrames)) {
+    int range = p.inventory[kPowFlame];
+    if (p.disease[kDisShortFlame]) range = 1;
+    if (p.inventory[kPowGoldflame] > 0) range = std::max(kGridW, kGridH);
+    const int fuse = p.disease[kDisShortFuse] ? p.fuseFrames / 3 : p.fuseFrames;
+    if (createBomb(i, cell, type, range, fuse)) {
         emit(EventKind::BombDropped, i);
         // The newest bomb of this owner in that cell gets the start delay.
         for (Bomb& b : bombs_)
@@ -774,9 +850,16 @@ void World::dropBomb(int i, Cell cell, int delayFrames) {
     }
 }
 
-void World::handleButtons(int i, const PlayerInput& in) {
+void World::handleButtons(int i, const PlayerInput& raw) {
     Player& p = players_[static_cast<std::size_t>(i)];
-    const bool press1 = in.button1 && !p.prevButton1;
+    // "Drops bombs" diseases press button 1 afresh on every tick.
+    const bool forced = p.disease[kDisDropBombs] || p.disease[kDisFastDrop];
+    PlayerInput in = raw;
+    if (forced) {
+        in.button1 = true;
+        p.prevButton1 = false;
+    }
+    const bool press1 = in.button1 && !p.prevButton1 && !p.disease[kDisNoBombs];
     const bool press2 = in.button2 && !p.prevButton2;
     p.prevButton1 = in.button1;
     p.prevButton2 = in.button2;
@@ -792,6 +875,9 @@ void World::handleButtons(int i, const PlayerInput& in) {
                 launchBomb(*b, p.facing);
                 emit(EventKind::BombPunched, i);
             }
+            p.action = 2;  // the punch animation plays whether or not a bomb was there
+            p.actionFrames = 0;
+            p.actionAcc = 0;
         }
         if (p.inventory[kPowTrigger] > 0) {
             Bomb* oldest = nullptr;
@@ -807,7 +893,7 @@ void World::handleButtons(int i, const PlayerInput& in) {
     }
 
     // A carried bomb is thrown as soon as button 1 is no longer held.
-    if (p.holding >= 0 && !in.button1) {
+    if (p.holding >= 0 && (!in.button1 || forced)) {
         Bomb& b = bombs_[static_cast<std::size_t>(p.holding)];
         b.x = p.x;
         b.y = p.y;
@@ -826,7 +912,7 @@ void World::handleButtons(int i, const PlayerInput& in) {
             underfoot->stopRequested = false;
             p.holding = static_cast<int>(underfoot - bombs_.data());
             emit(EventKind::BombGrabbed, i);
-        } else if (p.inventory[kPowSpooge] > 0 && own) {
+        } else if (p.inventory[kPowSpooge] > 0 && own && !forced) {
             // A line of bombs ahead; each starts one frame further behind.
             Cell c = here;
             for (int n = 1;; ++n) {
@@ -857,7 +943,18 @@ void World::updatePlayer(int i, int dt, const PlayerInput& in) {
     const bool frozen = startFreezeMs_ > 0 || stunned;
     const PlayerInput effective = frozen ? PlayerInput{} : in;
 
-    const Dir requested = chooseDirection(p, effective);
+    updateDisease(i, dt);
+    if (p.action != 0) {
+        p.actionAcc += dt;
+        while (p.actionAcc > 0) {
+            ++p.actionFrames;
+            p.actionAcc -= frameMs_;
+        }
+        if (p.actionFrames >= (p.action == 1 ? 8 : 10)) p.action = 0;  // lengths of the kick / punch sequences
+    }
+
+    Dir requested = chooseDirection(p, effective);
+    if (requested != kNoDir && p.disease[kDisReverse]) requested = opposite(requested);
     p.moving = false;
     if (requested != kNoDir) {
         p.moveAcc += playerSpeed(p) * dt / frameMs_;

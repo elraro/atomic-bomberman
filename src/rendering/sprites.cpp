@@ -64,6 +64,12 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
     addAni(ani + "triganim.ani");
     addAni(ani + "powers.ani");
     addAni(ani + "shadow.ani");
+    addAni(ani + "kick.ani");
+    for (int n = 1; n <= 4; ++n) {
+        addAni(ani + "punbomb" + std::to_string(n) + ".ani");
+        addAni(ani + "bwalk" + std::to_string(n) + ".ani");
+    }
+    for (int n = 1; n <= 17; ++n) addAni(ani + "xplode" + std::to_string(n) + ".ani");
 
     if (auto pcx = loadPcxFile(gameDir + "/data/res/field" + lv + ".pcx")) {
         std::vector<std::uint8_t> rgba(pcx->indices.size() * 4);
@@ -79,6 +85,7 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
         std::fprintf(stderr, "WARN  cannot read field%s.pcx\n", lv.c_str());
     }
     loaded_ = ok;
+    level_ = level;
     std::fprintf(stderr, "INFO  Original graphics %s: files=%zu sequences=%zu level=%d\n", ok ? "loaded" : "incomplete",
                  files_.size(), sequences_.size(), level);
     return ok;

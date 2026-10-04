@@ -30,7 +30,7 @@ Requires CMake 3.20+ and a C++20 compiler. The front end additionally needs SDL3
 ./build/atomic                            # built-in defaults, empty arena
 ```
 
-Options: `--scheme NAME` (file in `data/schemes`, default `basic`), `--players N` (1-10), `--seed N`, `--mute`, `--shapes`, `--native`, `--demo` (scripted input), `--frames N --screenshot out.ppm` (automated capture).
+Options: `--scheme NAME` (file in `data/schemes`, default `basic`), `--players N` (1-10), `--seed N`, `--level N` (0-10, graphics theme), `--wins N` (round wins per match, default 2), `--mute`, `--shapes`, `--native`, `--demo` (scripted input), `--frames N --screenshot out.ppm` (automated capture).
 
 Player 1 with the default keys can also punch, grab and throw once the matching powerups are collected: Enter punches the bomb ahead; pressing Space while standing on your own bomb picks it up (grab) or lays a line (spooge); releasing Space throws.
 

@@ -802,6 +802,95 @@ void testSpooge() {  // B18
     CHECK_EQ(f.w.bombAt({7, 2})->elapsedMs - f.w.bombAt({5, 2})->elapsedMs, -100);  // staggered by one frame each
 }
 
+void testDiseases() {  // P6, P7 and the effects table of the specification
+    {   // slow and fast
+        Fixture f;
+        f.w.player(0).disease[kDisSlow] = true;
+        f.w.player(0).diseaseMs = 1;
+        f.w.player(0).diseaseDurationMs = 15000;
+        f.w.player(0).diseaseCooldown = 1000;
+        f.hold(0, 1);
+        f.run(20);
+        CHECK_EQ(f.w.player(0).x - cellToPixelX(0), 62);   // speed 923/3 = 307 -> 3.07 px per frame
+        Fixture g;
+        g.w.player(0).disease[kDisFast] = true;
+        g.hold(0, 1);
+        g.run(20);
+        CHECK_EQ(g.w.player(0).x - cellToPixelX(0), 277);  // speed 1384
+    }
+    {   // reversed controls
+        Fixture f;
+        f.place(0, {4, 2});
+        f.w.player(0).disease[kDisReverse] = true;
+        f.hold(0, 1);
+        f.run(4);
+        CHECK(f.w.player(0).x < cellToPixelX(4));
+    }
+    {   // cannot drop / short flame / short fuse
+        Fixture f;
+        f.w.player(0).disease[kDisNoBombs] = true;
+        f.press1(0);
+        CHECK_EQ(f.w.activeBombs(), 0);
+        f.w.player(0).disease = {};
+        f.w.player(0).disease[kDisShortFlame] = true;
+        f.w.player(0).disease[kDisShortFuse] = true;
+        f.w.player(0).inventory[kPowFlame] = 5;
+        f.run(1);
+        f.press1(0);
+        CHECK_EQ(f.w.activeBombs(), 1);
+        CHECK_EQ(f.w.bombs()[0].range, 1);
+        CHECK_EQ(f.w.bombs()[0].fuseMs, 650);              // 40 / 3 = 13 frames
+    }
+    {   // drops bombs continuously
+        Fixture f;
+        f.w.player(0).inventory[kPowBomb] = 3;
+        f.w.player(0).disease[kDisDropBombs] = true;
+        f.hold(0, 1);
+        f.run(16);                                         // walks across about three cells
+        CHECK_EQ(f.w.activeBombs(), 3);
+    }
+    {   // duration and spreading
+        Fixture f;
+        f.place(0, {4, 4});
+        f.place(1, {8, 4});
+        f.w.player(0).disease[kDisShortFlame] = true;
+        f.w.player(0).diseaseMs = 1;
+        f.w.player(0).diseaseDurationMs = 15000;
+        f.run(10);
+        CHECK(!f.w.player(1).disease[kDisShortFlame]);     // four cells apart
+        f.w.player(1).x = f.w.player(0).x + 31;            // just outside 30 px
+        f.run(2);
+        CHECK(!f.w.player(1).disease[kDisShortFlame]);
+        f.w.player(1).x = f.w.player(0).x + 30;
+        f.run(2);
+        CHECK(f.w.player(1).disease[kDisShortFlame]);      // infected
+        CHECK(f.w.player(0).disease[kDisShortFlame]);      // copied, not handed over
+        f.run(20 * 15);
+        CHECK(!f.w.player(0).disease[kDisShortFlame]);     // 15 s later both are healthy
+        CHECK(!f.w.player(1).disease[kDisShortFlame]);
+    }
+    {   // picking up a disease gives exactly one effect (or a swap)
+        Fixture f;
+        f.w.placePowerup({0, 0}, kPowDisease, PowerupState::Revealed);
+        const int x0 = f.w.player(0).x;
+        f.run(1);
+        int flags = 0;
+        for (bool d : f.w.player(0).disease) flags += d ? 1 : 0;
+        CHECK(flags == 1 || f.w.player(0).x != x0);
+        CHECK_EQ(f.w.player(0).inventory[kPowDisease], 0);
+    }
+}
+
+void testDeathAnimationChosen() {
+    Fixture f;
+    f.place(0, {2, 2});
+    f.place(1, {14, 10});
+    f.w.createBomb(1, {2, 2}, BombType::Regular, 1, 1);
+    f.run(1);
+    CHECK(!f.w.player(0).alive);
+    CHECK(f.w.player(0).deathAnim >= 1 && f.w.player(0).deathAnim <= 24);
+}
+
 void testEvents() {
     Fixture f;
     f.w.takeEvents();
@@ -979,6 +1068,8 @@ int main() {
         {"punch bounce and wrap", testPunchBouncesAndWraps},
         {"grab and throw", testGrabAndThrow},
         {"spooge", testSpooge},
+        {"diseases", testDiseases},
+        {"death animation", testDeathAnimationChosen},
         {"events", testEvents},
         {"clock and hurry", testClockAndHurry},
         {"closing walls", testClosingWalls},

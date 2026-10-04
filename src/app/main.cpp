@@ -31,6 +31,8 @@ struct Options {
     std::string screenshot;   // write the last frame as a PPM file
     bool demo = false;        // scripted input instead of the keyboard
     bool native = false;      // 640x480 window, the original's resolution
+    int level = 0;            // level theme 0-10 (graphics)
+    int wins = 2;             // round wins needed to take the match (original value 310)
     bool mute = false;
     bool shapes = false;      // draw flat shapes even when original graphics are available
     std::uint32_t seed = 1;
@@ -50,6 +52,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--demo") o.demo = true;
         else if (a == "--shapes") o.shapes = true;
         else if (a == "--mute") o.mute = true;
+        else if (a == "--level") o.level = std::clamp(std::atoi(next().c_str()), 0, 10);
+        else if (a == "--wins") o.wins = std::max(1, std::atoi(next().c_str()));
         else if (a == "--native") o.native = true;
         else std::fprintf(stderr, "WARN  unknown argument %s\n", a.c_str());
     }
@@ -173,7 +177,7 @@ int main(int argc, char** argv) {
         ab::SpriteBank sprites;
         ab::Audio audio;
         if (!opt.gameDir.empty() && !opt.mute) audio.init(opt.gameDir);
-        if (!opt.gameDir.empty() && !opt.shapes) sprites.load(opt.gameDir, 0);
+        if (!opt.gameDir.empty() && !opt.shapes) sprites.load(opt.gameDir, opt.level);
         ab::World world(values, opt.seed);
         ab::Rng scriptRng(opt.seed + 77);
         startRound(world, scheme, opt.players);
@@ -185,6 +189,7 @@ int main(int argc, char** argv) {
         int frame = 0;
         int step = 0;
         int roundOverSteps = 0;
+        std::array<int, ab::kMaxPlayers> wins{};  // round wins in the current match
         Uint64 last = SDL_GetTicksNS();
         double accumulatorMs = 0.0;
 
@@ -224,10 +229,16 @@ int main(int argc, char** argv) {
                 // A decided round stays on screen for three seconds, then a new one starts.
                 if (world.roundOver() && roundOverSteps == 0) {
                     const int win = world.winner();
-                    if (win >= 0)
-                        std::fprintf(stderr, "INFO  Round over winner=%d kills=%d\n", win, world.player(win).kills);
-                    else
+                    if (win >= 0) {
+                        const int total = ++wins[static_cast<std::size_t>(win)];
+                        std::fprintf(stderr, "INFO  Round over winner=%d kills=%d wins=%d\n", win, world.player(win).kills, total);
+                        if (total >= opt.wins) {
+                            std::fprintf(stderr, "INFO  Match over winner=%d\n", win);
+                            wins = {};
+                        }
+                    } else {
                         std::fprintf(stderr, "INFO  Round over draw\n");
+                    }
                 }
                 if (world.roundOver() && ++roundOverSteps > 60) {
                     startRound(world, scheme, opt.players);

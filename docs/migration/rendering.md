@@ -20,7 +20,8 @@ Finding from this comparison: the per-step x/y values stored in sequence `STAT` 
 
 ## Known gaps
 
-- Only level 0 graphics are selected; the HUD (scores, clock), death animations, kick/punch/pickup animations, bomb-in-flight arcs and the hurry banner are not drawn.
+- The HUD uses stand-in shapes (seven-segment clock, coloured pips), not the original fonts. Pickup, trampoline, warp and trapped ("cornerhead") animations and the hurry banner are not drawn.
+- Death (`die green N`), kick, punch and carrying (`walkbomb`/`standbomb`) animations are drawn; the level theme is selectable (`--level`). None of these has been compared frame by frame with the original.
 - The walk animation uses the original's rule (advance one frame every 3 pixels walked) but has not been compared frame by frame.
 - Flame pieces: the modern core marks the last cell at full range as a tip and the rest as mid pieces. The original's exact choice when an arm is cut short has not been read from the code.
 - Frames that are not 40 × 36 are cropped by the original at load time; the modern version draws the uncropped frame (same pixels, more transparent area).

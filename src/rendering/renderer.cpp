@@ -243,8 +243,7 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
     else
         quad(0, 0, kScreenW, kScreenH, 0.10f, 0.12f, 0.16f);
 
-    const int level = 0;
-    const std::string lv = std::to_string(level);
+    const std::string lv = std::to_string(bank.level());
     const int frame = world.tickCount();  // one animation frame per 50 ms step
 
     for (int y = 0; y < kGridH; ++y)
@@ -289,15 +288,30 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
     std::sort(order.begin(), order.end(), [&](int a, int b2) { return world.player(a).y < world.player(b2).y; });
     for (int i : order) {
         const Player& p = world.player(i);
-        if (!p.present || !p.alive) continue;
+        if (!p.present) continue;
+        if (!p.alive) {
+            // Death animation, one step per 50 ms, shown once.
+            const std::string seq = "die green " + std::to_string(std::max(1, p.deathAnim));
+            if (p.dying && p.dyingFrames < bank.sequenceLength(seq))
+                sprite(bank, seq, p.dyingFrames, i, static_cast<float>(p.x), static_cast<float>(p.y));
+            continue;
+        }
         const float px = lerp(prev.players[static_cast<std::size_t>(i)].x, p.x, alpha);
         const float py = lerp(prev.players[static_cast<std::size_t>(i)].y, p.y, alpha);
         sprite(bank, "shadow", 0, -1, px, py);
         const std::string dir = kDirName[static_cast<unsigned>(p.facing) & 3u];
-        if (p.moving)
-            sprite(bank, "walk " + dir, p.animCounter / 3, i, px, py);
-        else
-            sprite(bank, "stand " + dir, 0, i, px, py);
+        const bool carrying = p.holding >= 0;
+        bool drawn = false;
+        if (p.action == 1) drawn = sprite(bank, "kick " + dir, p.actionFrames, i, px, py);
+        if (p.action == 2) drawn = sprite(bank, "punch " + dir, p.actionFrames, i, px, py);
+        if (!drawn && carrying)
+            drawn = sprite(bank, std::string(p.moving ? "walkbomb " : "standbomb ") + dir, p.moving ? p.animCounter / 3 : 0, i, px, py);
+        if (!drawn) {
+            if (p.moving)
+                sprite(bank, "walk " + dir, p.animCounter / 3, i, px, py);
+            else
+                sprite(bank, "stand " + dir, 0, i, px, py);
+        }
     }
 }
 

@@ -25,7 +25,13 @@ Values Values::defaults() {
     v.set(90, 150);
     v.set(91, 150);
     v.set(102, 40);
+    v.set(105, 24);
     v.set(120, 1);
+    v.set(123, 1);
+    v.set(124, 1);
+    v.set(125, 10);
+    v.set(129, 10);
+    for (int i = 0; i < 9; ++i) v.set(130 + i, 300);
     v.set(300, 1000);
     v.set(301, 1300);
     v.set(667, 3);

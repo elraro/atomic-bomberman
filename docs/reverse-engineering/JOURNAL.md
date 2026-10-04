@@ -326,3 +326,10 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - Core records gameplay events per tick; the application maps them to the original's sound id ranges and plays the `.rss` files through SDL3 (`src/audio/`).
 - Checked: device opens, 1051 names parsed (matches the original's own log line), no missing files in a scripted round. Not checked: how it sounds.
 - Tests: 39 tests, 740 checks.
+
+## 2026-10-04 — Session 9: diseases, animations, themes
+
+- Core: nine diseases with shared timer, proximity spreading, cure roll on pickup; death animation number chosen at death; kick/punch action state for drawing.
+- Renderer: `die green N`, `kick`, `punch`, `walkbomb`/`standbomb`; level theme selectable (`--level 0-10`); application counts round wins per match (`--wins`).
+- Tests: 41 tests, 758 checks, all passing. Level 3 rendered and checked by eye.
+- Not validated against the original: diseases (they are random there and cannot be forced from a scheme) and all animations.
