@@ -25,6 +25,7 @@ Audio::~Audio() {
 
 bool Audio::init(const std::string& gameDir) {
     soundDir_ = gameDir + "/data/sound/";
+    rng_ ^= static_cast<std::uint32_t>(SDL_GetPerformanceCounter());  // a different pick each run
     std::ifstream in(gameDir + "/data/res/soundlst.res", std::ios::binary);
     if (!in) {
         std::fprintf(stderr, "WARN  soundlst.res not found, audio disabled\n");
@@ -135,6 +136,12 @@ void Audio::playMusic(int id) {
     musicData_ = data;
     SDL_PutAudioStreamData(music_, data->data(), static_cast<int>(data->size()));
     std::fprintf(stderr, "INFO  Music started name=%s\n", it->second.c_str());
+}
+
+void Audio::stopMusic() {
+    if (music_ != nullptr) SDL_DestroyAudioStream(music_);
+    music_ = nullptr;
+    musicData_ = nullptr;
 }
 
 void Audio::update() {

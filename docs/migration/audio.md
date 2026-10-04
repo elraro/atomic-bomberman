@@ -34,3 +34,7 @@ The gameplay core does not know about audio. It records `Event`s during a tick (
 - Level music loops during play (sound id 1100 + level: `grnacres`, `generic`, `hockey`, `pyramid`, `mineshft`, `battle`, `gieger`, `haunted`, `ocean`, `swamp`, `sewer`), at half gain. The menu tune (1010), the pre-game screens tune (1020) and the end-of-round tune (1130, then a random voice line: series 1700-1999 for a draw, 2000-2299 for a win) play as in the original's `Match_Run`. No no per-death-animation sounds, no taunts.
 - The throw range (172-175) and the exact ranges for death and hurry sounds are taken from file comments, not from the code.
 - `--mute` disables audio (use it for automated runs).
+
+## Leaving the game
+
+The original's quit routine (`0x412987`) asks for confirmation (text 10), stops the music, plays a random sound of the 2600 series ("exiting game", 49 voice lines in `soundlst.res`) and waits 4000 ms before exiting. The modern game does the same when leaving through the main menu (Exit or Esc), without the confirmation box; any key skips the wait. Confidence: HIGH (static).

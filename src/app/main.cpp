@@ -437,6 +437,7 @@ int main(int argc, char** argv) {
         Uint64 last = SDL_GetTicksNS();
         double accumulatorMs = 0.0;
 
+        bool farewell = false;  // leaving through the menu: say goodbye first
         while (running) {
             // Scripted key presses for automated checks of the menu screens.
             if (!opt.script.empty() && frame % 10 == 5 && static_cast<std::size_t>(frame / 10) < opt.script.size()) {
@@ -457,13 +458,13 @@ int main(int argc, char** argv) {
                     // Items as on the original's menu picture.
                     if (key == SDLK_UP) menuItem = (menuItem + 6) % 7;
                     if (key == SDLK_DOWN) menuItem = (menuItem + 1) % 7;
-                    if (key == SDLK_ESCAPE) running = false;
+                    if (key == SDLK_ESCAPE) running = false, farewell = true;
                     if (key == SDLK_RETURN) {
                         if (menuItem == 0) {
                             screen = Screen::PlayerList;
                             if (sound) audio.playMusic(1020);  // pre-game screens tune
                         }
-                        if (menuItem == 6) running = false;
+                        if (menuItem == 6) running = false, farewell = true;
                         if (sound) audio.playRange(10, 10);
                     }
                 } else if (screen == Screen::PlayerList) {
@@ -684,6 +685,21 @@ int main(int argc, char** argv) {
                 running = false;
             }
             SDL_GL_SwapWindow(window);
+        }
+        if (farewell && sound && opt.frames == 0) {
+            // As the original's quit routine (0x412987): the music stops, one of the
+            // "leaving the program" lines plays (2600 series) and the program waits 4 s.
+            audio.stopMusic();
+            audio.playRange(2600, 2699);
+            const Uint64 until = SDL_GetTicks() + 4000;
+            bool waiting = true;
+            while (waiting && SDL_GetTicks() < until) {
+                SDL_Event e;
+                while (SDL_PollEvent(&e))
+                    if (e.type == SDL_EVENT_QUIT || (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat)) waiting = false;
+                audio.update();
+                SDL_Delay(10);
+            }
         }
         std::fprintf(stderr, "INFO  Exiting frames=%d steps=%d alive=%d bombs=%d\n", frame, step, world.alivePlayers(),
                      world.activeBombs());

@@ -22,6 +22,7 @@ public:
     void playRange(int firstId, int lastId);
     // Starts a looping tune by sound id (stops the previous one). Level music is id 1100 + level.
     void playMusic(int id);
+    void stopMusic();
     // Releases finished voices and keeps the music looping. Call once per frame.
     void update();
 
