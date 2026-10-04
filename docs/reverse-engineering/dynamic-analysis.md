@@ -34,6 +34,27 @@ On a modern machine a tick lasts about 1 ms. Time-based rules are unaffected (D8
 
 The original was therefore tuned for machines that produced roughly its nominal 20 frames per second (value 25: "nominal frame rate used as a reference"). For the modern implementation a fixed 50 ms simulation step reproduces the designed behaviour of the tick-counted rules; rendering can interpolate. This is a design recommendation, not yet a measurement on period hardware.
 
+## Scripted input and screenshots (session 6)
+
+`xdotool` key events reach the game (the Wine desktop window holds X focus), and the game's own screenshot function writes `scrNNNNN.bmp` (640 × 480, 8-bit) when **Alt+C** is pressed (GNW key code 0x12E, set at `0x43A4B0`). `tools/diagnostics/drive_original.py` runs a list of timed actions (`wait`, `key`, `down`, `up`, `shot`) and collects the screenshots; with `WINEDEBUG=+file,+timestamp` the Wine trace gives millisecond timestamps for sound loads and for each screenshot.
+
+A test scheme `testopen.sch` (all cells blank, density 0) was added to the **working copy only**, and `options.ini` there selects it with `random_start=0`.
+
+Key sequence used to reach a match with two keyboard players and no AI: Enter ×3 (skip logos), Enter (Start Game), Down, Right, Right (player 2: AI → KEY 0 → KEY 1), Enter, Enter.
+
+| # | Observation | Evidence | Confirms |
+|---|---|---|---|
+| D13 | Main menu items, top to bottom: Start Game, Start Network Game, Join Network Game, Options, About Bomberman, Online Manual, Exit Bomberman. "V1.0" is shown top-left | Screenshot | Resolves UNKNOWN-009 |
+| D14 | Start Game leads to the player list first (Player 1: KEY 0, Player 2: AI, 3-10: OFF by default; list colours white, black, red, blue, green, yellow, cyan, magenta, orange, purple), then to a level/scheme screen ("Green Acres", "2 Wins to win match") with a scheme preview, then to the match | Screenshots | Screen order; `.rmp` colour order |
+| D15 | On the player list, Right cycles a slot AI → KEY 0 → KEY 1 → OFF; Left sets OFF | Screenshots | `Match_PlayerSetupScreen` key handling |
+| D16 | Default keys: set 0 = arrow keys, Space (bomb), Enter (action); set 1 = R/G/F/D for up/right/down/left, S (bomb). The codes in the exe are DirectInput scan codes (0xC8, 0xCD, 0xD0, 0xCB, 0x39, 0x1C; 0x13, 0x22, 0x21, 0x20, 0x1F), and arrows and Space do drive player 1 | `0x406158`-`0x4061BC`; movement and bomb drop observed | Gameplay keyboard goes through DirectInput (UNKNOWN-004, mostly) |
+| D17 | **Walking speed ≈ 183 px/s.** Right held 2.0 s: 366 px. Left held 1.0 s: 184 px. Fitting both gives 182 px/s plus about 11 ms of key-timing overhead | Sprite offset between screenshots in the same pose (`tools/diagnostics/sprite_shift.py`) | Predicted 184.6 px/s at 50 ms ticks, 180 px/s at 1 ms ticks: the measurement lies between, as expected for the 1-5 ms ticks of this machine |
+| D18 | **Single bomb: explosion at +2.000 s** after the drop sound | Timestamps of `bmdrop3.rss` and `explo1.rss` | T2 |
+| D19 | **Flames last about 500 ms.** Screenshots at +2.334 s and +2.473 s show the flames; at +2.612 s they are gone | Timestamped screenshots | T3 (lifetime between 473 and 612 ms; predicted 500) |
+| D20 | **Blast shape**: bomb in cell (3,0) with the starting range: flames on the bomb cell, two cells west, two cells east, two cells south, none north (field edge). The player standing in cell (0,0), next to the westmost flame, survives | Screenshots | E1, E4; death is by cell, not by sprite overlap |
+| D21 | A dropped bomb is drawn in its owner's colour (white for player 1) | Screenshots | Colour remap applies to bombs |
+| D22 | The round clock shows 2:25 five seconds into the match and counts down in seconds | Screenshots | Value 100 = 150 s |
+
 ## Not yet possible
 
-Driving the game with scripted input (needs an X input tool such as `xdotool`, or a Wine-side helper), screenshots, and attaching a debugger. With input, the scenarios in `docs/testing/original-behaviour.md` can be run one by one.
+Attaching a debugger, and reading game memory directly. Remaining scenarios of `docs/testing/original-behaviour.md` can now be scripted one by one.

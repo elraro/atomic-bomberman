@@ -11,10 +11,7 @@ Evidence:
 No `wine` binary on the analysis machine. Ghidra MCP exposes a debugger URL (`GHIDRA_DEBUGGER_URL` in `.mcp.json`) but there is no target to attach to.
 
 Status:
-PARTLY RESOLVED (session 5). The original runs under Wine 10 from a working copy; see `dynamic-analysis.md` and `tools/diagnostics/run-original.sh`. Observation is limited to Wine traces and the game's debug log while it plays demo matches.
-
-Next action:
-Get scripted input (install `xdotool`, or write a small Win32 helper that posts key events) and a way to capture the screen, so the scenarios in `docs/testing/original-behaviour.md` can be run.
+RESOLVED (sessions 5-6). The original runs under Wine, can be driven with scripted keys and captured with its own screenshot key. See `dynamic-analysis.md`, `tools/diagnostics/run-original.sh`, `tools/diagnostics/drive_original.py`. A debugger is not attached yet.
 
 # UNKNOWN-002
 
@@ -50,10 +47,7 @@ Evidence:
 Hook installed at `0x43B44C`; hook proc `0x43B518`; `DInput_Init 0x444760` with helpers `0x444A68`, `0x444AE8`, `0x444B14`, `0x444BD0`.
 
 Status:
-OPEN
-
-Next action:
-Decompile `0x444760` and its helpers to see which device GUIDs are created; trace the key-state table read by the player input function in `you.c` (`you_getinput()` string at `0x45A16D`).
+MOSTLY RESOLVED (session 6). Default key bindings in the exe are DirectInput scan codes and the per-player input reads a key-state table indexed by them (`0x4A2BA0`), so gameplay keys come from the DirectInput keyboard. Menu keys arrive as GNW key codes through the input queue. The role of the `WH_KEYBOARD` hook (probably blocking system keys) is not confirmed.
 
 # UNKNOWN-005
 
@@ -117,10 +111,7 @@ Evidence:
 `Menu_MainMenuLoop 0x42B9CE` switch: 0 → `Match_Run`, 1 → `0x42B0CE`, 2 → `0x42B47D`, 3 → `0x4080DC`, 4 → `0x41302D`, 5 → `0x41431C`, 6 → `0x412987`.
 
 Status:
-OPEN
-
-Next action:
-Match against the main-menu message ids in `messages.txt` and the menu drawing code; confirm at runtime.
+RESOLVED (session 6, screenshot). 0 Start Game, 1 Start Network Game, 2 Join Network Game, 3 Options, 4 About Bomberman, 5 Online Manual, 6 Exit Bomberman.
 
 # UNKNOWN-010
 

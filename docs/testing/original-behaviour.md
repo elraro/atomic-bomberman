@@ -11,8 +11,8 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 | Id | Scenario | Expected | Confidence | Observed |
 |---|---|---|---|---|
 | T1 | Start a round, hold a direction from the first moment | No movement for the first 1000 ms | HIGH | Consistent: in a demo match the first bomb is dropped 1.15 s after the level loads (D9) |
-| T2 | Drop a bomb, measure to detonation | 2000 ms | HIGH | **Confirmed**: 2.000 s, 84 samples, median error 0 ms (D8) |
-| T3 | Measure how long a flame is visible and lethal | 500 ms | HIGH | |
+| T2 | Drop a bomb, measure to detonation | 2000 ms | HIGH | **Confirmed**: 2.000 s, 84 samples in a demo match (D8) and one controlled bomb (D18) |
+| T3 | Measure how long a flame is visible and lethal | 500 ms | HIGH | **Confirmed**: visible at +473 ms, gone at +612 ms after the explosion (D19) |
 | T4 | Destroy a brick; measure until the cell is walkable | 500 ms after the blast | HIGH | |
 | T5 | Cause a stall longer than 150 ms (e.g. disk access) mid-round | Game objects advance by at most 150 ms; the round clock loses the full stall | HIGH | |
 
@@ -20,7 +20,7 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 
 | Id | Scenario | Expected | Confidence | Observed |
 |---|---|---|---|---|
-| M1 | Empty arena, player at (0,0), hold east for 1 s after the start freeze | Moves about 185 px (4.6 cells) | HIGH | |
+| M1 | Empty arena, player at (0,0), hold east for 1 s after the start freeze | Moves about 185 px (4.6 cells) | HIGH | **Confirmed within 1.5 %**: 366 px in 2.0 s and 184 px in 1.0 s, about 183 px/s on a machine with 1-5 ms ticks (D17) |
 | M2 | Same with 1, 2, 3, 4 skates | 214, 244, 274, 304 px per second (speed 1073…1523) | HIGH | |
 | M3 | Hold east into a solid pillar from a cell centre | Stops exactly at the cell centre; cannot advance past it | HIGH | |
 | M4 | Player in a horizontal corridor, a few pixels above the row's centre line, hold east | Moves diagonally down-right until aligned, then straight | HIGH | |
@@ -57,13 +57,13 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 
 | Id | Scenario | Expected | Confidence | Observed |
 |---|---|---|---|---|
-| E1 | Range 2 bomb in open field | Flames on the bomb's cell and 2 cells in each direction | HIGH | |
+| E1 | Range 2 bomb in open field | Flames on the bomb's cell and 2 cells in each direction | HIGH | **Confirmed** (D20) |
 | E2 | Bomb adjacent to a solid tile | No flame on the solid tile, none beyond | HIGH | |
 | E3 | Bomb with a brick 1 cell away and another brick behind it | Only the first brick burns | HIGH | |
-| E4 | Bomb at the edge of the field | Blast stops at the edge | HIGH | |
+| E4 | Bomb at the edge of the field | Blast stops at the edge | HIGH | **Confirmed** (D20) |
 | E5 | Revealed powerup 1 cell from a range-3 bomb | Powerup destroyed; no flame on its cell or beyond | HIGH | |
 | E6 | Player standing with the reference point 1 px inside a flamed cell | Dies | HIGH | |
-| E7 | Player sprite overlapping a flamed cell but reference point in the neighbouring cell | Survives | HIGH | |
+| E7 | Player sprite overlapping a flamed cell but reference point in the neighbouring cell | Survives | HIGH | Consistent: player in the cell next to the last flame survives (D20) |
 | E8 | Player walks into a cell 400 ms after its flame appeared | Dies (flame still active until 500 ms) | HIGH | |
 | E9 | Goldflame bomb in an open row | Flames across the whole row and column up to the first obstacle | HIGH | |
 | E10 | Player on a trampoline or mid-warp in a flamed cell | Survives | HIGH | |

@@ -285,3 +285,11 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - Verified by automated runs: `--demo --frames N --screenshot` produces frames showing the `basic` scheme at 90 % density, cleared start areas, players, a bomb, flames, burning bricks and revealed powerups.
 - Reads `valuelst.res` and schemes from the user's game directory at run time; draws placeholder shapes, not original art.
 - Not yet done: interactive play has not been tried by a person; no audio, menus, round end handling or original graphics.
+
+## 2026-10-04 — Session 6: scripted control of the original
+
+- `xdotool` installed by the user. Key injection works; the game's screenshot key is Alt+C (found in the code after F12 did nothing). New tools: `drive_original.py`, `sprite_shift.py`.
+- Menu structure, pre-game screen order, controller cycling and default keys observed (D13-D16).
+- **Measured on the original**: walking speed ≈ 183 px/s (D17), fuse 2.000 s with a controlled bomb (D18), flame lifetime ≈ 500 ms (D19), blast shape and edge stop (D20).
+- Correction: `Match_PlayerSetupScreen` (player list) comes before the level/scheme screen, not after.
+- Validation level: fuse, flame lifetime, walking speed and basic blast propagation are now observed on the original, reproduced by the modern core and covered by unit tests (Level 4).
