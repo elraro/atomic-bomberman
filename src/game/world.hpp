@@ -275,6 +275,11 @@ public:
     int secondsLeft() const;
     void setRoundSeconds(int seconds) { roundLimitMs_ = seconds < 0 ? -1 : seconds * 1000; }
     void setEnclosementDepth(int depth) { enclosementDepth_ = depth; }
+    // Changes one tuning value (options that the original stores as values); takes
+    // effect where the value is next read, for most of them at the next startRound.
+    void setValue(int id, int value) { values_.set(id, value); }
+    // "Win matches by kill total": a suicide no longer costs a kill.
+    void setWinByKills(bool on) { winByKills_ = on; }
     bool hurry() const;                  // the "hurry" warning is showing
     bool timeUp() const { return secondsLeft() == 0; }
     // The round ends when at most one contender is left, or when the clock reads 0:00 (a draw).
@@ -336,6 +341,7 @@ private:
     std::array<int, kMaxPlayers> teams_{};
     int roundLimitMs_ = -1;
     int enclosementDepth_ = 0;
+    bool winByKills_ = false;
 
     // Closing walls ("enclosement"): a cursor walking an inward clockwise spiral.
     struct Walls {

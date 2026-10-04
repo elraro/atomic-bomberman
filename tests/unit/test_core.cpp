@@ -873,6 +873,21 @@ void testRoulette() {
     CHECK_EQ(static_cast<int>(y), 390);
 }
 
+void testSuicideScore() {
+    for (int mode = 0; mode < 2; ++mode) {
+        Fixture f;
+        f.w.setWinByKills(mode == 1);
+        f.place(0, {0, 0});
+        f.place(1, {14, 10});
+        f.w.setTile({0, 1}, Tile::Solid);
+        f.w.setTile({1, 0}, Tile::Solid);
+        f.press1(0);
+        f.run(60);
+        CHECK(!f.w.player(0).alive);
+        CHECK_EQ(f.w.player(0).kills, mode == 1 ? 0 : -1);  // a suicide costs a kill, except with win-by-kills
+    }
+}
+
 void testSettings() {
     Settings s;
     s.parse("levelno=4\nnum_to_win_match=3\nenclosement_depth=9\nconveyor_speed=2\nteam_play=1\nrandom_start=1\n"
@@ -1396,6 +1411,7 @@ int main() {
         {"trapped animation", testTrappedAnimation},
         {"roulette", testRoulette},
         {"settings", testSettings},
+        {"suicide score", testSuicideScore},
         {"spooge", testSpooge},
         {"diseases", testDiseases},
         {"death animation", testDeathAnimationChosen},

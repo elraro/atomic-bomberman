@@ -798,9 +798,9 @@ void World::killPlayer(int i, int killer) {
     p.dying = true;
     p.killedBy = killer;
     if (killer >= 0 && killer < kMaxPlayers) {
-        if (killer == i)
-            --p.kills;
-        else
+        if (killer == i) {
+            if (!winByKills_) --p.kills;  // original 0x41DD23
+        } else
             ++players_[static_cast<std::size_t>(killer)].kills;
     }
 }
