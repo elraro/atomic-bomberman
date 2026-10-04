@@ -490,3 +490,28 @@ Evidence:
 - Kill scoring `0x41DD06`: a kill of another player adds 1; a suicide subtracts 1 unless `win_by_kills` is on.
 
 Confidence: HIGH (static). The two earlier journal entries that said "every won round" are superseded by this one.
+
+### Discovery: options (`options.c`)
+
+Where: reader `0x4062DD`-`0x4065FB` (key → global), settings screen `0x4080DC`, play-time stepping `0x407719`.
+
+| Key | Global |
+|---|---|
+| `levelno` | `0x464998` (-1 = random) |
+| `num_to_win_match` | `0x464A7C` |
+| `enclosement_depth` | `0x464974` |
+| `conveyor_speed` | `0x464930` |
+| `team_play` | `0x464964` |
+| `stomped_bombs_detonate` | `0x464940` |
+| `random_start` | `0x464AE8` |
+| `win_by_kills` | `0x46497C` |
+| `goldman` | `0x4648BC` |
+| `playtime` | `0x464948` (60-600 s, 1001 = infinite) |
+| `assign_keyboards` | `0x464968` |
+| `diseases_destroyable` | `0x464990` |
+| `disable_game_music` | `0x4648C0` |
+
+- The settings screen has 18 rows (messages 250-267) from (55,40) every 22 px (value 745), over a random `glue%u` picture (`0x4148E5`: rand % value 16). Yes/No values are messages 26/25, conveyor speed 295-297, enclosement depth 315-318, play time 280/281.
+- Play time steps: 60, 90, 120, 150, 180, 240, 300, 600, 1001, then 60 again.
+
+Confidence: HIGH (static). Modern: `src/resources/settings.*`, Options screen in the application; network, modem, keyboard-layout and memory rows are left out.

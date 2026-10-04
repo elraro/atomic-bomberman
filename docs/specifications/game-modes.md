@@ -28,7 +28,7 @@ Option `team_play`. [D]
 
 - First to V(310) [2] round wins (option `num_to_win_match`) takes the match. [D]
 - Result screens: "DRAW GAME", a results screen after a won round, a victory screen in the winner's colour after the match (team pictures in team play). [observed for draw; pictures present in the data]
-- `win_by_kills` option exists; its effect is unknown. [?]
+- `win_by_kills`: the match goes to the single player with the most kills once that total reaches the target (kills add up over the rounds of the match); round wins then do not end the match, and a suicide does not cost a kill. Not used in team play. [S]
 
 ## Not specified
 
@@ -42,3 +42,24 @@ Campaign mode (ghosts, rovers, lives, points: values 1200-1320 and `.cam` files)
 - When both have stopped the prize is the slot under the ring: bomb, flame, kicker, goldflame, skate or clog. Sound 1310 (applause), or 1320 (buzzer) for the clog. Three text lines name the prize. Enter or Space then continues with the match setup; Esc returns to the menu. [S]
 - In every round of that next match the previous match's winner (every member of the winning team in team play) starts with one more of that powerup, without the usual cap, and is surrounded by gold sparkles for the first value 1010 (5) seconds of the round. [S]
 - The original advances the wheel once per drawn frame with no frame limit; this implementation uses 25 frames per second. [M]
+
+## Settings
+
+The original keeps these in `options.ini` and edits them on the Options screen (messages 250-263). [S]
+
+| Setting (key) | Choices | Default | Effect |
+|---|---|---|---|
+| Team Play (`team_play`) | No / Yes | No | Teams from the scheme |
+| Random Start (`random_start`) | No / Yes | No | Once per match the ten start positions are shuffled (200 random swaps) |
+| Conveyor Speed (`conveyor_speed`) | Low / Medium / High | Medium | Belt speed of conveyor levels |
+| Stomped Bombs Detonate (`stomped_bombs_detonate`) | No / Yes | Yes | A bomb under a closing wall explodes, or is removed |
+| Win Matches By Kill Total (`win_by_kills`) | No / Yes | No | See above |
+| Gold Bomberman (`goldman`) | No / Yes | No | The roulette |
+| Enclosement Depth (`enclosement_depth`) | None / A Little / A Lot / All the way! | A Little | How far the closing walls go |
+| Play Time (`playtime`) | 1:00, 1:30, 2:00, 2:30, 3:00, 4:00, 5:00, 10:00, Infinite | 2:30 | Round clock |
+| Diseases Can Be Destroyed (`diseases_destroyable`) | No / Yes | Yes | Otherwise a destroyed disease reappears elsewhere |
+| Disable music during gameplay (`disable_game_music`) | No / Yes | No | |
+| Level (`levelno`) | 0-10 or Random Each Game (-1) | 0 | Random picks among levels enabled by values 1150-1160 |
+
+Defaults are those of the tuning values and of an options file written by the original; the original's built-in defaults for a missing file were not all read. [M]
+Not carried over: node name, modem and protocol settings, keyboard layout editor, "enhanced memory model", and "Adjust Audio" (a placeholder in the original: message 320).

@@ -41,7 +41,7 @@ Round generation (brick density, hidden powerups, start-area clearing), start fr
 
 ## Not covered yet
 
-Campaign, networking. The application has a main menu (only Start Game and Exit work), the player list, a level/scheme/wins/team screen, and the original's draw, results, victory and team pictures after rounds. Options, network and manual screens are not built. What happens when the round clock reaches zero is not known yet (the modern clock simply stops at 0). Each is specified to some degree in `docs/specifications/` except game modes, AI and networking.
+Campaign, networking. The application has a main menu (Start Game, Options and Exit work), an options screen whose settings are stored in the original's `options.ini` format in the per-user data folder, the player list, a level/scheme/wins/team screen, and the original's draw, results, victory and team pictures after rounds. Options, network and manual screens are not built. What happens when the round clock reaches zero is not known yet (the modern clock simply stops at 0). Each is specified to some degree in `docs/specifications/` except game modes, AI and networking.
 
 ## Validation level
 

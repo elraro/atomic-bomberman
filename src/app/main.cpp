@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -22,6 +23,7 @@
 #include "rendering/renderer.hpp"
 #include "resources/asset_import.hpp"
 #include "resources/scheme_file.hpp"
+#include "resources/settings.hpp"
 
 namespace {
 
@@ -46,6 +48,9 @@ struct Options {
     int wins = 2;             // round wins needed to take the match (original value 310)
     bool rouletteShot = false;  // automated: capture the roulette once it has stopped, then exit
     bool roulette = false;    // the "goldman" roulette between rounds (original option goldman)
+    bool levelSet = false;    // --level, --wins, --scheme given: they win over the saved settings
+    bool winsSet = false;
+    bool schemeSet = false;
     bool mute = false;
     bool shapes = false;      // draw flat shapes even when original graphics are available
     std::uint32_t seed = 1;
@@ -76,7 +81,7 @@ Options parseArgs(int argc, char** argv) {
             std::exit(0);
         }
         else if (a == "--game-dir") o.gameDir = next();
-        else if (a == "--scheme") o.scheme = next();
+        else if (a == "--scheme") o.scheme = next(), o.schemeSet = true;
         else if (a == "--players") o.players = std::atoi(next().c_str());
         else if (a == "--humans") o.humans = std::clamp(std::atoi(next().c_str()), 0, 2);
         else if (a == "--frames") o.frames = std::atoi(next().c_str());
@@ -102,8 +107,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--menu-shot") o.menuShot = std::atoi(next().c_str());
         else if (a == "--shapes") o.shapes = true;
         else if (a == "--mute") o.mute = true;
-        else if (a == "--level") o.level = std::clamp(std::atoi(next().c_str()), 0, 10);
-        else if (a == "--wins") o.wins = std::max(1, std::atoi(next().c_str()));
+        else if (a == "--level") o.level = std::clamp(std::atoi(next().c_str()), 0, 10), o.levelSet = true;
+        else if (a == "--wins") o.wins = std::max(1, std::atoi(next().c_str())), o.winsSet = true;
         else if (a == "--native") o.native = true;
         else if (a == "--roulette") o.roulette = true;
         else if (a == "--roulette-shot") o.roulette = o.rouletteShot = true;
@@ -234,7 +239,8 @@ const char* controlName(Control c) {
     }
 }
 
-enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette };
+constexpr int kOptionRows = 10;
+enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options };
 
 // Level names, original messages 150-160.
 const char* const kLevelName[11] = {"Green Acres",   "Classic Green Acres", "The Hockey Rink",  "Ancient Egypt",
@@ -285,6 +291,25 @@ int main(int argc, char** argv) {
     } else {
         std::fprintf(stderr, "INFO  Game files: %s\n", opt.gameDir.c_str());
     }
+
+    // Saved settings (the original's options.ini keys). Automated runs ignore the file so
+    // that they stay reproducible; command-line choices win over it.
+    ab::Settings cfg;
+    std::string settingsPath;
+    if (char* pref = SDL_GetPrefPath("atomic-bomberman-modern", "atomic")) {
+        settingsPath = std::string(pref) + "options.ini";
+        SDL_free(pref);
+    }
+    const bool useSettings = opt.frames <= 0 && !opt.demo && opt.script.empty() && !settingsPath.empty();
+    if (useSettings && cfg.load(settingsPath)) std::fprintf(stderr, "INFO  Settings: %s\n", settingsPath.c_str());
+    bool randomLevel = !opt.levelSet && cfg.level < 0;
+    if (!opt.levelSet) opt.level = std::max(0, cfg.level);
+    if (!opt.winsSet) opt.wins = cfg.winsNeeded;
+    if (!opt.schemeSet && useSettings) {
+        opt.scheme = cfg.scheme;
+        for (char& ch : opt.scheme) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    if (opt.roulette) cfg.goldman = true;
 
     ab::Values values = ab::Values::defaults();
     ab::Scheme scheme = ab::Scheme::pillars();
@@ -357,7 +382,7 @@ int main(int argc, char** argv) {
         for (std::size_t i = 0; i < schemes.size(); ++i)
             if (schemes[i].file == opt.scheme) schemeIndex = static_cast<int>(i);
         int setupRow = 0;
-        bool teamPlay = false;
+        bool teamPlay = cfg.teamPlay;
         std::array<int, ab::kMaxPlayers> teams{};
         if (!opt.gameDir.empty())
             if (auto sf = ab::loadSchemeFile(opt.gameDir + "/data/schemes/" + opt.scheme + ".sch")) teams = sf->team;
@@ -377,6 +402,16 @@ int main(int argc, char** argv) {
                     scheme = sf->scheme;
                     teams = sf->team;
                 }
+        };
+        auto saveSettings = [&]() {
+            cfg.level = randomLevel ? -1 : level;
+            cfg.winsNeeded = winsNeeded;
+            cfg.teamPlay = teamPlay;
+            if (!schemes.empty()) {
+                cfg.scheme = schemes[static_cast<std::size_t>(schemeIndex)].file;
+                for (char& ch : cfg.scheme) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            }
+            if (useSettings && !cfg.save(settingsPath)) std::fprintf(stderr, "WARN  Could not write %s\n", settingsPath.c_str());
         };
         ab::Audio audio;
         const bool sound = !opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir);
@@ -407,16 +442,19 @@ int main(int argc, char** argv) {
         const bool haveMenu = opt.menu && spritesPtr->loaded() && spritesPtr->picture("mainmenu") != 0;
         Screen screen = haveMenu ? Screen::MainMenu : Screen::Match;
         int menuItem = 0;
+        int optionRow = 0;
+        int optionsGlue = 2;
         int listRow = 0;
         if (opt.menuShot == 2) screen = Screen::PlayerList;
         if (opt.menuShot == 3) screen = Screen::LevelSetup;
+        if (opt.menuShot == 4) screen = Screen::Options;
 
         ab::RenderSnapshot previous;
         std::array<int, ab::kMaxPlayers> wins{};  // round wins in the current match
         int roundOverSteps = 0;
         bool matchOver = false;
         // The roulette between rounds, and what it gave the last round's winner.
-        bool goldman = opt.roulette;
+        bool& goldman = cfg.goldman;
         std::unique_ptr<ab::Roulette> roulette;
         int rouletteFrames = 0;
         double rouletteMs = 0.0;
@@ -431,9 +469,51 @@ int main(int argc, char** argv) {
             rouletteFrames = 0;
             rouletteMs = 0.0;
         };
+        std::array<int, ab::kMaxPlayers> matchKills{};  // kills over the rounds of the match
+        int matchWinner = -1;                           // player or team once the match is decided
+        std::array<ab::Cell, ab::kMaxPlayers> startCells = scheme.start;
+        ab::Rng appRng(opt.seed * 2654435761u + 99u);
+        // Level music, unless switched off in the settings (original disable_game_music).
+        auto playLevelMusic = [&]() {
+            if (!sound) return;
+            if (cfg.disableGameMusic) audio.stopMusic();
+            else audio.playMusic(1100 + level);
+        };
+        // What the original resets once per match (0x421793): scores, kills and, with
+        // "random start", the start positions: 200 swaps of two of the ten.
+        auto newMatch = [&]() {
+            wins = {};
+            matchKills = {};
+            matchOver = false;
+            matchWinner = -1;
+            if (randomLevel) {
+                // "Random Each Game": values 1150-1160 say which levels may come up.
+                for (int tries = 0; tries < 100; ++tries) {
+                    level = appRng.below(11);
+                    if (values.get(1150 + level) != 0) break;
+                }
+            }
+            applySettings();
+            startCells = scheme.start;
+            if (cfg.randomStart)
+                for (int n = 0; n < 200; ++n) {
+                    const auto a = static_cast<std::size_t>(appRng.below(ab::kMaxPlayers));
+                    const auto b = static_cast<std::size_t>(appRng.below(ab::kMaxPlayers));
+                    std::swap(startCells[a], startCells[b]);
+                }
+        };
         auto beginMatch = [&]() {
-            world.startRound(scheme, true);
-            world.setExtras(extras);
+            // Settings the core reads as tuning values.
+            world.setValue(ab::vid::kEnclosementDepth, cfg.enclosementDepth);
+            world.setValue(ab::vid::kWallsDetonateBombs, cfg.stompedBombsDetonate ? 1 : 0);
+            world.setValue(ab::vid::kDiseasesDestroyable, cfg.diseasesDestroyable ? 1 : 0);
+            world.setValue(ab::vid::kRoundSeconds, cfg.playTime);
+            world.setWinByKills(cfg.winByKills);
+            ab::Scheme placed = scheme;
+            placed.start = startCells;
+            world.startRound(placed, true);
+            if (cfg.playTime >= ab::Settings::kInfiniteTime) world.setRoundSeconds(-1);
+            world.setExtras(extras, cfg.conveyorSpeed);
             world.setTeamPlay(teamPlay, teams);
             int n = 0;
             for (int i = 0; i < ab::kMaxPlayers; ++i)
@@ -457,12 +537,13 @@ int main(int argc, char** argv) {
             } else {
                 screen = Screen::Match;
                 beginMatch();
-                if (sound) audio.playMusic(1100 + level);
+                playLevelMusic();
             }
         };
         if (screen == Screen::Match) {
+            newMatch();
             beginMatch();
-            if (sound) audio.playMusic(1100 + level);
+            playLevelMusic();
         } else if (sound) {
             audio.playMusic(1010);  // main menu music
         }
@@ -505,6 +586,12 @@ int main(int argc, char** argv) {
                             } else {
                                 screen = Screen::PlayerList;
                             }
+                        }
+                        if (menuItem == 3) {
+                            screen = Screen::Options;
+                            optionRow = 0;
+                            // The original shows a random "glue" picture behind it (0x4148E5, value 16).
+                            optionsGlue = appRng.below(std::max(1, values.get(16)));
                         }
                         if (menuItem == 6) running = false, farewell = true;
                         if (sound) audio.playRange(10, 10);
@@ -555,24 +642,53 @@ int main(int argc, char** argv) {
                             running = false;
                         }
                     }
+                } else if (screen == Screen::Options) {
+                    // The original's settings screen (0x4080DC), without its network, keyboard-layout,
+                    // memory and audio-adjustment rows.
+                    const int d = key == SDLK_RIGHT || key == SDLK_RETURN || key == SDLK_SPACE ? 1 : key == SDLK_LEFT ? -1 : 0;
+                    if (key == SDLK_UP) optionRow = (optionRow + kOptionRows - 1) % kOptionRows;
+                    if (key == SDLK_DOWN) optionRow = (optionRow + 1) % kOptionRows;
+                    if (d != 0) {
+                        if (sound) audio.playRange(20, 20);
+                        switch (optionRow) {
+                            case 0: teamPlay = !teamPlay; break;
+                            case 1: cfg.randomStart = !cfg.randomStart; break;
+                            case 2: cfg.conveyorSpeed = (cfg.conveyorSpeed + d + 3) % 3; break;
+                            case 3: cfg.stompedBombsDetonate = !cfg.stompedBombsDetonate; break;
+                            case 4: cfg.winByKills = !cfg.winByKills; break;
+                            case 5: cfg.goldman = !cfg.goldman; break;
+                            case 6: cfg.enclosementDepth = (cfg.enclosementDepth + d + 4) % 4; break;
+                            case 7: cfg.playTime = ab::Settings::nextPlayTime(cfg.playTime, d); break;
+                            case 8: cfg.diseasesDestroyable = !cfg.diseasesDestroyable; break;
+                            default: cfg.disableGameMusic = !cfg.disableGameMusic; break;
+                        }
+                    }
+                    if (key == SDLK_ESCAPE) {
+                        saveSettings();
+                        screen = Screen::MainMenu;
+                    }
                 } else if (screen == Screen::LevelSetup) {
                     // Level, scheme and match length, as on the original's second pre-game screen.
                     const int d = key == SDLK_RIGHT ? 1 : key == SDLK_LEFT ? -1 : 0;
                     if (key == SDLK_UP) setupRow = (setupRow + 3) % 4;
                     if (key == SDLK_DOWN) setupRow = (setupRow + 1) % 4;
                     if (d != 0 && setupRow == 3) teamPlay = !teamPlay;
-                    if (d != 0 && setupRow == 0) level = (level + d + 11) % 11;
+                    if (d != 0 && setupRow == 0) {
+                        // Random Each Game, then the eleven levels.
+                        const int choice = ((randomLevel ? -1 : level) + d + 1 + 12) % 12 - 1;
+                        randomLevel = choice < 0;
+                        if (!randomLevel) level = choice;
+                    }
                     if (d != 0 && setupRow == 1 && !schemes.empty())
                         schemeIndex = (schemeIndex + d + static_cast<int>(schemes.size())) % static_cast<int>(schemes.size());
                     if (d != 0 && setupRow == 2) winsNeeded = std::clamp(winsNeeded + d, 1, 9);
                     if (key == SDLK_ESCAPE) screen = Screen::PlayerList;
                     if (key == SDLK_RETURN) {
-                        applySettings();
-                        wins = {};
-                        matchOver = false;
+                        newMatch();
+                        saveSettings();
                         screen = Screen::Match;
                         beginMatch();
-                        if (sound) audio.playMusic(1100 + level);
+                        playLevelMusic();
                     }
                 } else {
                     if (key == SDLK_ESCAPE) {
@@ -623,12 +739,29 @@ int main(int argc, char** argv) {
                         if (win >= 0) {
                             const int total = ++wins[static_cast<std::size_t>(win)];
                             std::fprintf(stderr, "INFO  Round over winner=%d kills=%d wins=%d\n", win, world.player(win).kills, total);
-                            if (total >= winsNeeded) {
-                                matchOver = true;
-                                std::fprintf(stderr, "INFO  Match over winner=%d\n", win);
-                            }
                         } else {
                             std::fprintf(stderr, "INFO  Round over draw\n");
+                        }
+                        for (int i = 0; i < ab::kMaxPlayers; ++i)
+                            if (world.player(i).present) matchKills[static_cast<std::size_t>(i)] += world.player(i).kills;
+                        // Match winner, as the original's results code (0x42AB04): by wins, or with
+                        // "win by kills" (not in team play) the single player with the most kills
+                        // once that reaches the target.
+                        if (cfg.winByKills && !world.teamPlay()) {
+                            int best = -1000, holders = 0, who = -1;
+                            for (int i = 0; i < ab::kMaxPlayers; ++i) {
+                                if (!world.player(i).present) continue;
+                                const int k = matchKills[static_cast<std::size_t>(i)];
+                                if (k > best) best = k, holders = 1, who = i;
+                                else if (k == best) ++holders;
+                            }
+                            if (best >= winsNeeded && holders == 1) matchWinner = who;
+                        } else if (win >= 0 && wins[static_cast<std::size_t>(win)] >= winsNeeded) {
+                            matchWinner = win;
+                        }
+                        if (matchWinner >= 0) {
+                            matchOver = true;
+                            std::fprintf(stderr, "INFO  Match over winner=%d\n", matchWinner);
                         }
                     }
                     if (world.roundOver() && roundOverSteps == 20 && sound) {
@@ -643,9 +776,8 @@ int main(int argc, char** argv) {
                     if (world.roundOver() && ++roundOverSteps > 100) {
                         if (matchOver) {
                             // The match winner is remembered for the roulette (0x42AC58).
-                            prizeWinner = goldman ? (world.teamPlay() ? world.winningTeam() : world.winner()) : -1;
-                            wins = {};
-                            matchOver = false;
+                            prizeWinner = goldman ? matchWinner : -1;
+                            newMatch();
                             if (haveMenu) {
                                 screen = Screen::MainMenu;
                                 if (sound) audio.playMusic(1010);
@@ -658,7 +790,7 @@ int main(int argc, char** argv) {
                             }
                         }
                         beginMatch();
-                        if (sound) audio.playMusic(1100 + level);
+                        playLevelMusic();
                     }
                 }
             }
@@ -705,20 +837,26 @@ int main(int argc, char** argv) {
                         renderer.text(*spritesPtr, line, 211, 441, 0, 0, 0);
                         renderer.text(*spritesPtr, line, 210, 440, 1.0f, 0.95f, 0.3f);
                     } else if (matchOver) {
-                        renderer.image(spritesPtr->picture("victory" + std::to_string(win)));
-                        const std::string line = "PLAYER " + std::to_string(win + 1) + " WINS THE MATCH!";  // message 36
+                        renderer.image(spritesPtr->picture("victory" + std::to_string(matchWinner)));
+                        const std::string line = "PLAYER " + std::to_string(matchWinner + 1) + " WINS THE MATCH!";  // message 36
                         renderer.text(*spritesPtr, line, 211, 441, 0, 0, 0);  // below the artwork's own title
                         renderer.text(*spritesPtr, line, 210, 440, 1.0f, 0.95f, 0.3f);
                     } else {
                         renderer.image(spritesPtr->picture("results"));
-                        renderer.text(*spritesPtr, "Winner was:", 151, 141, 0, 0, 0);
-                        renderer.text(*spritesPtr, "Winner was:", 150, 140, 1, 1, 1);
+                        // Messages 30, 31 and 120/121 at the original's positions (values 780, 785, 800).
+                        const std::string head = "Game Winner was Player " + std::to_string(win + 1) + " !";
+                        renderer.text(*spritesPtr, head, 151, 141, 0, 0, 0);
+                        renderer.text(*spritesPtr, head, 150, 140, 1, 1, 1);
+                        const std::string need = "(Match winner must score " + std::to_string(winsNeeded) +
+                                                 (cfg.winByKills ? " kills)" : " victories)");
+                        renderer.text(*spritesPtr, need, 151, 95, 0, 0, 0);
+                        renderer.text(*spritesPtr, need, 150, 94, 1, 1, 1);
                         int row = 0;
                         for (int i = 0; i < ab::kMaxPlayers; ++i) {
                             if (!world.player(i).present) continue;
-                            const std::string line = std::string(i == win ? "> " : "  ") + "Player " + std::to_string(i + 1) +
-                                                     "   wins " + std::to_string(wins[static_cast<std::size_t>(i)]) + "   kills " +
-                                                     std::to_string(world.player(i).kills);
+                            const std::string line = "Player " + std::to_string(i + 1) + " score: " +
+                                                     std::to_string(wins[static_cast<std::size_t>(i)]) + " (kills: " +
+                                                     std::to_string(matchKills[static_cast<std::size_t>(i)]) + ")";
                             const float y = 210.0f + 20.0f * static_cast<float>(row++);
                             renderer.text(*spritesPtr, line, 151, y + 1, 0, 0, 0);
                             renderer.text(*spritesPtr, line, 150, y, i == win ? 1.0f : 0.8f, i == win ? 0.95f : 0.8f, i == win ? 0.3f : 0.8f);
@@ -754,11 +892,37 @@ int main(int argc, char** argv) {
                     }
                 }
                 renderer.end();
+            } else if (screen == Screen::Options) {
+                // Messages 250-263 with the original's value texts; rows from (55,40) every 22 px (value 745).
+                static const char* const kYesNo[2] = {"No", "Yes"};
+                static const char* const kSpeed[3] = {"Low", "Medium", "High"};
+                static const char* const kDepth[4] = {"None", "A Little", "A Lot", "All the way!"};
+                const std::string rows[kOptionRows] = {
+                    std::string("Team Play: ") + kYesNo[teamPlay],
+                    std::string("Random Start: ") + kYesNo[cfg.randomStart],
+                    std::string("Conveyor Speed: ") + kSpeed[cfg.conveyorSpeed],
+                    std::string("Stomped Bombs Detonate: ") + kYesNo[cfg.stompedBombsDetonate],
+                    std::string("Win Matches By Kill Total: ") + kYesNo[cfg.winByKills],
+                    std::string("Gold Bomberman: ") + kYesNo[cfg.goldman],
+                    std::string("Enclosement Depth: ") + kDepth[cfg.enclosementDepth],
+                    "Play Time: " + ab::Settings::playTimeText(cfg.playTime),
+                    std::string("Diseases Can Be Destroyed: ") + kYesNo[cfg.diseasesDestroyable],
+                    std::string("Disable music during gameplay: ") + kYesNo[cfg.disableGameMusic]};
+                renderer.begin(w, h);
+                renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
+                for (int r = 0; r < kOptionRows; ++r) {
+                    const float y = 40.0f + 22.0f * static_cast<float>(r);
+                    renderer.text(*spritesPtr, rows[r], 56, y + 1, 0, 0, 0);
+                    renderer.text(*spritesPtr, rows[r], 55, y, r == optionRow ? 1.0f : 0.85f, r == optionRow ? 0.95f : 0.85f, r == optionRow ? 0.3f : 0.85f);
+                }
+                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 41.0f, 55.0f + 22.0f * static_cast<float>(optionRow));
+                renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 440, 0.4f, 1.0f, 1.0f);
+                renderer.end();
             } else if (screen == Screen::LevelSetup) {
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue1"));
                 const std::string lines[4] = {
-                    kLevelName[level],
+                    randomLevel ? "Random Each Game" : kLevelName[level],
                     schemes.empty() ? std::string("(built-in arena)") : "Scheme: " + schemes[static_cast<std::size_t>(schemeIndex)].title,
                     std::to_string(winsNeeded) + " Wins to win match",
                     std::string("Team play: ") + (teamPlay ? "ON (teams from the scheme)" : "OFF")};
