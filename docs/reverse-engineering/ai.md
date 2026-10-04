@@ -41,14 +41,22 @@ The AI does **not** check for an escape route before dropping a bomb; it relies 
 
 ## Not read
 
-- The three search routines (`0x4092A1` path to a cell, `0x40970B` route to safety, `0x409C1F` nearest powerup): their expansion order and tie-breaking.
+- `0x40970B` (route to safety) and `0x409C1F` (nearest powerup) in detail. `0x4092A1` (path to a cell) was read: see below.
 - AI use of kick, spooge and jelly, if any (no behaviour for them is in the table).
+
+## Path search (`0x4092A1`)
+
+Confidence: MEDIUM-HIGH.
+
+A flood of up to 100 "walkers" over a copy of the passability grid. One walker starts in each open neighbour of the start cell (in the order north, east, south, west) and remembers which first step it stands for. On every pass each walker marks its cell as used, spawns a walker to its left and to its right (which of the two first is decided once per search by a coin flip), then steps forward; a walker whose way is blocked or already used disappears. The search ends when a walker reaches the target and returns that walker's first step, or when the depth limit is reached.
+
+Because every walker advances one cell per pass, this finds a shortest route, as a breadth-first search does. Among equally short routes the winner depends on walker order and on the coin flip.
 
 ## Modern implementation (`src/game/ai.*`)
 
 The same eight behaviours in the same order with the same probabilities, as an input source separate from the core. Differences, all in the unread parts:
 
-- Searches are plain breadth-first searches over unblocked cells.
+- Searches are plain breadth-first searches over unblocked cells. For the path search this gives routes of the same length as the original's walker flood; the choice among equally short routes can differ.
 - Bomb and flame danger levels follow the original; the closing walls are not marked.
 - The attack behaviour's first distance condition is omitted.
 

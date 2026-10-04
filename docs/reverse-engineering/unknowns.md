@@ -274,7 +274,7 @@ Evidence:
 `0x4242CC`/`0x4243A5` load the level from a local (`[ebp-0x10c]`) computed earlier in `Bombs_Update`; searches at `0x4092A1`, `0x40970B`, `0x409C1F` (1.1-1.3 KB each) were not read.
 
 Status:
-OPEN (affects how closely the modern AI's choices match the original's)
+MOSTLY RESOLVED (sessions 10 and 12). Bomb danger level is `100 + elapsed fuse ms`. The path search `0x4092A1` is a walker flood equivalent to a breadth-first search (see `ai.md`). Still unread: `0x40970B` and `0x409C1F`.
 
 Next action:
-Read the block of `Bombs_Update` before `0x4242CC`; read the three search functions; then compare AI statistics (round length, suicide rate) between the original's demo matches and the modern AI.
+Read those two; then compare AI statistics between the original's demo matches and the modern AI.
