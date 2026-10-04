@@ -107,4 +107,4 @@ The program is `build/atomic` (Linux) or `build\Release\atomic.exe` (Windows).
 ## Status of these instructions
 
 - The Linux steps were run as written: import (246 data files, 971 sounds, 281 MB), then starting the game from the imported folder with graphics, level extras, sounds and music loading.
-- The Windows package and the GitHub Actions workflow have **not** been run yet: this repository has no GitHub remote at the time of writing. The Windows build may need fixes the first time it runs.
+- The GitHub Actions workflow builds and tests both packages (first run: Linux and Windows both succeeded). The Windows package itself has **not** been started on a Windows machine by the author of these instructions.
