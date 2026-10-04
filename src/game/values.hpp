@@ -52,6 +52,7 @@ inline constexpr int kDiseaseFrames = 130;      // + disease number
 inline constexpr int kConveyorSpeed = 190;    // + speed setting 0-2
 inline constexpr int kKickSpeed = 300;
 inline constexpr int kPunchSpeed = 301;
+inline constexpr int kGrabPauseFrames = 665;
 inline constexpr int kJellyTurnChance = 667;
 inline constexpr int kHeadHitLossMin = 670;
 inline constexpr int kHeadHitLossRandom = 671;

@@ -394,7 +394,11 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
                 sprite(bank, seq, p.dyingFrames, colour, static_cast<float>(p.x), static_cast<float>(p.y));
             continue;
         }
-        if (p.special == Special::WarpOut || p.special == Special::WarpIn) continue;  // inside the warp
+        if (p.special == Special::WarpOut || p.special == Special::WarpIn) {
+            // Spinning into and out of a warp: one "spin" frame per 50 ms, no shadow.
+            sprite(bank, "spin", p.specialFrames, colour, static_cast<float>(p.x), static_cast<float>(p.y));
+            continue;
+        }
         float px = lerp(prev.players[static_cast<std::size_t>(i)].x, p.x, alpha);
         float py = lerp(prev.players[static_cast<std::size_t>(i)].y, p.y, alpha);
         if (p.special == Special::Trampoline) {
@@ -409,6 +413,8 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
         bool drawn = false;
         if (p.action == 1) drawn = sprite(bank, "kick " + dir, p.actionFrames, colour, px, py);
         if (p.action == 2) drawn = sprite(bank, "punch " + dir, p.actionFrames, colour, px, py);
+        // Picking up a bomb: the original indexes this sequence with the walk counter (0x4202F3 -> 0x4200F1).
+        if (p.action == 3) drawn = sprite(bank, "pickup " + dir, p.animCounter / 3, colour, px, py);
         if (!drawn && carrying)
             drawn = sprite(bank, std::string(p.moving ? "walkbomb " : "standbomb ") + dir, p.moving ? p.animCounter / 3 : 0, colour, px, py);
         if (!drawn) {

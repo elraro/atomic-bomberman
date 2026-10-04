@@ -797,7 +797,14 @@ void testGrabAndThrow() {  // B16
     const Bomb& b = f.w.bombs()[0];
     CHECK(b.mode == BombMode::Held);
     CHECK_EQ(f.w.player(0).holding, 0);
-    f.run(54);                              // carried for longer than the fuse
+    CHECK_EQ(f.w.player(0).action, 3);      // pickup state
+    f.in[0].button1 = false;                // controls are not read for 3 frames (value 665 = 2):
+    f.run(3);                               // letting go now does not throw yet
+    CHECK(b.mode == BombMode::Held);
+    f.in[0].button1 = true;
+    f.run(8);
+    CHECK_EQ(f.w.player(0).action, 0);      // the state ends after 11 frames
+    f.run(43);                              // carried for longer than the fuse
     f.hold(0, 1);
     f.run(6);
     CHECK_EQ(f.w.activeBombs(), 1);

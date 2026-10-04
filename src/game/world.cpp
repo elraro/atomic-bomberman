@@ -1099,6 +1099,9 @@ void World::handleButtons(int i, const PlayerInput& raw) {
             underfoot->holder = i;
             underfoot->stopRequested = false;
             p.holding = static_cast<int>(underfoot - bombs_.data());
+            p.action = 3;
+            p.actionFrames = 0;
+            p.actionAcc = 0;
             emit(EventKind::BombGrabbed, i);
         } else if (p.inventory[kPowSpooge] > 0 && own && !forced) {
             // A line of bombs ahead; each starts one frame further behind.
@@ -1129,7 +1132,11 @@ void World::updatePlayer(int i, int dt, const PlayerInput& in) {
         stunned = true;
     }
     const bool frozen = startFreezeMs_ > 0 || stunned;
-    const PlayerInput effective = frozen ? PlayerInput{} : in;
+    // Just after picking up a bomb the controls are not read for a moment (value 665):
+    // the player keeps acting on the last input.
+    const bool pickupPause = p.action == 3 && p.actionFrames <= values_.get(vid::kGrabPauseFrames);
+    const PlayerInput effective = frozen ? PlayerInput{} : pickupPause ? p.lastInput : in;
+    p.lastInput = effective;
 
     updateDisease(i, dt);
     if (p.action != 0) {
@@ -1138,7 +1145,8 @@ void World::updatePlayer(int i, int dt, const PlayerInput& in) {
             ++p.actionFrames;
             p.actionAcc -= frameMs_;
         }
-        if (p.actionFrames >= (p.action == 1 ? 8 : 10)) p.action = 0;  // lengths of the kick / punch sequences
+        // Lengths of the kick / punch sequences; the pickup state lasts one frame past its 10.
+        if (p.actionFrames >= (p.action == 1 ? 8 : p.action == 2 ? 10 : 11)) p.action = 0;
     }
 
     if (p.special != Special::None) {

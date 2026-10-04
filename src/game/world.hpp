@@ -133,7 +133,8 @@ struct Player {
     int diseaseDurationMs = 0;
     int diseaseCooldown = 0;   // ticks before the disease can be passed on
     int deathAnim = 0;         // 1..value 105, chosen at death
-    int action = 0;            // 0 none, 1 kicking, 2 punching (animation only)
+    int action = 0;            // 0 none, 1 kicking, 2 punching, 3 picking up a bomb
+    PlayerInput lastInput{};   // what the player last acted on (kept during the pickup pause)
     int actionFrames = 0;
     int actionAcc = 0;
     Special special = Special::None;  // no input and no death while not None

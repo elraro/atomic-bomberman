@@ -433,3 +433,19 @@ Evidence:
 Confidence: HIGH
 
 Implication: ids 320-322 (same three files as 2000-2002) are not what the result screen uses.
+
+### Discovery: player animation states (pickup, spin, cornerhead)
+
+Where: animation choice in `Players_Update`, dispatch on `OBJ+0x4E` at `0x42000F`.
+
+Evidence:
+- States: 0 normal, 1 kick, 2 punch, 3 stunned (`Player_HitOnHead` sets it at `0x421FA8`), 4 picking up a bomb (set at `0x420A1F` right after the grab), 6/7 warp out/in, 20-39 `cornerhead (state-20)`.
+- Every state advances `OBJ+0x50` by one per 50 ms. Sequence frames are looked up modulo the sequence length (`0x41DAA7`).
+- State 3 draws the ordinary sprite: the earlier note "stunned shows the pickup animation" was wrong and is corrected in `players.md`.
+- State 4: input is not read while the counter ≤ value 665 = 2 (`0x41FA3B`); ends when the counter exceeds the sequence length; the frame drawn uses the walk counter / 3.
+- States 6/7: `spin` frame = counter; at counter > 8 state 6 moves the player and becomes 7, state 7 ends.
+- Cornerhead: ends when the counter reaches the sequence length (50 frames = 2.5 s).
+
+Confidence: HIGH for the state table, MEDIUM for the visible result of state 4 (not observed running).
+
+Modern: pickup state with its pause and the warp spin implemented; cornerhead still missing.
