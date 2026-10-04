@@ -38,3 +38,7 @@ The gameplay core does not know about audio. It records `Event`s during a tick (
 ## Leaving the game
 
 The original's quit routine (`0x412987`) asks for confirmation (text 10), stops the music, plays a random sound of the 2600 series ("exiting game", 49 voice lines in `soundlst.res`) and waits 4000 ms before exiting. The modern game does the same when leaving through the main menu (Exit or Esc), without the confirmation box; any key skips the wait. Confidence: HIGH (static).
+
+## Intro
+
+The original's intro (`0x42B060`): tune 1000 (`title`), pictures `iplogo` and `hslogo`, then a random sound of the 2800 series (the "Atomic Bomberman!" voice, 11 lines) with the `title` picture. Each picture (`0x42A088`) stays until Enter, Space or Esc, or for value 12 (7) seconds; any key plays sound 20, a continuing key sound 10. Then the main menu and tune 1010. Confidence: HIGH (static). The modern game does the same when started at the menu; `--no-intro` skips it.

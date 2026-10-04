@@ -10,6 +10,7 @@ namespace ab {
 Values Values::defaults() {
     Values v;
     v.set(10, 10);
+    v.set(12, 7);
     v.set(16, 7);
     v.set(20, 10);
     v.set(30, 20);

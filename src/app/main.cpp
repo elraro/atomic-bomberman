@@ -52,6 +52,8 @@ struct Options {
     bool rouletteShot = false;  // automated: capture the roulette once it has stopped, then exit
     bool roulette = false;    // the "goldman" roulette between rounds (original option goldman)
     std::string campaign;     // --campaign NAME: start that campaign file (data/res/NAME.cam) at once
+    int introShot = 0;        // automated: start on intro screen N (1-3)
+    bool noIntro = false;     // --no-intro: go straight to the main menu
     bool levelSet = false;    // --level, --wins, --scheme given: they win over the saved settings
     bool winsSet = false;
     bool schemeSet = false;
@@ -77,6 +79,7 @@ Options parseArgs(int argc, char** argv) {
                       "  --humans N           keyboard players, 0-2\n"
                       "  --wins N             round wins needed for the match\n"
                       "  --campaign NAME      play a campaign file of the game data (simple, ghosts, crouton)\n"
+                      "  --no-intro           skip the logo and title screens\n"
                       "  --roulette           the round winner spins for a prize before the next round\n"
                       "  --seed N             random seed\n"
                       "  --mute               no sound\n"
@@ -116,6 +119,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--wins") o.wins = std::max(1, std::atoi(next().c_str())), o.winsSet = true;
         else if (a == "--native") o.native = true;
         else if (a == "--roulette") o.roulette = true;
+        else if (a == "--no-intro") o.noIntro = true;
+        else if (a == "--intro-shot") o.introShot = std::atoi(next().c_str());
         else if (a == "--campaign") o.campaign = next();
         else if (a == "--roulette-shot") o.roulette = o.rouletteShot = true;
         else {
@@ -246,7 +251,7 @@ const char* controlName(Control c) {
 }
 
 constexpr int kOptionRows = 10;
-enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList };
+enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro };
 
 // Level names, original messages 150-160.
 const char* const kLevelName[11] = {"Green Acres",   "Classic Green Acres", "The Hockey Rink",  "Ancient Egypt",
@@ -578,6 +583,8 @@ int main(int argc, char** argv) {
                 playLevelMusic();
             }
         };
+        int introStep = 0;
+        Uint64 introStart = 0;
         bool running = true;
         // A notice that waits for a key (the original's message boxes).
         std::vector<std::string> messageLines;
@@ -646,9 +653,27 @@ int main(int argc, char** argv) {
             newMatch();
             beginMatch();
             playLevelMusic();
+        } else if (screen == Screen::MainMenu && ((!opt.noIntro && opt.frames <= 0 && opt.script.empty()) || opt.introShot > 0)) {
+            // The original's intro (0x42B060): the title tune, the two logo pictures, then
+            // an "Atomic Bomberman!" voice line with the title picture.
+            screen = Screen::Intro;
+            introStep = std::clamp(opt.introShot - 1, 0, 2);
+            introStart = SDL_GetTicks();
+            if (sound) audio.playMusic(1000);
+            if (sound && introStep == 2) audio.playRange(2800, 2899);
         } else if (sound) {
             audio.playMusic(1010);  // main menu music
         }
+        // Each intro picture stays until Enter, Space or Esc, or for value 12 (7) seconds.
+        auto advanceIntro = [&]() {
+            ++introStep;
+            introStart = SDL_GetTicks();
+            if (introStep == 2 && sound) audio.playRange(2800, 2899);
+            if (introStep > 2) {
+                screen = Screen::MainMenu;
+                if (sound) audio.playMusic(1010);
+            }
+        };
 
         bool paused = false;
         int frame = 0;
@@ -778,6 +803,12 @@ int main(int argc, char** argv) {
                         } else {
                             running = false;
                         }
+                    }
+                } else if (screen == Screen::Intro) {
+                    if (sound) audio.playRange(20, 20);
+                    if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_ESCAPE) {
+                        if (sound) audio.playRange(10, 10);
+                        advanceIntro();
                     }
                 } else if (screen == Screen::Message) {
                     if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_ESCAPE) {
@@ -1080,6 +1111,12 @@ int main(int argc, char** argv) {
                     }
                 }
                 renderer.end();
+            } else if (screen == Screen::Intro) {
+                static const char* const kIntroPicture[3] = {"iplogo", "hslogo", "title"};
+                renderer.begin(w, h);
+                renderer.image(spritesPtr->picture(kIntroPicture[std::clamp(introStep, 0, 2)]));
+                renderer.end();
+                if (opt.introShot == 0 && SDL_GetTicks() - introStart > static_cast<Uint64>(values.get(12)) * 1000u) advanceIntro();
             } else if (screen == Screen::Message) {
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
