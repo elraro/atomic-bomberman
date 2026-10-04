@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "game/world.hpp"
+#include "resources/scheme_file.hpp"
 
 using namespace ab;
 
@@ -96,6 +97,27 @@ void testValuesParser() {
     CHECK_EQ(v.get(602), -1);
     CHECK_EQ(v.get(603), -1);
     CHECK(!v.has(604));
+}
+
+void testSchemeFile() {
+    const std::string text =
+        "; comment\r\n-V,2\r\n-N,Test Scheme\r\n-B,90\r\n"
+        "-R, 0,:::::::::::::::\r\n-R, 1,:#:#:#:#:#:#:#:\r\n-R, 2,...............\r\n"
+        "-R, 3,:#:#:#:#:#:#:#:\r\n-R, 4,:::::::::::::::\r\n-R, 5,:#:#:#:#:#:#:#:\r\n"
+        "-R, 6,:::::::::::::::\r\n-R, 7,:#:#:#:#:#:#:#:\r\n-R, 8,:::::::::::::::\r\n"
+        "-R, 9,:#:#:#:#:#:#:#:\r\n-R,10,:::::::::::::::\r\n"
+        "-S,0,0,0,0\r\n-S,1,14,10,1\r\n-P, 0, 0,0, 0, 0,an extra bomb\r\n";
+    const auto sf = parseSchemeText(text);
+    CHECK(sf.has_value());
+    if (!sf) return;
+    CHECK(sf->name == "Test Scheme");
+    CHECK_EQ(sf->scheme.brickDensity, 90);
+    CHECK(sf->scheme.tiles[1][1] == Tile::Solid);
+    CHECK(sf->scheme.tiles[0][0] == Tile::Brick);
+    CHECK(sf->scheme.tiles[2][5] == Tile::Blank);
+    CHECK(sf->scheme.start[1] == (Cell{14, 10}));
+    CHECK_EQ(sf->team[1], 1);
+    CHECK(!parseSchemeText("-N,missing rows\n").has_value());
 }
 
 void testStartFreeze() {  // T1
@@ -626,6 +648,7 @@ int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"geometry", testGeometry},
         {"values parser", testValuesParser},
+        {"scheme file", testSchemeFile},
         {"start freeze", testStartFreeze},
         {"speed", testSpeed},
         {"tick length sensitivity", testFrameRateIndependenceIsApproximate},

@@ -277,3 +277,11 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - **CONFIRMED: bomb fuse is 2.000 s**, measured on 84 bombs in an AI demo match from sound-load timestamps. This is the first gameplay rule at validation Level 2, and with the existing unit test it reaches Level 4.
 - CONFIRMED: no frame limiter. About 960 presents per second on this machine. Consequence for tick-counted rules recorded under UNKNOWN-020; recommendation is a fixed 50 ms simulation step.
 - Next: scripted input and screen capture for the remaining test-matrix scenarios; SDL3/OpenGL front end.
+
+### Session 5 addendum: first front end
+
+- `src/app/main.cpp` (SDL3), `src/rendering/renderer.*` (OpenGL 3.3 core profile), `src/resources/scheme_file.*` (original `.sch` reader, unit-tested).
+- Fixed 50 ms simulation step with render interpolation.
+- Verified by automated runs: `--demo --frames N --screenshot` produces frames showing the `basic` scheme at 90 % density, cleared start areas, players, a bomb, flames, burning bricks and revealed powerups.
+- Reads `valuelst.res` and schemes from the user's game directory at run time; draws placeholder shapes, not original art.
+- Not yet done: interactive play has not been tried by a person; no audio, menus, round end handling or original graphics.

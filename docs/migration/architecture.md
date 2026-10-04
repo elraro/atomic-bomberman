@@ -1,6 +1,6 @@
 # Modern Architecture
 
-Status: the gameplay core exists; there is no front end yet.
+Status: the gameplay core exists, with a first SDL3 + OpenGL 3.3 front end that draws it with placeholder shapes.
 
 ## Layout
 
@@ -8,8 +8,15 @@ Status: the gameplay core exists; there is no front end yet.
 src/game/geometry.hpp   grid constants, directions, pixel <-> cell conversions
 src/game/values.*       value table (ids as in the original valuelst.res), defaults + text parser
 src/game/world.*        World: tiles, players, bombs, flames, powerups; tick()
+src/resources/scheme_file.*   reader for original .sch files -> ab::Scheme
+src/rendering/renderer.*      OpenGL 3.3: one shader, one VAO/VBO, batched quads, 640x480 logical screen letterboxed
+src/app/main.cpp              SDL3 window, GL context, keyboard, fixed-step loop
 tests/unit/test_core.cpp
 ```
+
+Front-end loop: real time is accumulated and consumed in fixed 50 ms simulation steps (the original's nominal frame; see `docs/reverse-engineering/dynamic-analysis.md`). The renderer interpolates player and bomb positions between the previous and the current step, so display rate and simulation rate are independent. Gameplay code never includes SDL or OpenGL headers.
+
+GL functions are taken from the system `GL/gl.h` + `GL/glext.h` prototypes (Mesa). A loader (glad or similar) will be needed for Windows and macOS.
 
 `ab_game` is a static library with no dependency beyond the C++ standard library. The planned SDL3/OpenGL front end will sit on top of it and feed `World::tick` with `PlayerInput`.
 
