@@ -31,7 +31,7 @@ The gameplay core does not know about audio. It records `Event`s during a tick (
 ## Status and gaps
 
 - Verified only by running: the device opens, 1051 sound names are read (the same count the original logs), and a scripted round plays without missing-file warnings. **Nobody has listened to the result yet.**
-- Level music loops during play (sound id 1100 + level: `grnacres`, `generic`, `hockey`, `pyramid`, `mineshft`, `battle`, `gieger`, `haunted`, `ocean`, `swamp`, `sewer`), at half gain. The menu tune (1010), the pre-game screens tune (1020) and the end-of-round tune (1130, then a random voice line: series 1700-1999 for a draw, 2000-2299 for a win) play as in the original's `Match_Run`. No no per-death-animation sounds, no taunts.
+- Level music loops during play (sound id 1100 + level: `grnacres`, `generic`, `hockey`, `pyramid`, `mineshft`, `battle`, `gieger`, `haunted`, `ocean`, `swamp`, `sewer`), at half gain. The menu tune (1010), the pre-game screens tune (1020) and the end-of-round tune (1130, then a random voice line: series 1700-1999 for a drawn round, 2000-2299 when the match has a winner) play as in the original's `Match_Run`. No no per-death-animation sounds, no taunts.
 - The throw range (172-175) and the exact ranges for death and hurry sounds are taken from file comments, not from the code.
 - `--mute` disables audio (use it for automated runs).
 

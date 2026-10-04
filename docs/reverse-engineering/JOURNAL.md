@@ -478,3 +478,15 @@ Evidence:
 Confidence: HIGH (static). Not observed running in the original.
 
 Modern: `src/game/roulette.*` (tested), screen in the application (`--roulette`), sparkles in the renderer.
+
+### Correction: roulette and winner voice are per match, not per round
+
+Where: results code in `Match_Run`, `0x42AB04`-`0x42ACC8`; per-match reset `0x421793` (called from match setup at `0x411178`).
+
+Evidence:
+- `[ebp-0x18]` is the **match** winner: the player whose wins reach `num_to_win_match` (`0x464A7C`); with `win_by_kills` (`0x46497C`) the single player with the most kills once that maximum reaches `num_to_win_match`. If it is -1 the code jumps past `0x42ACB9`, so the 2000-series voice and the write of `0x46492C` (the roulette's "gold player") happen only when a match is won. Without a match winner the screen shows message 120/121 "(Match winner must score %u victories/kills)" and waits for a key or 6000 ms.
+- `0x410F81` (which calls the roulette) is match setup, called once at the start of `Match_Run`, so the roulette is shown before the next match and the prize (`0x45E02C`) is added in every round of that match.
+- `0x421793`: wins (`OBJ+0x6A`) and kills (`OBJ+0x6C`) are zeroed per match, so kills accumulate over the rounds of a match. With `random_start` on, 200 random swaps of two of the ten start positions (`0x46460C`, `0x46465C`): one shuffle per match.
+- Kill scoring `0x41DD06`: a kill of another player adds 1; a suicide subtracts 1 unless `win_by_kills` is on.
+
+Confidence: HIGH (static). The two earlier journal entries that said "every won round" are superseded by this one.

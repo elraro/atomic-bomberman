@@ -420,8 +420,17 @@ int main(int argc, char** argv) {
         std::unique_ptr<ab::Roulette> roulette;
         int rouletteFrames = 0;
         double rouletteMs = 0.0;
-        int prizeWinner = -1;  // player, or team in team play
+        int prizeWinner = -1;  // winner of the last match: player, or team in team play
         int prizeType = -1;
+        // Original match setup (0x410FB8): with the option on and a match winner
+        // on record, the roulette comes first.
+        std::uint32_t rouletteCount = 0;
+        auto startRoulette = [&]() {
+            prizeType = -1;
+            roulette = std::make_unique<ab::Roulette>(values, opt.seed * 7919u + static_cast<std::uint32_t>(SDL_GetTicks()) * (opt.frames > 0 ? 0u : 1u) + 17u * ++rouletteCount);
+            rouletteFrames = 0;
+            rouletteMs = 0.0;
+        };
         auto beginMatch = [&]() {
             world.startRound(scheme, true);
             world.setExtras(extras);
@@ -432,14 +441,24 @@ int main(int argc, char** argv) {
                     world.addPlayer(i);
                     ++n;
                 }
-            // The roulette prize goes to the last winner (to every member of the winning team).
+            // The roulette prize goes to the winner of the last match (to every member of the
+            // winning team), in every round of this one.
             for (int i = 0; i < ab::kMaxPlayers && prizeType >= 0; ++i)
                 if (world.player(i).present && (teamPlay ? world.player(i).team : i) == prizeWinner) world.grantPrize(i, prizeType);
-            prizeWinner = -1;
-            prizeType = -1;
             previous.capture(world);
             roundOverSteps = 0;
             std::fprintf(stderr, "INFO  Round started players=%d\n", n);
+        };
+        // After the roulette the match setup goes on: the player list, or straight into the match.
+        auto leaveRoulette = [&]() {
+            if (haveMenu) {
+                screen = Screen::PlayerList;
+                if (sound) audio.playMusic(1020);
+            } else {
+                screen = Screen::Match;
+                beginMatch();
+                if (sound) audio.playMusic(1100 + level);
+            }
         };
         if (screen == Screen::Match) {
             beginMatch();
@@ -479,8 +498,13 @@ int main(int argc, char** argv) {
                     if (key == SDLK_ESCAPE) running = false, farewell = true;
                     if (key == SDLK_RETURN) {
                         if (menuItem == 0) {
-                            screen = Screen::PlayerList;
                             if (sound) audio.playMusic(1020);  // pre-game screens tune
+                            if (goldman && prizeWinner >= 0) {
+                                startRoulette();
+                                screen = Screen::Roulette;
+                            } else {
+                                screen = Screen::PlayerList;
+                            }
                         }
                         if (menuItem == 6) running = false, farewell = true;
                         if (sound) audio.playRange(10, 10);
@@ -517,9 +541,7 @@ int main(int argc, char** argv) {
                             prizeType = roulette->prize();
                             std::fprintf(stderr, "INFO  Roulette prize winner=%d type=%d\n", prizeWinner, prizeType);
                             roulette.reset();
-                            screen = Screen::Match;
-                            beginMatch();
-                            if (sound) audio.playMusic(1100 + level);
+                            leaveRoulette();
                         }
                     } else if (key == SDLK_ESCAPE) {
                         // Leaves the match, as on the original.
@@ -612,14 +634,16 @@ int main(int argc, char** argv) {
                     if (world.roundOver() && roundOverSteps == 20 && sound) {
                         // The result screen comes up: the original plays its end-of-round tune here
                         // (sound 1130, draw.rss, for every result), then a random voice line: the
-                        // 1700 series for a draw, the 2000 series when somebody won (Match_Run 0x42A6D8,
-                        // 0x42A71C, 0x42ACB9).
+                        // 1700 series for a draw, the 2000 series when the match has a winner
+                        // (Match_Run 0x42A6D8, 0x42A71C, 0x42ACB9).
                         audio.playMusic(1130);
                         if (world.teamPlay() ? world.winningTeam() < 0 : world.winner() < 0) audio.playRange(1700, 1999);
-                        else audio.playRange(2000, 2299);
+                        else if (matchOver) audio.playRange(2000, 2299);
                     }
                     if (world.roundOver() && ++roundOverSteps > 100) {
                         if (matchOver) {
+                            // The match winner is remembered for the roulette (0x42AC58).
+                            prizeWinner = goldman ? (world.teamPlay() ? world.winningTeam() : world.winner()) : -1;
                             wins = {};
                             matchOver = false;
                             if (haveMenu) {
@@ -627,16 +651,11 @@ int main(int argc, char** argv) {
                                 if (sound) audio.playMusic(1010);
                                 break;
                             }
-                        }
-                        const int lastWin = world.teamPlay() ? world.winningTeam() : world.winner();
-                        if (goldman && lastWin >= 0 && spritesPtr->loaded()) {
-                            // Original round setup (0x410FB8): with the option on and a winner, the roulette first.
-                            prizeWinner = lastWin;
-                            roulette = std::make_unique<ab::Roulette>(values, opt.seed * 7919u + static_cast<std::uint32_t>(step));
-                            rouletteFrames = 0;
-                            rouletteMs = 0.0;
-                            screen = Screen::Roulette;
-                            break;
+                            if (goldman && prizeWinner >= 0 && spritesPtr->loaded()) {
+                                startRoulette();
+                                screen = Screen::Roulette;
+                                break;
+                            }
                         }
                         beginMatch();
                         if (sound) audio.playMusic(1100 + level);
@@ -664,9 +683,7 @@ int main(int argc, char** argv) {
                     prizeType = roulette->prize();
                     std::fprintf(stderr, "INFO  Roulette prize winner=%d type=%d\n", prizeWinner, prizeType);
                     roulette.reset();
-                    screen = Screen::Match;
-                    beginMatch();
-                    if (sound) audio.playMusic(1100 + level);
+                    leaveRoulette();
                 }
             }
             audio.update();

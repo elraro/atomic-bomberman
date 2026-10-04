@@ -36,9 +36,9 @@ Campaign mode (ghosts, rovers, lives, points: values 1200-1320 and `.cam` files)
 
 ## Roulette ("goldman" option, off by default)
 
-- With the option on, a round that had a winner is followed, before the next round, by the bonus-game screen. [S]
+- With the option on, the winner of a match is remembered; when the next match is set up (after Start Game, before the player list) the bonus-game screen is shown. [S]
 - A wheel of six prizes and a ring turn in opposite directions on a circle of 420 positions (6 × value 1004), centre (320,240), radii 200 × 150. Start positions are random, the wheel's speed is 20-39 positions per frame and the ring's is that plus 0-19; the direction is random. [S]
 - Enter or Space starts the slow-down: each time a ring passes a slot boundary (every 70 positions) its speed drops by one; below 7 it still moves 6 positions per frame; it stops on a boundary. The ring's boundary passes play the tick sound (1300). [S]
-- When both have stopped the prize is the slot under the ring: bomb, flame, kicker, goldflame, skate or clog. Sound 1310 (applause), or 1320 (buzzer) for the clog. Three text lines name the prize. Enter or Space then starts the next round; Esc leaves the match. [S]
-- In the next round the winner (every member of the winning team in team play) starts with one more of that powerup, without the usual cap, and is surrounded by gold sparkles for the first value 1010 (5) seconds. [S]
+- When both have stopped the prize is the slot under the ring: bomb, flame, kicker, goldflame, skate or clog. Sound 1310 (applause), or 1320 (buzzer) for the clog. Three text lines name the prize. Enter or Space then continues with the match setup; Esc returns to the menu. [S]
+- In every round of that next match the previous match's winner (every member of the winning team in team play) starts with one more of that powerup, without the usual cap, and is surrounded by gold sparkles for the first value 1010 (5) seconds of the round. [S]
 - The original advances the wheel once per drawn frame with no frame limit; this implementation uses 25 frames per second. [M]
