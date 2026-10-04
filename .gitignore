@@ -5,3 +5,4 @@
 /build/
 /.claude/settings.local.json
 __pycache__/
+/work/

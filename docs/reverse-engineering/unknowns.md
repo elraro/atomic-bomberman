@@ -11,10 +11,10 @@ Evidence:
 No `wine` binary on the analysis machine. Ghidra MCP exposes a debugger URL (`GHIDRA_DEBUGGER_URL` in `.mcp.json`) but there is no target to attach to.
 
 Status:
-OPEN (blocks validation Level 2 for everything)
+PARTLY RESOLVED (session 5). The original runs under Wine 10 from a working copy; see `dynamic-analysis.md` and `tools/diagnostics/run-original.sh`. Observation is limited to Wine traces and the game's debug log while it plays demo matches.
 
 Next action:
-Decide on a runtime: Wine (needs 640×480 8-bit DirectDraw; may need a ddraw wrapper), or a Windows 9x/XP VM. `cfg.ini` has a `;debug=3debug.log` line and the exe has `DEBUGACTIVE` / `debug.log` strings: enabling the game's own debug log is the cheapest first experiment.
+Get scripted input (install `xdotool`, or write a small Win32 helper that posts key events) and a way to capture the screen, so the scenarios in `docs/testing/original-behaviour.md` can be run.
 
 # UNKNOWN-002
 
@@ -106,10 +106,7 @@ Evidence:
 Format strings `%s/%s/%s.pcx` etc. are chosen by a switch in that function; `NM: '%s' --> ` debug print.
 
 Status:
-OPEN
-
-Next action:
-Decompile `0x411D17` and its helpers `0x4129FB`, `0x412CD6`.
+MOSTLY RESOLVED (session 5, dynamic). The debug log shows the mapping at work: `winz.plt` → `.\data\res\winz.pcx`, `bmdrop3.snd` → `.\data\sound\bmdrop3.rss`, `tiles3.ani` → `.\data\ani\tiles3.ani`. The requested extension selects the directory and the real extension. The full table inside `0x411D17` has not been transcribed.
 
 # UNKNOWN-009
 
@@ -176,7 +173,7 @@ Evidence:
 No `Sleep` or wait call is reachable from `Game_Tick` or the `Match_Run` loop in the code read so far. The present function `0x415C1F` has not been read; it may wait for vertical blank.
 
 Status:
-RESOLVED statically (session 3). The present path (`0x415C1F` → sprite list flush `0x415B22` → GNW refresh `0x43D454`) and the DirectDraw layer (`0x442C00`-`0x443C70`) only call surface `Lock` (+0x64), `Unlock` (+0x80) and `Restore` (+0x6C). There is no `Flip`, `Blt`, `WaitForVerticalBlank` or `Sleep`. The tick rate is therefore whatever the machine achieves. The actual rate on period hardware is still unmeasured (UNKNOWN-001).
+RESOLVED (static, session 3; confirmed dynamically, session 5): about 960 presents per second under Wine on a modern machine.
 
 # UNKNOWN-014
 
@@ -253,10 +250,10 @@ Evidence:
 Found so far: head-hit stun (`OBJ+0x3A`, 16 ticks), disease pass cooldown (`OBJ+0x80`, value 129 ticks), chain-reaction delay (one tick per link), kick/stand animation counter when idle (`+0x30` incremented once per tick while standing).
 
 Status:
-OPEN (matters for choosing the modern tick rate; a nominal 20 Hz would make these 800 ms, 500 ms and 50 ms per link)
+IN PROGRESS. Measured under Wine: about 1 ms per tick, which makes tick-counted rules nearly instantaneous there. The designed rate is taken to be the nominal 20 frames per second (value 25). Recommendation: fixed 50 ms simulation step in the modern game.
 
 Next action:
-Measure the original's real tick rate at runtime (UNKNOWN-001, UNKNOWN-013); grep the game modules for bare decrements of OBJ fields.
+If period hardware or a throttled emulator (e.g. a slowed-down VM) becomes available, measure the real tick rate; grep the game modules for further bare per-tick counters.
 
 # UNKNOWN-021
 

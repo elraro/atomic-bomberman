@@ -268,3 +268,12 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 ### Correction: bomb type precedence
 
 - `Player_DropBomb` sets jelly first and then overwrites with trigger, so trigger wins when both are held. The specification had it the other way round. Fixed.
+
+## 2026-10-04 — Session 5: the original runs; first dynamic confirmations
+
+- Wine 10 and SDL3 were installed by the user. The original runs under Wine from `work/run` (copy; `game/` untouched). Details and all observations: `dynamic-analysis.md`.
+- Blocker found and solved: without `options.ini` the game waits at a memory-configuration screen (`0x406086`).
+- CONFIRMED at runtime: fullscreen exclusive 640 × 480 × 8 DirectDraw with Lock/Unlock presentation; `sizeof(OBJ) = 152`; `.plt` → `.pcx` name mapping; logo timing (value 12); attract mode after 30 s (value 92).
+- **CONFIRMED: bomb fuse is 2.000 s**, measured on 84 bombs in an AI demo match from sound-load timestamps. This is the first gameplay rule at validation Level 2, and with the existing unit test it reaches Level 4.
+- CONFIRMED: no frame limiter. About 960 presents per second on this machine. Consequence for tick-counted rules recorded under UNKNOWN-020; recommendation is a fixed 50 ms simulation step.
+- Next: scripted input and screen capture for the remaining test-matrix scenarios; SDL3/OpenGL front end.

@@ -10,8 +10,8 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 
 | Id | Scenario | Expected | Confidence | Observed |
 |---|---|---|---|---|
-| T1 | Start a round, hold a direction from the first moment | No movement for the first 1000 ms | HIGH | |
-| T2 | Drop a bomb, measure to detonation | 2000 ms | HIGH | |
+| T1 | Start a round, hold a direction from the first moment | No movement for the first 1000 ms | HIGH | Consistent: in a demo match the first bomb is dropped 1.15 s after the level loads (D9) |
+| T2 | Drop a bomb, measure to detonation | 2000 ms | HIGH | **Confirmed**: 2.000 s, 84 samples, median error 0 ms (D8) |
 | T3 | Measure how long a flame is visible and lethal | 500 ms | HIGH | |
 | T4 | Destroy a brick; measure until the cell is walkable | 500 ms after the blast | HIGH | |
 | T5 | Cause a stall longer than 150 ms (e.g. disk access) mid-round | Game objects advance by at most 150 ms; the round clock loses the full stall | HIGH | |
