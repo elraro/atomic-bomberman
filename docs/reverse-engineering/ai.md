@@ -41,7 +41,7 @@ The AI does **not** check for an escape route before dropping a bomb; it relies 
 
 ## Not read
 
-- `0x409C1F` (nearest powerup) in detail. `0x4092A1` (path to a cell) and `0x40970B` (route to safety) were read: see below.
+- Nothing among the search routines: `0x4092A1` (path to a cell), `0x40970B` (route to safety) and `0x409C1F` (nearest powerup) were all read: see below.
 - AI use of kick, spooge and jelly, if any (no behaviour for them is in the table).
 
 ## Path search (`0x4092A1`)
@@ -58,11 +58,18 @@ Confidence: HIGH (decompiled in full).
 
 The same walker flood as the path search, with depth limit 20 (`mov ebx,0x14` at `0x40B38A`), over the passability grid (blank tile, no bomb; flames do not block). There is no target: every cell a walker reaches or looks into is compared with the best danger found so far, which starts at 10000. A cell with danger 0 ends the search at once. Otherwise, when the walkers run out or the depth limit is reached, the least dangerous cell seen is the result. The start cell is never a candidate, so the result can be more dangerous than staying put. Outputs: first step (direction + 1, 0 = none), the chosen cell, passes used, peak walker count.
 
+## Nearest powerup (`0x409C1F`)
+
+Confidence: HIGH for the structure (decompiled in full), MEDIUM for the exact reach.
+
+The same walker flood again, with depth limit value 920 (4) passed in EBX (`0x40BB3A`). There is no danger test and no target cell: the search ends at the first walker position where `Powerup_FindAtCell` finds a powerup and returns that walker's first step and the powerup. Nearest therefore means nearest by walking distance over blank, bomb-free cells, not by straight-line distance. With walkers starting one step away and passes 0…limit, cells up to limit + 1 steps away are reached.
+
 ## Modern implementation (`src/game/ai.*`)
 
 The same eight behaviours in the same order with the same probabilities, as an input source separate from the core. Differences, all in the unread parts:
 
 - Route to safety follows the original's rule (first danger-free cell within 20 steps, else the least dangerous cell seen).
+- Nearest powerup is by walking distance, as in the original (it was by straight-line distance, then checked for a path).
 - Searches are plain breadth-first searches over unblocked cells. For the path search this gives routes of the same length as the original's walker flood; the choice among equally short routes can differ.
 - Bomb and flame danger levels follow the original; the closing walls are not marked.
 - The attack behaviour's first distance condition is omitted.

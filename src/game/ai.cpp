@@ -108,18 +108,30 @@ Dir AiPlayer::stepToSafety(const World& w, Cell from, Cell* target) const {
     return bestStep;
 }
 
+// The original's search (0x409C1F): the same flood as the path search, ending at the
+// first reachable cell that holds a collectable powerup, so "nearest" is by walking
+// distance. maxDepth passes reach cells up to maxDepth + 1 steps away.
 bool AiPlayer::nearestPowerup(const World& w, Cell from, int maxDepth, Cell* found) const {
-    for (int r = 1; r <= maxDepth; ++r)
-        for (int dy = -r; dy <= r; ++dy)
-            for (int dx = -r; dx <= r; ++dx) {
-                if (std::abs(dx) + std::abs(dy) != r) continue;
-                const Cell c{from.x + dx, from.y + dy};
-                if (inGrid(c) && w.powerup(c).state == PowerupState::Revealed && w.tile(c) == Tile::Blank &&
-                    pathStep(w, from, c, maxDepth + 1) != kNoDir) {
-                    *found = c;
-                    return true;
-                }
+    std::array<int, kGridW * kGridH> depth;
+    depth.fill(-1);
+    std::array<Cell, kGridW * kGridH> queue;
+    std::size_t head = 0, tail = 0;
+    depth[idx(from)] = 0;
+    queue[tail++] = from;
+    while (head < tail) {
+        const Cell c = queue[head++];
+        if (depth[idx(c)] > maxDepth) continue;
+        for (Dir d = 0; d < 4; ++d) {
+            const Cell n = step(c, d);
+            if (!inGrid(n) || depth[idx(n)] >= 0 || blocked(w, n)) continue;
+            depth[idx(n)] = depth[idx(c)] + 1;
+            if (w.powerup(n).state == PowerupState::Revealed) {
+                *found = n;
+                return true;
             }
+            queue[tail++] = n;
+        }
+    }
     return false;
 }
 
