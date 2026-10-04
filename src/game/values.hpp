@@ -57,6 +57,10 @@ inline constexpr int kHeadHitLossMin = 670;
 inline constexpr int kHeadHitLossRandom = 671;
 inline constexpr int kTrampolineFrames = 680;
 inline constexpr int kTrampolineRise = 681;
+inline constexpr int kDudMinSeconds = 320;
+inline constexpr int kDudRandomSeconds = 321;
+inline constexpr int kDudChance = 322;
+inline constexpr int kDudFrames = 323;
 inline constexpr int kLevelCount = 400;       // + powerup id
 inline constexpr int kInventoryCap = 550;     // + powerup id
 }  // namespace vid

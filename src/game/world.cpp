@@ -44,6 +44,7 @@ Scheme Scheme::fromRows(const std::array<const char*, kGridH>& rows) {
 World::World(const Values& values, std::uint32_t seed) : values_(values), rng_(seed) {
     if (!values_.has(kOutsurviveFrames)) values_.set(kOutsurviveFrames, 20);
     frameMs_ = 1000 / values_.get(vid::kFramesPerSecond);
+    nextDudMs_ = 1000LL * (values_.get(vid::kDudMinSeconds) + rng_.below(std::max(1, values_.get(vid::kDudRandomSeconds))));
     bombs_.resize(kMaxBombs);
 }
 
@@ -278,6 +279,7 @@ void World::tick(int dtMs, const std::array<PlayerInput, kMaxPlayers>& input) {
     const int dt = std::clamp(dtMs, 0, values_.get(vid::kMaxTickMs));
     ++tickCount_;
     roundMs_ += dt;
+    totalMs_ += dt;
     updateExtras();
     updateBombs(dt);
     updateFlames(dt);
@@ -344,9 +346,21 @@ void World::updateBombs(int dt) {
         }
         if (b.mode == BombMode::Flying) flyBomb(b, dt);
         // Fuses only run, and bombs only explode, while the round is undecided.
+        if (b.dud) {
+            // A dud sputters for value 323 frames, then becomes an ordinary bomb.
+            b.dudAcc += dt;
+            while (b.dudAcc > 0) {
+                ++b.dudFrames;
+                b.dudAcc -= frameMs_;
+            }
+            if (b.dudFrames > values_.get(vid::kDudFrames)) {
+                b.dud = false;
+                b.createdTick = tickCount_;  // its animation starts over
+            }
+        }
         if (contenders_ > 1) {
             const bool airborne = b.mode == BombMode::Flying || b.mode == BombMode::Held;
-            if (b.type != BombType::Trigger && !airborne) b.elapsedMs += dt;
+            if (b.type != BombType::Trigger && !airborne && !b.dud) b.elapsedMs += dt;
             if (b.fuseMs <= b.elapsedMs) detonate(b);
         }
     }
@@ -1010,9 +1024,17 @@ void World::dropBomb(int i, Cell cell, int delayFrames) {
     if (createBomb(i, cell, type, range, fuse)) {
         emit(EventKind::BombDropped, i);
         // The newest bomb of this owner in that cell gets the start delay.
+        // Now and then (not before the dud timer has run out) a regular bomb is a dud.
+        bool dud = false;
+        if (type == BombType::Regular && totalMs_ >= nextDudMs_) {
+            nextDudMs_ = totalMs_ + 1000LL * (values_.get(vid::kDudMinSeconds) + rng_.below(std::max(1, values_.get(vid::kDudRandomSeconds))));
+            dud = rng_.below(std::max(1, values_.get(vid::kDudChance))) == 0;
+        }
         for (Bomb& b : bombs_)
-            if (b.active && b.owner == i && b.createdTick == tickCount_ && pixelToCell(b.x, b.y) == cell)
+            if (b.active && b.owner == i && b.createdTick == tickCount_ && pixelToCell(b.x, b.y) == cell) {
                 b.elapsedMs = -delayFrames * frameMs_;
+                b.dud = dud;
+            }
     }
 }
 

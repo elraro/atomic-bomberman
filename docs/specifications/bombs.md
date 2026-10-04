@@ -14,7 +14,7 @@ Owner, type (regular, trigger, jelly), blast range in cells, fuse length, elapse
 | Range | the owner's blast range; 1 with the short-flame disease; 15 with goldflame [S] |
 | Fuse | the owner's fuse V(41) [40] frames = 2000 ms; one third with the short-fuse disease [S] |
 | Type | trigger if the owner has trigger **and** has laid fewer trigger bombs than their bomb capacity since picking the trigger up; otherwise jelly if the owner has jelly; otherwise regular. (Trigger and jelly exclude each other on pickup, so both can only be held through scheme settings.) [S] |
-| Dud | local games only: after V(320) [180] + random(0…V(321) [180]) seconds have passed since the last dud opportunity, a regular bomb has a 1 in V(322) [3] chance of being a dud [M] |
+| Dud | local games only: once a timer of V(320) [180] + random(0…V(321) [180]) seconds has run out, the next regular bomb dropped restarts that timer and has a 1 in V(322) [3] chance of being a dud. The original's timer runs on calendar time, across rounds [S] |
 
 ## Fuse
 

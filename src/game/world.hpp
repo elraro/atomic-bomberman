@@ -173,6 +173,9 @@ struct Bomb {
     int hops = 0;        // cell centres passed while flying; landing is tried from the third
     int flightPx = 0;    // pixels travelled since the last bounce (for drawing the arc)
     int holder = -1;     // player carrying the bomb
+    bool dud = false;    // fizzles for a while before its fuse starts
+    int dudFrames = 0;
+    int dudAcc = 0;
 };
 
 struct Flame {
@@ -316,6 +319,8 @@ private:
     int roundMs_ = 0;
     int startFreezeMs_ = 0;
     int contenders_ = 0;
+    long long totalMs_ = 0;    // game time across rounds
+    long long nextDudMs_ = 0;  // earliest time the next dud may occur
     bool teamPlay_ = false;
     std::array<int, kMaxPlayers> teams_{};
     int roundLimitMs_ = -1;

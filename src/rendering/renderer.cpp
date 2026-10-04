@@ -361,7 +361,8 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
         if (!b.active) continue;
         const float bx = lerpBomb(prev.bombs[idx].x, b.x, alpha);
         const float by = lerpBomb(prev.bombs[idx].y, b.y, alpha) - bombLift(b);
-        const char* seq = b.type == BombType::Trigger ? "bomb trigger green"
+        const char* seq = b.dud                        ? "bomb regular green dud"
+                        : b.type == BombType::Trigger ? "bomb trigger green"
                         : b.type == BombType::Jelly   ? "bomb jelly green"
                                                       : "bomb regular green";
         sprite(bank, seq, frame - b.createdTick, b.owner >= 0 ? world.displayColour(b.owner) : -1, bx, by);

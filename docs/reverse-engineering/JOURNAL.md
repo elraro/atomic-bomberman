@@ -382,3 +382,8 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - A team-play run produced no screenshots: the game stayed on its main menu, so the injected keys never reached it. The Wine window did not have X keyboard focus (in earlier runs it did). The keys of that run (Enter, Down, Right, Alt+C; no text) went to whatever window had focus on the desktop.
 - `drive_original.py` now checks before every key that the focused window is the Wine desktop or the game, and aborts without sending anything otherwise.
 - Team-play colours on the original remain unobserved.
+
+### Session 12 addendum 4: duds
+
+- `0x422C13` sets the next dud time from the C library clock (seconds): now + value 320 + random(value 321). The timer is global, not per round. The dud animation is `bomb regular green dud` in `duds.ani`.
+- Core: dud bombs (fuse held for value 323 frames). Tests: 50 tests, 826 checks.

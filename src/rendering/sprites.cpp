@@ -85,6 +85,7 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
     ok = addAni(ani + "mflame.ani") && ok;
     addAni(ani + "xbrick" + lv + ".ani");
     addAni(ani + "triganim.ani");
+    addAni(ani + "duds.ani");
     addAni(ani + "powers.ani");
     addAni(ani + "shadow.ani");
     addAni(ani + "kick.ani");

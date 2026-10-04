@@ -1090,6 +1090,44 @@ void testTeamPlay() {
     CHECK_EQ(w.winningTeam(), 0);
 }
 
+void testDud() {
+    Values v = Values::defaults();
+    v.set(320, 0);   // a dud may occur at once
+    v.set(321, 1);
+    v.set(322, 1);   // and always does
+    World w{v, 3};
+    w.startRound(Scheme::pillars(), false);
+    w.addPlayer(0);
+    w.addPlayer(1);
+    w.endStartFreeze();
+    Inputs in{};
+    in[0].button1 = true;
+    w.tick(50, in);
+    in[0].button1 = false;
+    CHECK_EQ(w.activeBombs(), 1);
+    CHECK(w.bombs()[0].dud);
+    w.player(0).x = cellToPixelX(6);
+    w.player(0).y = cellToPixelY(6);
+    for (int t = 0; t < 119; ++t) w.tick(50, in);
+    CHECK(w.bombs()[0].dud);                 // still sputtering after 6 s
+    CHECK_EQ(w.bombs()[0].elapsedMs, 0);     // fuse not started
+    for (int t = 0; t < 3; ++t) w.tick(50, in);
+    CHECK(!w.bombs()[0].dud);
+    for (int t = 0; t < 36; ++t) w.tick(50, in);
+    CHECK_EQ(w.activeBombs(), 1);
+    for (int t = 0; t < 4; ++t) w.tick(50, in);
+    CHECK_EQ(w.activeBombs(), 0);            // a normal 2 s fuse afterwards
+
+    World n{Values::defaults(), 3};          // with the shipped values no dud in the first 3 minutes
+    n.startRound(Scheme::pillars(), false);
+    n.addPlayer(0);
+    n.addPlayer(1);
+    n.endStartFreeze();
+    in[0].button1 = true;
+    n.tick(50, in);
+    CHECK(!n.bombs()[0].dud);
+}
+
 void testEvents() {
     Fixture f;
     f.w.takeEvents();
@@ -1277,6 +1315,7 @@ int main() {
         {"warp", testWarp},
         {"trampoline", testTrampoline},
         {"team play", testTeamPlay},
+        {"dud", testDud},
         {"events", testEvents},
         {"clock and hurry", testClockAndHurry},
         {"closing walls", testClosingWalls},
