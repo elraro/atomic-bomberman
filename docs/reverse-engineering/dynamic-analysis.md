@@ -96,6 +96,11 @@ Lab schemes `testpun.sch`, `testgrab.sch`, `testspg.sch` (working copy only) giv
 | D43 | **Jelly bomb.** Born with jelly and kicker (`testjel.sch`): the kicked bomb slides west to the field edge and comes back east | Six rapid screenshots: bomb x = 75, 52, 45, 65, 82, 118 | B11 |
 | D44 | **Goldflame.** Born with goldflame (`testgold.sch`): a bomb at (0,0) fills the whole of row 0 and the whole of column 0 with flame; a player at (1,1) is unharmed | Screenshots | E9 |
 
+| D45 | **Warp.** Level 4, open scheme: four holes at (2,2), (12,2), (2,8), (12,8). Walking east into the hole at (2,2) (id 0, link-to 3): 0.1 s later the player is on that hole, 0.3 s after that the player stands on the hole at (2,8) (id 3) | Screenshots | Extras: warp linkage by id, travel time under half a second |
+| D46 | **Trampoline.** Level 9, open scheme: eight trampolines are drawn (four at the fixed cells, four elsewhere). After walking onto the one at (2,2) the player is not on screen 0.6 s later and stands at about (1,3) 2 s later | Screenshots | Extras: airborne phase, landing within two cells in a different row and column |
+
+Unexplained in the D46 run: the idle second player appears at different cells in the three screenshots. It may have started on, or been carried onto, one of the randomly placed trampolines; not investigated.
+
 ## Not yet possible
 
 Attaching a debugger, and reading game memory directly. Remaining scenarios of `docs/testing/original-behaviour.md` can now be scripted one by one.
