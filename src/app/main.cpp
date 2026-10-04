@@ -438,7 +438,10 @@ int main(int argc, char** argv) {
                     if (key == SDLK_DOWN) menuItem = (menuItem + 1) % 7;
                     if (key == SDLK_ESCAPE) running = false;
                     if (key == SDLK_RETURN) {
-                        if (menuItem == 0) screen = Screen::PlayerList;
+                        if (menuItem == 0) {
+                            screen = Screen::PlayerList;
+                            if (sound) audio.playMusic(1020);  // pre-game screens tune
+                        }
                         if (menuItem == 6) running = false;
                         if (sound) audio.playRange(10, 10);
                     }
@@ -458,7 +461,10 @@ int main(int argc, char** argv) {
                             c = k - static_cast<int>(Control::Pad0) + 1 < padCount ? static_cast<Control>(k + 1) : Control::Off;
                         else c = Control::Ai;
                     }
-                    if (key == SDLK_ESCAPE) screen = Screen::MainMenu;
+                    if (key == SDLK_ESCAPE) {
+                        screen = Screen::MainMenu;
+                        if (sound) audio.playMusic(1010);
+                    }
                     if (key == SDLK_RETURN) {
                         int n = 0;
                         for (Control k : control) n += k != Control::Off ? 1 : 0;
@@ -540,6 +546,14 @@ int main(int argc, char** argv) {
                             std::fprintf(stderr, "INFO  Round over draw\n");
                         }
                     }
+                    if (world.roundOver() && roundOverSteps == 20 && sound) {
+                        // The result screen comes up: the original plays its end-of-round tune here
+                        // (sound 1130, draw.rss, for every result), a voice line for a draw
+                        // (1700 series) and a "we have a winner" line when the match is decided (320 series).
+                        audio.playMusic(1130);
+                        if (world.teamPlay() ? world.winningTeam() < 0 : world.winner() < 0) audio.playRange(1700, 1799);
+                        if (matchOver) audio.playRange(320, 339);
+                    }
                     if (world.roundOver() && ++roundOverSteps > 100) {
                         if (matchOver) {
                             wins = {};
@@ -551,6 +565,7 @@ int main(int argc, char** argv) {
                             }
                         }
                         beginMatch();
+                        if (sound) audio.playMusic(1100 + level);
                     }
                 }
             }
