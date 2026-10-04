@@ -5,6 +5,7 @@
 #include <GL/glext.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace ab {
@@ -53,6 +54,23 @@ constexpr float kPlayerColor[kMaxPlayers][3] = {
     {0.95f, 0.90f, 0.15f}, {0.15f, 0.85f, 0.85f}, {0.90f, 0.20f, 0.90f}, {0.95f, 0.55f, 0.10f}, {0.55f, 0.20f, 0.90f}};
 
 float lerp(int a, int b, float t) { return static_cast<float>(a) + static_cast<float>(b - a) * t; }
+
+// Height above the ground at which a bomb is drawn: an arc while flying
+// (original values 660/661: 65 px for the first three-cell hop, 20 px for later
+// one-cell bounces), and over the head while carried.
+float bombLift(const Bomb& b) {
+    if (b.mode == BombMode::Held) return 44.0f;
+    if (b.mode != BombMode::Flying) return 0.0f;
+    const bool vertical = (b.dir & 1) == 0;
+    const float cell = static_cast<float>(vertical ? kCellH : kCellW);
+    const bool firstHop = b.hops < 3;
+    const float length = firstHop ? 3.0f * cell : cell;
+    const float t = std::clamp(static_cast<float>(b.flightPx) / length, 0.0f, 1.0f);
+    return std::sin(t * 3.14159265f) * (firstHop ? 65.0f : 20.0f);
+}
+
+// A bomb that wrapped around the field must not be drawn sliding across the screen.
+float lerpBomb(int a, int b, float t) { return std::abs(b - a) > 100 ? static_cast<float>(b) : lerp(a, b, t); }
 
 }  // namespace
 
@@ -257,8 +275,8 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
     for (const Bomb& b : world.bombs()) {
         const std::size_t idx = bi++;
         if (!b.active) continue;
-        const float bx = lerp(prev.bombs[idx].x, b.x, alpha);
-        const float by = lerp(prev.bombs[idx].y, b.y, alpha);
+        const float bx = lerpBomb(prev.bombs[idx].x, b.x, alpha);
+        const float by = lerpBomb(prev.bombs[idx].y, b.y, alpha) - bombLift(b);
         const char* seq = b.type == BombType::Trigger ? "bomb trigger green"
                         : b.type == BombType::Jelly   ? "bomb jelly green"
                                                       : "bomb regular green";

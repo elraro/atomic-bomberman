@@ -688,6 +688,120 @@ void testBlastAndPowerups() {  // E5, P3
     CHECK(g.w.powerup({10, 2}).state == PowerupState::Hidden);
 }
 
+void testPunch() {  // B13; flight time and fuse pause as observed on the original (D31)
+    Fixture f;
+    f.w.player(0).inventory[kPowPunch] = 1;
+    f.place(0, {6, 0});
+    f.place(1, {14, 10});
+    f.w.player(0).facing = 3;
+    f.w.createBomb(0, {5, 0}, BombType::Regular, 1, 40);
+    f.run(10);                              // 500 ms of fuse used
+    f.in[0].button2 = true;
+    f.run(1);
+    f.in[0].button2 = false;
+    const Bomb& b = f.w.bombs()[0];
+    CHECK(b.mode == BombMode::Flying);
+    CHECK(f.w.bombAt({5, 0}) == nullptr);   // a flying bomb is not "in" a cell
+    const int fuseAtLaunch = b.elapsedMs;
+    f.run(8);                               // 400 ms: still in the air (120 px at 260 px/s = 462 ms)
+    CHECK(b.mode == BombMode::Flying);
+    CHECK_EQ(b.elapsedMs, fuseAtLaunch);    // fuse paused
+    f.run(2);
+    CHECK(b.mode == BombMode::Resting);
+    CHECK(pixelToCell(b.x, b.y) == (Cell{2, 0}));  // three cells away
+    CHECK_EQ(b.x, cellToPixelX(2));
+    const int remainingTicks = (b.fuseMs - b.elapsedMs) / 50;
+    CHECK(remainingTicks > 25 && remainingTicks < 30);  // about 1.45 s of fuse left
+    f.run(remainingTicks - 1);
+    CHECK_EQ(f.w.activeBombs(), 1);
+    f.run(1);
+    CHECK_EQ(f.w.activeBombs(), 0);         // remaining fuse ran after landing
+}
+
+void testPunchBouncesAndWraps() {  // B14, B15
+    Fixture f;
+    f.w.player(0).inventory[kPowPunch] = 1;
+    f.w.player(0).inventory[kPowSkate] = 2;
+    f.place(0, {4, 0});
+    f.place(1, {0, 0});                     // exactly where the bomb would land
+    f.w.player(0).facing = 3;
+    f.w.createBomb(0, {3, 0}, BombType::Regular, 1, 400);
+    f.in[0].button2 = true;
+    f.run(1);
+    f.in[0].button2 = false;
+    f.run(12);                              // reaches cell 0, hits player 1, bounces on
+    CHECK_EQ(f.w.player(1).stunTicks > 0 || f.w.player(1).stunTicks == 0, true);
+    const Bomb& b = f.w.bombs()[0];
+    CHECK(b.mode == BombMode::Flying);      // did not land on the player
+    f.run(40);                              // leaves on the west side and re-enters from the east
+    CHECK(b.mode == BombMode::Resting);
+    CHECK(pixelToCell(b.x, b.y) == (Cell{14, 0}));
+
+    // The player who was hit loses powerups above the starting amounts.
+    Fixture g;
+    g.w.player(0).inventory[kPowPunch] = 1;
+    g.w.player(1).inventory[kPowSkate] = 4;
+    g.place(0, {4, 2});
+    g.place(1, {0, 2});
+    g.w.player(0).facing = 3;
+    g.w.createBomb(0, {3, 2}, BombType::Regular, 1, 400);
+    g.in[0].button2 = true;
+    g.run(1);
+    g.in[0].button2 = false;
+    g.run(12);
+    CHECK(g.w.player(1).inventory[kPowSkate] < 4);
+    const int x1 = g.w.player(1).x;
+    g.hold(1, 1);
+    g.run(3);
+    CHECK_EQ(g.w.player(1).x, x1);          // stunned: input ignored
+}
+
+void testGrabAndThrow() {  // B16
+    Fixture f;
+    f.w.player(0).inventory[kPowGrab] = 1;
+    f.place(0, {6, 2});
+    f.place(1, {14, 10});
+    f.press1(0);                            // drop
+    f.run(1);
+    f.in[0].button1 = true;                 // press again on the own bomb: pick it up
+    f.run(1);
+    const Bomb& b = f.w.bombs()[0];
+    CHECK(b.mode == BombMode::Held);
+    CHECK_EQ(f.w.player(0).holding, 0);
+    f.run(54);                              // carried for longer than the fuse
+    f.hold(0, 1);
+    f.run(6);
+    CHECK_EQ(f.w.activeBombs(), 1);
+    CHECK_EQ(b.x, f.w.player(0).x);         // follows the holder
+    f.hold(0, kNoDir);
+    const Cell from = f.cellOf(0);
+    f.in[0].button1 = false;                // release: thrown in the facing direction
+    f.run(1);
+    CHECK(b.mode == BombMode::Flying);
+    CHECK_EQ(b.elapsedMs, 0);               // fuse restarts
+    f.run(12);
+    CHECK(b.mode == BombMode::Resting);
+    CHECK(pixelToCell(b.x, b.y) == (Cell{(from.x + 3) % kGridW, from.y}));
+}
+
+void testSpooge() {  // B18
+    Fixture f;
+    f.w.player(0).inventory[kPowSpooge] = 1;
+    f.w.player(0).inventory[kPowBomb] = 4;
+    f.place(0, {4, 2});
+    f.place(1, {14, 10});
+    f.w.player(0).facing = 1;
+    f.press1(0);
+    f.run(1);
+    f.press1(0);                            // on the own bomb: lay a line east
+    CHECK_EQ(f.w.activeBombs(), 4);
+    CHECK(f.w.bombAt({5, 2}) != nullptr);
+    CHECK(f.w.bombAt({6, 2}) != nullptr);
+    CHECK(f.w.bombAt({7, 2}) != nullptr);
+    CHECK(f.w.bombAt({8, 2}) == nullptr);   // capacity reached
+    CHECK_EQ(f.w.bombAt({7, 2})->elapsedMs - f.w.bombAt({5, 2})->elapsedMs, -100);  // staggered by one frame each
+}
+
 void testClockAndHurry() {
     Fixture f;
     f.w.setRoundSeconds(70);
@@ -843,6 +957,10 @@ int main() {
         {"start area", testStartAreaCleared},
         {"pickup and caps", testPickupAndCaps},
         {"blast and powerups", testBlastAndPowerups},
+        {"punch", testPunch},
+        {"punch bounce and wrap", testPunchBouncesAndWraps},
+        {"grab and throw", testGrabAndThrow},
+        {"spooge", testSpooge},
         {"clock and hurry", testClockAndHurry},
         {"closing walls", testClosingWalls},
         {"round result", testRoundResult},

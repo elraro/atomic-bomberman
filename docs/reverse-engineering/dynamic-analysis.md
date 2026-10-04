@@ -71,6 +71,17 @@ Key sequence used to reach a match with two keyboard players and no AI: Enter ×
 | D29 | **Time up is a draw.** Two idle players, enclosement depth 0, 1:00 on the clock: the clock ran down with nothing else happening (no walls at 55 s), and 59.02 s after the round started the game showed "DRAW GAME" (`draw.pcx`, `draw.rss`) | Screenshots, timestamps | Resolves UNKNOWN-022; depth 0 disables the walls |
 | D30 | `playtime=12` in `options.ini` produced a clock starting at 1:00, so short values are raised to 60 s (or rejected in favour of 60) | Screenshot showing 0:51 at +8.5 s | – |
 
+## Punch, grab and spooge (session 8)
+
+Lab schemes `testpun.sch`, `testgrab.sch`, `testspg.sch` (working copy only) give the player the powerup from the start.
+
+| # | Observation | Evidence | Confirms |
+|---|---|---|---|
+| D31 | **Punch.** Bomb in cell 5, player in cell 6 facing west, Enter pressed: punch sound (`kbomb*.rss`), the bomb rises in an arc and lands in cell 2, three cells away. Flight time 0.458 s and 0.461 s in two trials. The first bomb exploded 1.131 s after landing, having used 0.868 s of fuse before the punch: 1.999 s in total | Timestamps of `kbomb`, the landing sound (`bmdrop3.rss`) and the explosion; rapid screenshots | B13: three-cell first hop at 260 px/s (predicted 0.4615 s); the fuse is paused in flight |
+| D32 | **Grab and throw.** Space on the player's own bomb with Space held: grab sound (`grab2.rss`), the bomb is carried above the head and follows the player; still unexploded 3.2 s after being dropped. On release it flies three cells in the facing direction (landing sound 0.46 s later) and explodes 1.999 s after landing | Screenshots, timestamps | B16: held bombs do not tick; the fuse restarts when thrown |
+| D33 | **Spooge.** Space on the player's own bomb with capacity 5: four more bombs appear in a line in the facing direction, one per cell | Screenshot | B18 (placement and capacity limit; the 50 ms stagger could not be read from sound loads) |
+| D34 | Sound loads are cached: a sound file is opened only the first time it plays, so file-open timestamps mark the *first* occurrence of each sound only | `bmdrop3.rss` opened once for many bounces | Method note |
+
 ## Not yet possible
 
 Attaching a debugger, and reading game memory directly. Remaining scenarios of `docs/testing/original-behaviour.md` can now be scripted one by one.

@@ -54,7 +54,7 @@ A dud fizzles for V(323) [120] animation frames, then becomes a normal bomb whos
 
 - Speed V(301) [1300]; the fuse is paused. [S]
 - The bomb starts from the centre of its cell and passes over everything. [S]
-- The first hop is 3 cells; each later hop is 1 cell. Visual arc heights are V(660) [65] and V(661) [20] pixels. [M]
+- The first hop is 3 cells (0.46 s); each later hop is 1 cell. Visual arc heights are V(660) [65] and V(661) [20] pixels. [S, observed for the first hop]
 - More than one cell beyond the edge, the bomb wraps to the opposite side. [S]
 - At the end of a hop the bomb **lands** if the cell is blank, has no bomb, no powerup and no warp hole, and no player. Otherwise it hops again. If a player is in the cell, that player is hit on the head (`players.md`). [S]
 - A jelly bomb inside the grid has a 1 in V(667) [3] chance at each bounce of turning 90° left or right. [S]

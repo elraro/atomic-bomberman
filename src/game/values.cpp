@@ -28,6 +28,9 @@ Values Values::defaults() {
     v.set(120, 1);
     v.set(300, 1000);
     v.set(301, 1300);
+    v.set(667, 3);
+    v.set(670, 1);
+    v.set(671, 3);
     const int level[13] = {10, 10, 3, 4, 8, 2, 2, 1, -2, -4, 1, -4, -2};
     for (int i = 0; i < 13; ++i) v.set(400 + i, level[i]);
     const int cap[15] = {8, 8, 0, 1, 4, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0};

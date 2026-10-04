@@ -44,6 +44,10 @@ inline constexpr int kClogSpeed = 91;
 inline constexpr int kOverpowerSeconds = 102;
 inline constexpr int kDiseasesDestroyable = 120;
 inline constexpr int kKickSpeed = 300;
+inline constexpr int kPunchSpeed = 301;
+inline constexpr int kJellyTurnChance = 667;
+inline constexpr int kHeadHitLossMin = 670;
+inline constexpr int kHeadHitLossRandom = 671;
 inline constexpr int kLevelCount = 400;       // + powerup id
 inline constexpr int kInventoryCap = 550;     // + powerup id
 }  // namespace vid

@@ -3,9 +3,8 @@
 // Rules implemented here follow docs/specifications/. Each rule was derived
 // from the original game by static analysis; see docs/reverse-engineering/.
 //
-// Not implemented yet: punch, grab, spooge, flying bombs, duds, diseases,
-// level extras (arrows, warps, conveyors, trampolines), closing walls,
-// team play, campaign, AI, networking.
+// Not implemented yet: duds, diseases, level extras (arrows, warps,
+// conveyors, trampolines), team play, campaign, AI, networking.
 #pragma once
 
 #include <array>
@@ -75,6 +74,8 @@ struct Player {
     int animCounter = 0;  // +1 per pixel walked (the walk animation advances every 3)
     bool moving = false;  // moved during the last tick
     int triggerBombsLaid = 0;
+    int holding = -1;     // index of the bomb being carried, or -1
+    int stunTicks = 0;    // no input while > 0 (after a bomb lands on the player)
     bool prevButton1 = false;
     bool prevButton2 = false;
     int kills = 0;
@@ -85,7 +86,7 @@ struct Player {
 };
 
 enum class BombType : std::uint8_t { Regular = 0, Trigger = 1, Jelly = 2 };
-enum class BombMode : std::uint8_t { Resting = 0, Sliding = 1 };
+enum class BombMode : std::uint8_t { Resting = 0, Sliding = 1, Flying = 2, Held = 3 };
 
 struct Bomb {
     bool active = false;
@@ -103,6 +104,9 @@ struct Bomb {
     int arrivedFrom = 0;  // 0 = own fuse; otherwise direction + 1 pointing back at the trigger
     bool stopRequested = false;
     int createdTick = 0;
+    int hops = 0;        // cell centres passed while flying; landing is tried from the third
+    int flightPx = 0;    // pixels travelled since the last bounce (for drawing the arc)
+    int holder = -1;     // player carrying the bomb
 };
 
 struct Flame {
@@ -192,6 +196,10 @@ private:
 
     void updateBombs(int dt);
     void slideBomb(Bomb& b, int dt);
+    void flyBomb(Bomb& b, int dt);
+    void launchBomb(Bomb& b, Dir d);
+    void hitOnHead(int playerIndex);
+    int playerAt(Cell c) const;  // index of a living player in the cell, or -1
     bool bombCanSlideInto(Cell c);
     void queueDetonation(Bomb& b, int arrivedFrom);
     void detonate(Bomb& b);
@@ -215,7 +223,7 @@ private:
     void removeFromInventory(Player& p, int type);
     void kickBomb(Bomb& b, Dir d);
     void handleButtons(int i, const PlayerInput& in);
-    void dropBomb(int i);
+    void dropBomb(int i, Cell cell, int delayFrames);
 
     Values values_;
     Rng rng_;

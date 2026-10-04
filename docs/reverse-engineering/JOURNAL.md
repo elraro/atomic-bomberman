@@ -313,3 +313,10 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - Front end: seven-segment clock and player pips as a stand-in HUD; a decided round restarts after three seconds.
 - Tests: 34 tests, 700 checks, all passing.
 - Open: behaviour of the original when the clock reaches 0:00 (UNKNOWN-022).
+
+## 2026-10-04 — Session 8: punch, grab, spooge
+
+- Core: flying bombs (three-cell first hop, one-cell bounces, wrap-around, landing rules), punch, grab/carry/throw, spooge lines, head-hit stun with powerup loss. Renderer draws the flight arc and the carried bomb.
+- Code detail: the hop counter comparison at `0x423961`-`0x423983` compares a cell index with a pixel coordinate saved at launch, so it is always "different" and the counter advances at every cell centre. The landing attempt therefore starts at the third centre; the original's behaviour matches (D31).
+- Observed on the original: punch (D31), grab and throw (D32), spooge line (D33). A 3 s "stall" seen in the first punch run was my own screenshot polling, not the game.
+- Tests: 38 tests, 734 checks, all passing.

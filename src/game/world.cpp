@@ -145,8 +145,9 @@ int World::bombsOwnedBy(int playerIndex) const {
 }
 
 const Bomb* World::bombAt(Cell c) const {
+    // Bombs in the air or in a player's hands are not "in" a cell.
     for (const Bomb& b : bombs_)
-        if (b.active && pixelToCell(b.x, b.y) == c) return &b;
+        if (b.active && b.mode != BombMode::Flying && b.mode != BombMode::Held && pixelToCell(b.x, b.y) == c) return &b;
     return nullptr;
 }
 
@@ -208,9 +209,11 @@ void World::updateBombs(int dt) {
     for (Bomb& b : bombs_) {
         if (!b.active) continue;
         if (b.mode == BombMode::Sliding) slideBomb(b, dt);
+        if (b.mode == BombMode::Flying) flyBomb(b, dt);
         // Fuses only run, and bombs only explode, while the round is undecided.
         if (contenders_ > 1) {
-            if (b.type != BombType::Trigger) b.elapsedMs += dt;
+            const bool airborne = b.mode == BombMode::Flying || b.mode == BombMode::Held;
+            if (b.type != BombType::Trigger && !airborne) b.elapsedMs += dt;
             if (b.fuseMs <= b.elapsedMs) detonate(b);
         }
     }
@@ -263,6 +266,93 @@ void World::slideBomb(Bomb& b, int dt) {
         b.y = ny;
         b.moveAcc -= 100;
         if (stop) break;
+    }
+}
+
+int World::playerAt(Cell c) const {
+    for (int i = 0; i < kMaxPlayers; ++i) {
+        const Player& p = players_[static_cast<std::size_t>(i)];
+        if (p.present && p.alive && pixelToCell(p.x, p.y) == c) return i;
+    }
+    return -1;
+}
+
+// Punch or throw: the bomb leaves from the centre of its cell and flies over everything.
+void World::launchBomb(Bomb& b, Dir d) {
+    const Cell c = pixelToCell(b.x, b.y);
+    b.x = cellToPixelX(c.x);
+    b.y = cellToPixelY(c.y);
+    b.moveAcc = 0;
+    b.dir = d;
+    b.mode = BombMode::Flying;
+    b.speed = values_.get(vid::kPunchSpeed);
+    b.stopRequested = false;
+    b.hops = 0;
+    b.flightPx = 0;
+    if (b.holder >= 0) players_[static_cast<std::size_t>(b.holder)].holding = -1;
+    b.holder = -1;
+}
+
+void World::flyBomb(Bomb& b, int dt) {
+    b.moveAcc += b.speed * dt / frameMs_;
+    while (b.moveAcc > 0) {
+        const auto d = static_cast<unsigned>(b.dir);
+        int nx = b.x + kDx[d];
+        int ny = b.y + kDy[d];
+        bool landed = false;
+        if (offsetInCellX(nx) == 0 && offsetInCellY(ny) == 0) {
+            Cell c = pixelToCell(nx, ny);
+            // Beyond one cell outside the field the bomb re-enters from the opposite side.
+            if (c.x >= kGridW + 2) nx -= (kGridW + 3) * kCellW;
+            if (c.x < -1) nx += (kGridW + 3) * kCellW;
+            if (c.y >= kGridH + 2) ny -= (kGridH + 3) * kCellH;
+            if (c.y < -1) ny += (kGridH + 3) * kCellH;
+            ++b.hops;
+            if (b.hops >= 3) {
+                // A bounce point: try to land here.
+                if (b.type == BombType::Jelly && inGrid(c) && rng_.below(std::max(1, values_.get(vid::kJellyTurnChance))) == 0)
+                    b.dir = (b.dir + rng_.below(2) * 2 - 1) & 3;
+                b.flightPx = 0;
+                const bool blocked = tile(c) != Tile::Blank || bombAt(c) != nullptr ||
+                                     (inGrid(c) && powerups_[index(c)].state != PowerupState::None);
+                if (!blocked) {
+                    if (const int victim = playerAt(c); victim >= 0) {
+                        hitOnHead(victim);  // and bounce on
+                    } else {
+                        landed = true;
+                    }
+                }
+            }
+        }
+        b.x = nx;
+        b.y = ny;
+        if (landed) {
+            b.moveAcc = 0;
+            b.mode = BombMode::Resting;
+            const Cell c = pixelToCell(b.x, b.y);
+            if (inGrid(c) && flames_[index(c)].active) queueDetonation(b, 0);
+            break;
+        }
+        b.moveAcc -= 100;
+        ++b.flightPx;
+    }
+}
+
+// A flying bomb came down on a player: stun, and some powerups are knocked loose.
+void World::hitOnHead(int playerIndex) {
+    Player& p = players_[static_cast<std::size_t>(playerIndex)];
+    p.stunTicks = 16;
+    int lose = values_.get(vid::kHeadHitLossMin) + rng_.below(std::max(1, values_.get(vid::kHeadHitLossRandom)));
+    while (lose-- > 0) {
+        for (int attempt = 0; attempt < 200; ++attempt) {
+            const int type = rng_.below(kPowTypeCount);
+            int& have = p.inventory[static_cast<std::size_t>(type)];
+            if (have > values_.get(vid::kStartInventory + type)) {
+                scatterPowerup(type);
+                --have;
+                break;
+            }
+        }
     }
 }
 
@@ -430,6 +520,19 @@ void World::updatePlayers(int dt, const std::array<PlayerInput, kMaxPlayers>& in
         if (p.alive || (p.dying && p.dyingFrames < values_.get(kOutsurviveFrames))) ++contenders;
     }
     contenders_ = contenders;
+
+    // Carried bombs follow their holder. A holder who died takes the bomb with them.
+    for (Bomb& b : bombs_) {
+        if (!b.active || b.mode != BombMode::Held) continue;
+        Player& h = players_[static_cast<std::size_t>(b.holder)];
+        if (!h.alive) {
+            b.active = false;
+            h.holding = -1;
+            continue;
+        }
+        b.x = h.x;
+        b.y = h.y;
+    }
 }
 
 bool World::checkFlameDeath(int i) {
@@ -632,7 +735,7 @@ bool World::movePlayer(int i, Dir requested) {
     return false;
 }
 
-void World::dropBomb(int i) {
+void World::dropBomb(int i, Cell cell, int delayFrames) {
     Player& p = players_[static_cast<std::size_t>(i)];
     BombType type = p.inventory[kPowJelly] > 0 ? BombType::Jelly : BombType::Regular;
     if (p.inventory[kPowTrigger] > 0 && p.triggerBombsLaid < p.inventory[kPowBomb]) {
@@ -640,7 +743,12 @@ void World::dropBomb(int i) {
         ++p.triggerBombsLaid;
     }
     const int range = p.inventory[kPowGoldflame] > 0 ? std::max(kGridW, kGridH) : p.inventory[kPowFlame];
-    createBomb(i, pixelToCell(p.x, p.y), type, range, p.fuseFrames);
+    if (createBomb(i, cell, type, range, p.fuseFrames)) {
+        // The newest bomb of this owner in that cell gets the start delay.
+        for (Bomb& b : bombs_)
+            if (b.active && b.owner == i && b.createdTick == tickCount_ && pixelToCell(b.x, b.y) == cell)
+                b.elapsedMs = -delayFrames * frameMs_;
+    }
 }
 
 void World::handleButtons(int i, const PlayerInput& in) {
@@ -655,11 +763,16 @@ void World::handleButtons(int i, const PlayerInput& in) {
             for (Bomb& b : bombs_)
                 if (b.active && b.owner == i && b.type != BombType::Jelly && b.mode == BombMode::Sliding)
                     b.stopRequested = true;
+        if (p.inventory[kPowPunch] > 0 && !in.button1) {
+            const Cell ahead = step(pixelToCell(p.x, p.y), p.facing);
+            if (Bomb* b = findBomb(ahead)) launchBomb(*b, p.facing);
+        }
         if (p.inventory[kPowTrigger] > 0) {
             Bomb* oldest = nullptr;
             int oldestTick = tickCount_;
             for (Bomb& b : bombs_)
-                if (b.active && b.owner == i && b.type == BombType::Trigger && b.createdTick < oldestTick) {
+                if (b.active && b.owner == i && b.type == BombType::Trigger && b.mode != BombMode::Flying &&
+                    b.mode != BombMode::Held && b.createdTick < oldestTick) {
                     oldest = &b;
                     oldestTick = b.createdTick;
                 }
@@ -667,9 +780,39 @@ void World::handleButtons(int i, const PlayerInput& in) {
         }
     }
 
+    // A carried bomb is thrown as soon as button 1 is no longer held.
+    if (p.holding >= 0 && !in.button1) {
+        Bomb& b = bombs_[static_cast<std::size_t>(p.holding)];
+        b.x = p.x;
+        b.y = p.y;
+        b.elapsedMs = 0;
+        launchBomb(b, p.facing);
+    }
+
     if (press1) {
         const Cell here = pixelToCell(p.x, p.y);
-        if (bombsOwnedBy(i) < p.inventory[kPowBomb] && playerPassable(here)) dropBomb(i);
+        Bomb* underfoot = findBomb(here);
+        const bool own = underfoot != nullptr && underfoot->owner == i;
+        if (p.inventory[kPowGrab] > 0 && own) {
+            underfoot->mode = BombMode::Held;
+            underfoot->holder = i;
+            underfoot->stopRequested = false;
+            p.holding = static_cast<int>(underfoot - bombs_.data());
+        } else if (p.inventory[kPowSpooge] > 0 && own) {
+            // A line of bombs ahead; each starts one frame further behind.
+            Cell c = here;
+            for (int n = 1;; ++n) {
+                c = step(c, p.facing);
+                if (playerAt(c) >= 0) break;
+                if (inGrid(c) && powerups_[index(c)].state != PowerupState::None) break;
+                if (!playerPassable(c) || bombsOwnedBy(i) >= p.inventory[kPowBomb]) break;
+                const int before = activeBombs();
+                dropBomb(i, c, n);
+                if (activeBombs() == before) break;
+            }
+        } else if (bombsOwnedBy(i) < p.inventory[kPowBomb] && playerPassable(here)) {
+            dropBomb(i, here, 0);
+        }
     }
 }
 
@@ -678,7 +821,12 @@ void World::updatePlayer(int i, int dt, const PlayerInput& in) {
     if (checkFlameDeath(i)) return;
     checkPickup(i);
 
-    const bool frozen = startFreezeMs_ > 0;
+    bool stunned = false;
+    if (p.stunTicks > 0) {
+        --p.stunTicks;
+        stunned = true;
+    }
+    const bool frozen = startFreezeMs_ > 0 || stunned;
     const PlayerInput effective = frozen ? PlayerInput{} : in;
 
     const Dir requested = chooseDirection(p, effective);
