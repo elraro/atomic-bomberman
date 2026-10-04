@@ -20,7 +20,7 @@ Option `team_play`. [D]
 
 - Two teams; each player's team (0 or 1) comes from the scheme's start lines. [D][S]
 - Contenders are counted per team: the round ends when one team has nobody left. [S]
-- After the first V(32) [40] frames of a round, players are drawn in their team's colour instead of their own: team 0 in colour 0 (white), team 1 in colour 2 (red). Bombs and flames follow. [S]
+- After the first V(32) [40] frames of a round, players are drawn in their team's colour instead of their own: team 0 in colour 0 (white), team 1 in colour 2 (red). Bombs, flames and the score labels follow. [S, observed for players and labels]
 - Computer players do not attack or hunt team-mates. [S]
 - Whether team-mates' flames kill each other: they do; the flame check does not look at teams. [S]
 

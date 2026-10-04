@@ -22,19 +22,19 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 |---|---|---|---|---|
 | M1 | Empty arena, player at (0,0), hold east for 1 s after the start freeze | Moves about 185 px (4.6 cells) | HIGH | **Confirmed within 1.5 %**: 366 px in 2.0 s and 184 px in 1.0 s, about 183 px/s on a machine with 1-5 ms ticks (D17) |
 | M2 | Same with 1, 2, 3, 4 skates | 214, 244, 274, 304 px per second (speed 1073…1523) | HIGH | |
-| M3 | Hold east into a solid pillar from a cell centre | Stops exactly at the cell centre; cannot advance past it | HIGH | |
+| M3 | Hold east into a solid pillar from a cell centre | Stops exactly at the cell centre; cannot advance past it | HIGH | **Confirmed** at the field edge (D39) and against a bomb (D41); not yet against a pillar from a centred position |
 | M4 | Player in a horizontal corridor, a few pixels above the row's centre line, hold east | Moves diagonally down-right until aligned, then straight | HIGH | **Confirmed** qualitatively (D36) |
 | M5 | Player at a cell centre next to a pillar to the east, offset a few pixels north of the centre line, the cell to the north and the cell north-east both open; hold east | Slides north along the pillar, then continues east in the next lane | HIGH | **Confirmed** (D35) |
 | M6 | Hold east and south together where only south is open | Moves south | HIGH | |
 | M7 | Hold two directions that are both open, in each of the 6 pairs | West beats south beats east beats north | HIGH | **Confirmed** for south over east and east over north (D24) |
-| M8 | Stand on own bomb, then walk off; try to walk back onto it | Leaving is allowed; re-entering is blocked at the neighbouring cell's centre | HIGH | |
+| M8 | Stand on own bomb, then walk off; try to walk back onto it | Leaving is allowed; re-entering is blocked at the neighbouring cell's centre | HIGH | **Confirmed** for the blocked return (D41) |
 | M9 | Hockey rink level: tap a direction | Movement starts 250 ms after the key press | MEDIUM | |
 
 ## Bombs
 
 | Id | Scenario | Expected | Confidence | Observed |
 |---|---|---|---|---|
-| B1 | Capacity 1: drop a bomb, press again in another cell | Second press does nothing until the first bomb has exploded | HIGH | |
+| B1 | Capacity 1: drop a bomb, press again in another cell | Second press does nothing until the first bomb has exploded | HIGH | **Confirmed** (D40) |
 | B2 | Press bomb while standing on a bomb | Nothing (cell not passable) unless grab or spooge applies | HIGH | |
 | B3 | Drop a bomb while walking, at various offsets within a cell | Bomb appears at the centre of the cell containing the player's reference point | HIGH | |
 | B4 | Two bombs in adjacent cells, second dropped 1 s after the first | Both gone by the first bomb's detonation time plus one tick | HIGH | **Confirmed**: explosions 5 ms apart (D25) |
@@ -62,7 +62,7 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 | E3 | Bomb with a brick 1 cell away and another brick behind it | Only the first brick burns | HIGH | |
 | E4 | Bomb at the edge of the field | Blast stops at the edge | HIGH | **Confirmed** (D20) |
 | E5 | Revealed powerup 1 cell from a range-3 bomb | Powerup destroyed; no flame on its cell or beyond | HIGH | |
-| E6 | Player standing with the reference point 1 px inside a flamed cell | Dies | HIGH | |
+| E6 | Player standing with the reference point 1 px inside a flamed cell | Dies | HIGH | Consistent: player in the cell next to the bomb, inside its range, died (D41) |
 | E7 | Player sprite overlapping a flamed cell but reference point in the neighbouring cell | Survives | HIGH | Consistent: player in the cell next to the last flame survives (D20) |
 | E8 | Player walks into a cell 400 ms after its flame appeared | Dies (flame still active until 500 ms) | HIGH | |
 | E9 | Goldflame bomb in an open row | Flames across the whole row and column up to the first obstacle | HIGH | |

@@ -87,6 +87,11 @@ Lab schemes `testpun.sch`, `testgrab.sch`, `testspg.sch` (working copy only) giv
 
 | D37 | **Conveyor.** Level 10 (`levelno=10`), open scheme. The belt cells of `extra10.res` are drawn as soon as the cells are open. A player standing on the east-moving belt in row 2 without input is carried east: about 115 px in 1.62 s and 114 px in 1.63 s, i.e. 70 px/s, keeping its facing | Screenshots with file timestamps | Extras: idle player carried at the belt speed (value 191 = 350 → 70 px/s) |
 
+| D38 | **Team play.** `team_play=1`, two players (teams 0 and 1 from the scheme): player 1 is drawn white, player 2 red instead of black, and each score label is in the team colour | Screenshots from about 3 s into the round | Team colours: team 0 → colour 0, team 1 → colour 2. The opening "true colours" period (value 32) was not caught |
+| D39 | **Field edge.** At (0,0), holding Up and then Left for 0.4 s each leaves the player in the same place (only the facing changes) | Screenshot difference confined to the sprite | M3 for the edge case |
+| D40 | **Capacity.** With one bomb on the field and capacity 1, pressing Space again two cells away places nothing | Screenshot shows a single bomb | B1 |
+| D41 | **A bomb blocks the way back.** After walking two cells away from the bomb and holding Left for 0.6 s (enough for 110 px), the player stands at the centre of the cell next to the bomb. The player then dies in the blast | Screenshots | M8; flames kill in adjacent cells within range |
+
 ## Not yet possible
 
 Attaching a debugger, and reading game memory directly. Remaining scenarios of `docs/testing/original-behaviour.md` can now be scripted one by one.
