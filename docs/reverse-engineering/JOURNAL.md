@@ -392,3 +392,9 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 
 - With the focus-checked driver: team colours (D38), field edge (D39), capacity (D40), bomb blocks the way back (D41), trigger bombs including the supply limit (D42), jelly bounce (D43), goldflame (D44). All as predicted.
 - New lab schemes in the working copy: `testtrg`, `testjel`, `testgold`.
+
+### Session 13 addendum: powerups and arrows on the original
+
+- A scheme with powerup overrides (`testpow.sch`) makes every brick hide a skate, which makes pickup effects testable: reveal, pickup by cell and one-skate speed (about 212 px/s) observed (D47, D48).
+- Arrows: a kicked bomb followed three arrows on level 3 at 200 px/s (D49).
+- All four kinds of level extra have now been observed on the original (conveyor D37, warp D45, trampoline D46, arrow D49).

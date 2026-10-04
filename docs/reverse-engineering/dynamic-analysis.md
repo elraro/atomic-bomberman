@@ -101,6 +101,11 @@ Lab schemes `testpun.sch`, `testgrab.sch`, `testspg.sch` (working copy only) giv
 
 Unexplained in the D46 run: the idle second player appears at different cells in the three screenshots. It may have started on, or been carried onto, one of the randomly placed trampolines; not investigated.
 
+| D47 | **Scheme override and reveal.** `testpow.sch` (working copy): five bricks in row 0, powerup overrides set so that only skates are generated, five of them. Burning the first brick reveals a skate under it | Screenshots | Scheme override of the per-level counts; powerups hide under bricks; a blast stops at the brick |
+| D48 | **Pickup and skate speed.** Walking into the revealed skate's cell removes it. Afterwards, holding Right for 1.5 s moves the player 320 px: about 212 px/s (without a skate the same hold gives about 276 px) | Screenshots, sprite offset | Pickup by cell; M2: 214.6 px/s nominal with one skate, 210 at 1 ms ticks |
+
+| D49 | **Arrows.** Level 3, open scheme, player with a kicker. A bomb kicked east along row 0 from cell 1 is seen 0.77 s later in column 4 just below row 0, 1.14 s later in row 2 near column 5, and 1.45 s later in column 6 above row 2. That is the route east → south at the arrow on (4,0) → east at (4,2) → north at (6,2), and the distances (154, 228 and 290 px along the route) match 200 px/s. The bomb exploded at +2.003 s after the drop | Timestamped screenshots, `extra3.res` | Extras: arrows turn a sliding bomb at the cell centre; kick speed; fuse runs while sliding |
+
 ## Not yet possible
 
 Attaching a debugger, and reading game memory directly. Remaining scenarios of `docs/testing/original-behaviour.md` can now be scripted one by one.

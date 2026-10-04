@@ -21,7 +21,7 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 | Id | Scenario | Expected | Confidence | Observed |
 |---|---|---|---|---|
 | M1 | Empty arena, player at (0,0), hold east for 1 s after the start freeze | Moves about 185 px (4.6 cells) | HIGH | **Confirmed within 1.5 %**: 366 px in 2.0 s and 184 px in 1.0 s, about 183 px/s on a machine with 1-5 ms ticks (D17) |
-| M2 | Same with 1, 2, 3, 4 skates | 214, 244, 274, 304 px per second (speed 1073…1523) | HIGH | |
+| M2 | Same with 1, 2, 3, 4 skates | 214, 244, 274, 304 px per second (speed 1073…1523) | HIGH | **Confirmed for one skate**: about 212 px/s (D48) |
 | M3 | Hold east into a solid pillar from a cell centre | Stops exactly at the cell centre; cannot advance past it | HIGH | **Confirmed** at the field edge (D39) and against a bomb (D41); not yet against a pillar from a centred position |
 | M4 | Player in a horizontal corridor, a few pixels above the row's centre line, hold east | Moves diagonally down-right until aligned, then straight | HIGH | **Confirmed** qualitatively (D36) |
 | M5 | Player at a cell centre next to a pillar to the east, offset a few pixels north of the centre line, the cell to the north and the cell north-east both open; hold east | Slides north along the pillar, then continues east in the next lane | HIGH | **Confirmed** (D35) |
@@ -59,7 +59,7 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 |---|---|---|---|---|
 | E1 | Range 2 bomb in open field | Flames on the bomb's cell and 2 cells in each direction | HIGH | **Confirmed** (D20) |
 | E2 | Bomb adjacent to a solid tile | No flame on the solid tile, none beyond | HIGH | |
-| E3 | Bomb with a brick 1 cell away and another brick behind it | Only the first brick burns | HIGH | |
+| E3 | Bomb with a brick 1 cell away and another brick behind it | Only the first brick burns | HIGH | Consistent: the blast burnt the first brick of a row and left the rest (D47) |
 | E4 | Bomb at the edge of the field | Blast stops at the edge | HIGH | **Confirmed** (D20) |
 | E5 | Revealed powerup 1 cell from a range-3 bomb | Powerup destroyed; no flame on its cell or beyond | HIGH | |
 | E6 | Player standing with the reference point 1 px inside a flamed cell | Dies | HIGH | Consistent: player in the cell next to the bomb, inside its range, died (D41) |
