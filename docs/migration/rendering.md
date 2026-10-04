@@ -16,7 +16,7 @@ Sequence names used: `tile N solid|brick`, `power <name>`, `flame center|mid<dir
 
 Scene: open test scheme, two players at their start cells, level 0. The original's own screenshot and the modern render (`--native`, 640 × 480) agree in **99.46 %** of the playfield pixels; the player sprite coincides in position, pose and colour. The differing pixels are isolated background pixels (the two palette entries in which `field0.pcx` and `color.pal` differ).
 
-Finding from this comparison: the per-step x/y values stored in sequence `STAT` records are **not** added to the draw position (applying them moved the player 19 px down, off the original's position). Their purpose is unknown.
+Finding from this comparison: the per-step x/y values stored in sequence `STAT` records are **not** added to the draw position of players (applying them moved the player 19 px down, off the original's position). For **flames** the original does use them (`0x426D06` asks for the step's offsets and draws at reference + offset, half a cell higher); the modern renderer does the same, which is what makes the centre piece and the arms line up. This was reported from play-testing: before the fix the arms were drawn about 7 px below the centre.
 
 ## Known gaps
 

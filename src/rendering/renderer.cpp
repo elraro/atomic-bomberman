@@ -337,7 +337,14 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
                 } else {
                     std::string piece = "center";
                     if (f.dir != kNoDir) piece = std::string(f.tip ? "tip" : "mid") + kDirName[f.dir];
-                    sprite(bank, "flame " + piece + " green", age, f.owner >= 0 ? world.displayColour(f.owner) : -1, rx, ry);
+                    // Flame pieces are placed by their per-step offsets, half a cell above the cell's
+                    // reference point (original: 0x426D06). Without this the arms and the centre
+                    // do not line up.
+                    if (const auto s = bank.sprite("flame " + piece + " green", age,
+                                                   f.owner >= 0 ? world.displayColour(f.owner) : -1))
+                        textured(s->texture, rx - static_cast<float>(s->hotX) + static_cast<float>(s->dx),
+                                 ry - static_cast<float>(s->hotY) + static_cast<float>(s->dy) - static_cast<float>(kCellH / 2),
+                                 static_cast<float>(s->width), static_cast<float>(s->height));
                 }
             }
         }
