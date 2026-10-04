@@ -33,6 +33,7 @@ Levels as defined in AGENTS.md §53: 1 static (read from the original's code or 
 | Spooge line | D33 | spooge |
 | Hurry below 60 s; closing walls from 55 s, one cell per 250 ms, clockwise spiral, repeated corner cell | D27, D28 | clock and hurry, closing walls |
 | Time up is a draw | D29 | round result |
+| Both players dead is a draw; kill +1, suicide −1 | D51 | round result, death is cell based |
 | Team colours | D38 | team play |
 | Arrow turns a sliding bomb | D49 | arrow |
 | Conveyor carries an idle player at the belt speed | D37 | conveyor |
@@ -48,7 +49,7 @@ Levels as defined in AGENTS.md §53: 1 static (read from the original's code or 
 | Long-tick clamp at 150 ms | long tick clamp | needs a controlled stall |
 | Wall stop against a pillar from a centred position | wall stop | not scripted yet |
 | Sliding bomb stops at a flame and explodes | sliding bomb meets flame | not scripted yet |
-| Contender window (draw if the last two die within one second) | outsurvive window, round result | not scripted yet |
+| Contender window (draw if the last two die up to one second apart) | outsurvive window, round result | only the simultaneous case was observed (D51) |
 | Flying bomb wraps around the field | punch bounce and wrap | not scripted yet |
 | Stun and powerup loss after a head hit | punch bounce and wrap | not visible in screenshots |
 | Powerup caps and exclusive pairs | pickup and caps | inventory is not shown on screen |

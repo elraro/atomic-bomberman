@@ -110,6 +110,8 @@ Unexplained in the D46 run: the idle second player appears at different cells in
 
 Unexplained, from a first attempt at D50 in which one key press was lost and the bomb was never punched: the explosion sound loaded 1.864 s after the drop sound instead of 2.000 s. Every other measurement of an unpunched bomb gave 2.000 s. Not reproduced; cause unknown.
 
+| D51 | **Both players killed by one bomb.** Player 1's bomb on (4,0) kills player 1 on (4,0) and player 2 on (2,0) in the same instant (+2.000 s, death sounds for both). The round clock stops, the death animations play, and 3.7 s later the "DRAW GAME" screen appears. Player 1's kill count stays 0 (one kill, one suicide) | Timestamps, screenshots | Round result: nobody left is a draw; kill scoring +1 / −1 |
+
 ## Not yet possible
 
 Attaching a debugger, and reading game memory directly. Remaining scenarios of `docs/testing/original-behaviour.md` can now be scripted one by one.
