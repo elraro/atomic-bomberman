@@ -41,7 +41,7 @@ The AI does **not** check for an escape route before dropping a bomb; it relies 
 
 ## Not read
 
-- `0x40970B` (route to safety) and `0x409C1F` (nearest powerup) in detail. `0x4092A1` (path to a cell) was read: see below.
+- `0x409C1F` (nearest powerup) in detail. `0x4092A1` (path to a cell) and `0x40970B` (route to safety) were read: see below.
 - AI use of kick, spooge and jelly, if any (no behaviour for them is in the table).
 
 ## Path search (`0x4092A1`)
@@ -52,10 +52,17 @@ A flood of up to 100 "walkers" over a copy of the passability grid. One walker s
 
 Because every walker advances one cell per pass, this finds a shortest route, as a breadth-first search does. Among equally short routes the winner depends on walker order and on the coin flip.
 
+## Route to safety (`0x40970B`)
+
+Confidence: HIGH (decompiled in full).
+
+The same walker flood as the path search, with depth limit 20 (`mov ebx,0x14` at `0x40B38A`), over the passability grid (blank tile, no bomb; flames do not block). There is no target: every cell a walker reaches or looks into is compared with the best danger found so far, which starts at 10000. A cell with danger 0 ends the search at once. Otherwise, when the walkers run out or the depth limit is reached, the least dangerous cell seen is the result. The start cell is never a candidate, so the result can be more dangerous than staying put. Outputs: first step (direction + 1, 0 = none), the chosen cell, passes used, peak walker count.
+
 ## Modern implementation (`src/game/ai.*`)
 
 The same eight behaviours in the same order with the same probabilities, as an input source separate from the core. Differences, all in the unread parts:
 
+- Route to safety follows the original's rule (first danger-free cell within 20 steps, else the least dangerous cell seen).
 - Searches are plain breadth-first searches over unblocked cells. For the path search this gives routes of the same length as the original's walker flood; the choice among equally short routes can differ.
 - Bomb and flame danger levels follow the original; the closing walls are not marked.
 - The attack behaviour's first distance condition is omitted.

@@ -449,3 +449,12 @@ Evidence:
 Confidence: HIGH for the state table, MEDIUM for the visible result of state 4 (not observed running).
 
 Modern: pickup state with its pause and the warp spin implemented; cornerhead still missing.
+
+### Discovery: AI route to safety (`0x40970B`)
+
+Evidence: full decompile; call site `0x40B38A` passes depth 20.
+- Walker flood over blank, bomb-free cells; first cell with danger 0 wins; otherwise the least dangerous cell seen within 20 passes. The start cell is not a candidate. Flames do not block the search.
+
+Confidence: HIGH
+
+Modern: `AiPlayer::stepToSafety` now follows this rule (it used a guessed "half the current danger" rule before). Six AI-only demo rounds ran to a result afterwards. Details in `ai.md`.

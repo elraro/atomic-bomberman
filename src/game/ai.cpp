@@ -73,28 +73,39 @@ Dir AiPlayer::pathStep(const World& w, Cell from, Cell to, int maxDepth) const {
     return kNoDir;
 }
 
+// The original's search (0x40970B): flood outward up to 20 steps over cells that are
+// blank and bomb-free. The first cell with no danger ends the search; if there is none,
+// the least dangerous cell seen is the target. The own cell is not a candidate, so a
+// player in danger always moves if it can.
 Dir AiPlayer::stepToSafety(const World& w, Cell from, Cell* target) const {
+    constexpr int kDepth = 20;
     std::array<int, kGridW * kGridH> first;
     first.fill(-2);
+    std::array<int, kGridW * kGridH> depth{};
     std::array<Cell, kGridW * kGridH> queue;
     std::size_t head = 0, tail = 0;
     first[idx(from)] = kNoDir;
     queue[tail++] = from;
-    const int here = danger(from);
+    int best = 10000;
+    Dir bestStep = kNoDir;
     while (head < tail) {
         const Cell c = queue[head++];
+        if (depth[idx(c)] >= kDepth) continue;
         for (Dir d = 0; d < 4; ++d) {
             const Cell n = step(c, d);
-            if (!inGrid(n) || first[idx(n)] != -2 || blocked(w, n) || w.flame(n).active) continue;
+            if (!inGrid(n) || first[idx(n)] != -2 || blocked(w, n)) continue;
             first[idx(n)] = (c == from) ? d : first[idx(c)];
-            if (danger(n) == 0 || danger(n) < here / 2) {
+            depth[idx(n)] = depth[idx(c)] + 1;
+            if (danger(n) < best) {
+                best = danger(n);
+                bestStep = static_cast<Dir>(first[idx(n)]);
                 if (target != nullptr) *target = n;
-                return first[idx(n)];
+                if (best == 0) return bestStep;
             }
             queue[tail++] = n;
         }
     }
-    return kNoDir;
+    return bestStep;
 }
 
 bool AiPlayer::nearestPowerup(const World& w, Cell from, int maxDepth, Cell* found) const {
