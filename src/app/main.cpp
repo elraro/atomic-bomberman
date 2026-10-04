@@ -177,7 +177,7 @@ int main(int argc, char** argv) {
         ab::Renderer renderer;
         ab::SpriteBank sprites;
         ab::Audio audio;
-        if (!opt.gameDir.empty() && !opt.mute) audio.init(opt.gameDir);
+        if (!opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir)) audio.playMusic(1100 + opt.level);
         if (!opt.gameDir.empty() && !opt.shapes) sprites.load(opt.gameDir, opt.level);
         ab::World world(values, opt.seed);
         std::vector<ab::AiPlayer> ai;

@@ -20,7 +20,9 @@ public:
     bool init(const std::string& gameDir);
     // Plays one sound chosen at random among the ids defined in [firstId, lastId].
     void playRange(int firstId, int lastId);
-    // Releases finished voices. Call once per frame.
+    // Starts a looping tune by sound id (stops the previous one). Level music is id 1100 + level.
+    void playMusic(int id);
+    // Releases finished voices and keeps the music looping. Call once per frame.
     void update();
 
 private:
@@ -32,6 +34,8 @@ private:
     std::map<int, std::string> names_;  // sound id -> file name without extension
     std::unordered_map<std::string, std::vector<std::uint8_t>> cache_;
     std::vector<SDL_AudioStream*> voices_;
+    SDL_AudioStream* music_ = nullptr;
+    const std::vector<std::uint8_t>* musicData_ = nullptr;
     std::uint32_t rng_ = 12345;
 };
 

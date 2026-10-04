@@ -18,6 +18,7 @@ constexpr SDL_AudioSpec kRssSpec = {SDL_AUDIO_S16LE, 2, 22050};
 }  // namespace
 
 Audio::~Audio() {
+    if (music_ != nullptr) SDL_DestroyAudioStream(music_);
     for (SDL_AudioStream* v : voices_) SDL_DestroyAudioStream(v);
     if (device_ != 0) SDL_CloseAudioDevice(device_);
 }
@@ -96,7 +97,30 @@ void Audio::playRange(int firstId, int lastId) {
     voices_.push_back(stream);
 }
 
+void Audio::playMusic(int id) {
+    if (!ready_) return;
+    const auto it = names_.find(id);
+    if (it == names_.end()) return;
+    const std::vector<std::uint8_t>* data = load(it->second);
+    if (data == nullptr || data->empty() || data == musicData_) return;
+    if (music_ != nullptr) SDL_DestroyAudioStream(music_);
+    music_ = SDL_CreateAudioStream(&kRssSpec, &kRssSpec);
+    if (music_ == nullptr || !SDL_BindAudioStream(device_, music_)) {
+        if (music_ != nullptr) SDL_DestroyAudioStream(music_);
+        music_ = nullptr;
+        musicData_ = nullptr;
+        return;
+    }
+    SDL_SetAudioStreamGain(music_, 0.5f);  // keep effects audible over the tune
+    musicData_ = data;
+    SDL_PutAudioStreamData(music_, data->data(), static_cast<int>(data->size()));
+    std::fprintf(stderr, "INFO  Music started name=%s\n", it->second.c_str());
+}
+
 void Audio::update() {
+    // Loop: queue the tune again shortly before it runs out.
+    if (music_ != nullptr && musicData_ != nullptr && SDL_GetAudioStreamQueued(music_) < 22050 * 4)
+        SDL_PutAudioStreamData(music_, musicData_->data(), static_cast<int>(musicData_->size()));
     voices_.erase(std::remove_if(voices_.begin(), voices_.end(),
                                  [](SDL_AudioStream* s) {
                                      if (SDL_GetAudioStreamQueued(s) > 0) return false;
