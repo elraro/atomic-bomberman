@@ -23,8 +23,8 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 | M1 | Empty arena, player at (0,0), hold east for 1 s after the start freeze | Moves about 185 px (4.6 cells) | HIGH | **Confirmed within 1.5 %**: 366 px in 2.0 s and 184 px in 1.0 s, about 183 px/s on a machine with 1-5 ms ticks (D17) |
 | M2 | Same with 1, 2, 3, 4 skates | 214, 244, 274, 304 px per second (speed 1073…1523) | HIGH | |
 | M3 | Hold east into a solid pillar from a cell centre | Stops exactly at the cell centre; cannot advance past it | HIGH | |
-| M4 | Player in a horizontal corridor, a few pixels above the row's centre line, hold east | Moves diagonally down-right until aligned, then straight | HIGH | |
-| M5 | Player at a cell centre next to a pillar to the east, offset a few pixels north of the centre line, the cell to the north and the cell north-east both open; hold east | Slides north along the pillar, then continues east in the next lane | HIGH | |
+| M4 | Player in a horizontal corridor, a few pixels above the row's centre line, hold east | Moves diagonally down-right until aligned, then straight | HIGH | **Confirmed** qualitatively (D36) |
+| M5 | Player at a cell centre next to a pillar to the east, offset a few pixels north of the centre line, the cell to the north and the cell north-east both open; hold east | Slides north along the pillar, then continues east in the next lane | HIGH | **Confirmed** (D35) |
 | M6 | Hold east and south together where only south is open | Moves south | HIGH | |
 | M7 | Hold two directions that are both open, in each of the 6 pairs | West beats south beats east beats north | HIGH | **Confirmed** for south over east and east over north (D24) |
 | M8 | Stand on own bomb, then walk off; try to walk back onto it | Leaving is allowed; re-entering is blocked at the neighbouring cell's centre | HIGH | |

@@ -82,6 +82,9 @@ Lab schemes `testpun.sch`, `testgrab.sch`, `testspg.sch` (working copy only) giv
 | D33 | **Spooge.** Space on the player's own bomb with capacity 5: four more bombs appear in a line in the facing direction, one per cell | Screenshot | B18 (placement and capacity limit; the 50 ms stagger could not be read from sound loads) |
 | D34 | Sound loads are cached: a sound file is opened only the first time it plays, so file-open timestamps mark the *first* occurrence of each sound only | `bmdrop3.rss` opened once for many bounces | Method note |
 
+| D35 | **Corner slide.** Pillars-only scheme (`testpil.sch`, working copy). From (0,0), Down for 0.15 s leaves the player about 27 px below the row-0 line, beside the pillar at (1,1). Holding Right then moves the player back up into row 0 and on to the east (ends near x = 135 in row 0) instead of being stuck against the pillar | Screenshots | M5 |
+| D36 | **Lane alignment.** From there (x about 15 px past the centre of column 2), holding Down moves the player down between the pillars and pulls it onto the centre of column 2 | Screenshots | M4 |
+
 ## Not yet possible
 
 Attaching a debugger, and reading game memory directly. Remaining scenarios of `docs/testing/original-behaviour.md` can now be scripted one by one.
