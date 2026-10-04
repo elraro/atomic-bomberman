@@ -359,3 +359,8 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - Level music loops (sound id 1100 + level); menu music id 1010. Exercised with SDL's dummy audio driver, not listened to.
 - The main menu's item texts are part of `mainmenu.pcx`; the game only draws the cursor (`cursor1` in `misc.ani`) at the coordinates of value 700. Found by rendering the three `.fon` fonts next to the original menu: none matches the menu lettering.
 - Application: screen state machine (main menu → player list → match), original pictures and cursor, player list with the original's layout, cycling order and defaults. Result line overlay after each round.
+
+### Session 12: level screen and result pictures (application)
+
+- Added a level/scheme/wins screen after the player list (level names from messages 150-160, schemes listed from `data/schemes`), and the original's `draw`, `results` and `victoryN` pictures after a round.
+- Checked: the level screen renders. NOT checked: the result pictures (no automated run reached a round end), and changing level from the screen (sprite bank reload).
