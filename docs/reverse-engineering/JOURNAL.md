@@ -301,3 +301,8 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - Palette model confirmed (UNKNOWN-012) and colour remap understood (UNKNOWN-021): only palette indices 100-174 are remapped.
 - Pixel comparison with the original's screenshot: 99.46 % identical playfield, sprite position exact. Sequence step offsets are not draw offsets.
 - Tests: 31 tests, 664 checks, all passing (new: ANI parser on a synthetic file).
+
+### Session 7 addendum: more rules observed on the original
+
+- Direction priority, chain reaction, kick speed and stop, born-with from schemes, hurry timing and the closing-wall spiral and cadence were all observed with scripted runs (D23-D28 in `dynamic-analysis.md`). Every prediction tested so far has held.
+- Sound names learned: `bmdrop*` drop, `explo*`/`bomb_*` explosion, `kicker*` kick, `bmbstop*` sliding bomb stops, `sqrdrop*` wall block, `zai01c` hurry voice.

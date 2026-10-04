@@ -26,7 +26,7 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 | M4 | Player in a horizontal corridor, a few pixels above the row's centre line, hold east | Moves diagonally down-right until aligned, then straight | HIGH | |
 | M5 | Player at a cell centre next to a pillar to the east, offset a few pixels north of the centre line, the cell to the north and the cell north-east both open; hold east | Slides north along the pillar, then continues east in the next lane | HIGH | |
 | M6 | Hold east and south together where only south is open | Moves south | HIGH | |
-| M7 | Hold two directions that are both open, in each of the 6 pairs | West beats south beats east beats north | HIGH | |
+| M7 | Hold two directions that are both open, in each of the 6 pairs | West beats south beats east beats north | HIGH | **Confirmed** for south over east and east over north (D24) |
 | M8 | Stand on own bomb, then walk off; try to walk back onto it | Leaving is allowed; re-entering is blocked at the neighbouring cell's centre | HIGH | |
 | M9 | Hockey rink level: tap a direction | Movement starts 250 ms after the key press | MEDIUM | |
 
@@ -37,12 +37,12 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 | B1 | Capacity 1: drop a bomb, press again in another cell | Second press does nothing until the first bomb has exploded | HIGH | |
 | B2 | Press bomb while standing on a bomb | Nothing (cell not passable) unless grab or spooge applies | HIGH | |
 | B3 | Drop a bomb while walking, at various offsets within a cell | Bomb appears at the centre of the cell containing the player's reference point | HIGH | |
-| B4 | Two bombs in adjacent cells, second dropped 1 s after the first | Both gone by the first bomb's detonation time plus one tick | HIGH | |
-| B5 | Line of N bombs in adjacent cells, detonate the first | They explode one per tick in order along the line | HIGH | |
+| B4 | Two bombs in adjacent cells, second dropped 1 s after the first | Both gone by the first bomb's detonation time plus one tick | HIGH | **Confirmed**: explosions 5 ms apart (D25) |
+| B5 | Line of N bombs in adjacent cells, detonate the first | They explode one per tick in order along the line | HIGH | Consistent: one link took 5 ms, about one tick on the test machine (D25) |
 | B6 | Bomb A (player 1) chain-detonates bomb B (player 2); B's flame kills player 3 | Kill credited to player 1 | HIGH | |
 | B7 | Bomb between two others, chain arrives from the west | The middle bomb sends no flame westward | HIGH | |
 | B8 | Kill all but one player while bombs are ticking | Remaining bombs stop counting down | HIGH | |
-| B9 | Kick a bomb down an open corridor | Slides at 10 px per frame (200 px/s) until the next cell is blocked, then rests at a cell centre | HIGH | |
+| B9 | Kick a bomb down an open corridor | Slides at 10 px per frame (200 px/s) until the next cell is blocked, then rests at a cell centre | HIGH | **Confirmed**: 202 px/s, rests at the edge cell centre (D26) |
 | B10 | Kick a bomb toward a cell that currently has a flame | Bomb stops and explodes on the next tick | HIGH | |
 | B11 | Kick a jelly bomb at a wall | Reverses and keeps sliding | HIGH | |
 | B12 | Kicked bomb, press button 2 | Stops at the next cell centre (not jelly) | HIGH | |
@@ -85,8 +85,8 @@ Conventions: cells are (column, row) from the top-left, 0-based; the grid is 15 
 
 | Id | Scenario | Expected | Confidence | Observed |
 |---|---|---|---|---|
-| R1 | Let the clock run down with default settings | "Hurry" at 60 s left; walls start closing at 55 s left from the top-left corner, clockwise, 4 cells per second | HIGH | |
-| R2 | Enclosement depth 1 | Two rings close, then the walls stop | MEDIUM-HIGH | |
+| R1 | Let the clock run down with default settings | "Hurry" at 60 s left; walls start closing at 55 s left from the top-left corner, clockwise, 4 cells per second | HIGH | **Confirmed**: hurry below 60 s, first block 0.25 s after 55 s, one block per 0.2500 s, clockwise from the top-left (D27, D28) |
+| R2 | Enclosement depth 1 | Two rings close, then the walls stop | MEDIUM-HIGH | Consistent: second ring in progress when the run ended (D28) |
 | R3 | Stand in a cell as the wall reaches it | Dies | HIGH | |
 | R4 | Bomb in a cell as the wall reaches it, default options | Bomb detonates | HIGH | |
 | R5 | Start cells in a scheme full of bricks | The start cell and its non-solid orthogonal neighbours are clear when the round begins | HIGH | |

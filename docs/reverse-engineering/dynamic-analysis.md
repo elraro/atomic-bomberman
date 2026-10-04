@@ -55,6 +55,19 @@ Key sequence used to reach a match with two keyboard players and no AI: Enter ×
 | D21 | A dropped bomb is drawn in its owner's colour (white for player 1) | Screenshots | Colour remap applies to bombs |
 | D22 | The round clock shows 2:25 five seconds into the match and counts down in seconds | Screenshots | Value 100 = 150 s |
 
+## Lab scheme experiments (session 7)
+
+`testlab.sch` (working copy only): the open field with born-with 3 bombs and 1 kicker. For the closing-walls run `playtime=70` was set temporarily.
+
+| # | Observation | Evidence | Confirms |
+|---|---|---|---|
+| D23 | Scheme "born with" values take effect: the player could place a second bomb and kick | Second `bmdrop` sound accepted; kick sound | Scheme → values 50+type |
+| D24 | **Direction priority.** From the corner (0,0), Right+Down held: the player moves down only. Then Right+Up held in open field: the player moves right only | Screenshots | M7: south beats east, east beats north |
+| D25 | **Chain reaction.** Bombs dropped 0.418 s apart in adjacent cells: explosion sounds at +2.000 s and +2.005 s | Sound-load timestamps | B4/B5: the second bomb is detonated by the first, about one tick later (ticks are 1-5 ms on this machine), not at its own fuse time |
+| D26 | **Kick.** Walking into the bomb with a kicker: kick sound at +0.763 s, bomb-stop sound at +1.159 s; the bomb travelled from cell 2 to cell 0 (80 px) in 0.396 s = 202 px/s and came to rest at the centre of the edge cell. Its explosion still came at +2.000 s after the drop | Timestamps, screenshots | B9: speed 1000 = 200 px/s, stops at the last free cell centre, fuse runs while sliding |
+| D27 | **Hurry and closing walls.** With a 70 s clock: hurry voice at +10.01 s (clock passes below 60 s); first wall block at +14.26 s, i.e. 0.25 s after the clock reaches 55 s; 71 blocks in the next 17.5 s with a mean spacing of 0.2500 s (min 0.201, max 0.299) | Timestamps of `zai01c.rss` and `sqrdrop*.rss` | R1; the 250 ms cadence |
+| D28 | **Spiral shape.** After 16 blocks the whole top row is solid and the right column has begun; after 36 the top row, right column and most of the bottom row; after 69 the outer ring is complete and the second ring's top row and right column are filling. Players standing inside are unharmed | Screenshots | R1, R2 (clockwise from the top-left corner, ring by ring) |
+
 ## Not yet possible
 
 Attaching a debugger, and reading game memory directly. Remaining scenarios of `docs/testing/original-behaviour.md` can now be scripted one by one.
