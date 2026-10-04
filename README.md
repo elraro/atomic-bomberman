@@ -26,9 +26,10 @@ Requires CMake 3.20+ and a C++20 compiler. The front end additionally needs SDL3
 ## Run
 
 ```sh
-./build/atomic --game-dir game     # main menu, original graphics and sound from your copy
-./build/atomic                     # no game files: placeholder shapes, straight into a match
+./build/atomic
 ```
+
+The program needs your copy of the original game for the menu, graphics and sound. It looks for it in this order: `--game-dir PATH`, the `ATOMIC_GAME_DIR` environment variable, a `game` folder in the current directory, next to the executable, or one level above the executable. The folder is the one containing `color.pal` and `data/`. The terminal prints `INFO  Game files: …` when it is found; if it is not, the window title says so and the program falls back to placeholder shapes with no menu.
 
 With game files the program opens on the main menu. Choose **Start Game**, set up the player list (Up/Down select a slot, Right cycles AI → KEY 0 → KEY 1 → OFF, Left switches a slot off), press Enter to play. By default player 1 uses the first key set and player 2 is a computer player, as in the original. The other menu items are not implemented.
 

@@ -117,6 +117,27 @@ void writePpm(const std::string& path, int w, int h) {
 
 }  // namespace
 
+bool looksLikeGameDir(const std::string& dir) {
+    return std::ifstream(dir + "/color.pal").good() && std::ifstream(dir + "/data/res/valuelst.res").good();
+}
+
+// The folder holding the user's copy of the original game: --game-dir, then the
+// ATOMIC_GAME_DIR environment variable, then "game" in the current folder, next
+// to the executable, or one level above it (the usual build/ layout).
+std::string findGameDir(const std::string& requested) {
+    std::vector<std::string> candidates;
+    if (!requested.empty()) candidates.push_back(requested);
+    if (const char* env = std::getenv("ATOMIC_GAME_DIR")) candidates.emplace_back(env);
+    candidates.emplace_back("game");
+    if (const char* base = SDL_GetBasePath()) {
+        candidates.push_back(std::string(base) + "game");
+        candidates.push_back(std::string(base) + "../game");
+    }
+    for (const std::string& c : candidates)
+        if (looksLikeGameDir(c)) return c;
+    return "";
+}
+
 // How each player slot is controlled, as on the original's player list.
 enum class Control { Off, Key0, Key1, Ai };
 
@@ -132,7 +153,19 @@ const char* controlName(Control c) {
 enum class Screen { MainMenu, PlayerList, Match };
 
 int main(int argc, char** argv) {
-    const Options opt = parseArgs(argc, argv);
+    Options opt = parseArgs(argc, argv);
+    const std::string requested = opt.gameDir;
+    opt.gameDir = findGameDir(requested);
+    if (opt.gameDir.empty()) {
+        std::fprintf(stderr,
+                     "WARN  No original game files found%s%s.\n"
+                     "WARN  Running without menu, original graphics and sound (placeholder shapes only).\n"
+                     "WARN  Point the program at your copy: --game-dir PATH or ATOMIC_GAME_DIR=PATH\n"
+                     "WARN  (the folder that contains color.pal and data/).\n",
+                     requested.empty() ? "" : " under ", requested.c_str());
+    } else {
+        std::fprintf(stderr, "INFO  Game files: %s\n", opt.gameDir.c_str());
+    }
 
     ab::Values values = ab::Values::defaults();
     ab::Scheme scheme = ab::Scheme::pillars();
@@ -168,7 +201,9 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_Window* window = SDL_CreateWindow("Atomic Bomberman (modern)", opt.native ? 640 : 960, opt.native ? 480 : 720,
+    SDL_Window* window = SDL_CreateWindow(opt.gameDir.empty() ? "Atomic Bomberman (modern) - no game files found: run with --game-dir PATH"
+                                                               : "Atomic Bomberman (modern)",
+                                          opt.native ? 640 : 960, opt.native ? 480 : 720,
                                           SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     if (window == nullptr) {
         std::fprintf(stderr, "ERROR SDL_CreateWindow: %s\n", SDL_GetError());
