@@ -40,7 +40,9 @@ Enabled by the enclosement depth option (0-3, default V(27) [1]). [D]
 
 - Active only while more than one contender is alive. [S]
 - Begins when the time left is at most V(101) − 5 = 55 seconds. Never begins when the round has no time limit. [S]
-- A cursor starts at cell (0, 0) moving east and follows a clockwise inward spiral. Every 250 ms the cursor's cell is closed and the cursor advances; at most 4 cells are processed per tick. [S]
+- The phase is armed when the displayed clock reaches 55 seconds; the first cell closes 250 ms later. [S, observed]
+- A cursor starts at cell (0, 0) moving east and follows a clockwise inward spiral. Every 250 ms the cursor's cell is closed and the cursor advances; at most 4 cells are processed per tick. [S, observed]
+- At each turn of the spiral the corner cell is processed a second time (it uses one 250 ms slot and closes nothing new), so the top row takes 16 slots, not 15. [S, observed]
 - The interval is measured in real time, not in clamped game time. [S]
 - Closing a cell: [S]
   - it becomes solid;

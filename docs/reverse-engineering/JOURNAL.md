@@ -306,3 +306,10 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 
 - Direction priority, chain reaction, kick speed and stop, born-with from schemes, hurry timing and the closing-wall spiral and cadence were all observed with scripted runs (D23-D28 in `dynamic-analysis.md`). Every prediction tested so far has held.
 - Sound names learned: `bmdrop*` drop, `explo*`/`bomb_*` explosion, `kicker*` kick, `bmbstop*` sliding bomb stops, `sqrdrop*` wall block, `zai01c` hurry voice.
+
+### Session 7 addendum 2: clock, closing walls and round result in the modern core
+
+- `World`: round clock (`secondsLeft`), `hurry`, closing walls with the original's cursor logic (including the repeated corner cell, which the 16-blocks-at-18.03 s and 36-blocks-at-23.21 s screenshots of the original confirm), round result (`roundOver`, `winner`).
+- Front end: seven-segment clock and player pips as a stand-in HUD; a decided round restarts after three seconds.
+- Tests: 34 tests, 700 checks, all passing.
+- Open: behaviour of the original when the clock reaches 0:00 (UNKNOWN-022).

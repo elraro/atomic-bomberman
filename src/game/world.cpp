@@ -52,6 +52,10 @@ void World::startRound(const Scheme& scheme, bool generatePowerups) {
     roundMs_ = 0;
     startFreezeMs_ = values_.get(kStartFreezeValue) * frameMs_;
     contenders_ = 0;
+    roundLimitMs_ = values_.get(vid::kRoundSeconds) * 1000;
+    enclosementDepth_ = values_.get(vid::kEnclosementDepth);
+    walls_ = {};
+    wallsClosed_ = 0;
     players_ = {};
     startCells_ = scheme.start;
     std::fill(bombs_.begin(), bombs_.end(), Bomb{});
@@ -162,6 +166,7 @@ void World::tick(int dtMs, const std::array<PlayerInput, kMaxPlayers>& input) {
     roundMs_ += dt;
     updateBombs(dt);
     updateFlames(dt);
+    updateEnclosement(dt);
     updatePlayers(dt, input);
 }
 
@@ -428,10 +433,16 @@ void World::updatePlayers(int dt, const std::array<PlayerInput, kMaxPlayers>& in
 }
 
 bool World::checkFlameDeath(int i) {
-    Player& p = players_[static_cast<std::size_t>(i)];
+    const Player& p = players_[static_cast<std::size_t>(i)];
     const Cell c = pixelToCell(p.x, p.y);
     if (!inGrid(c) || !flames_[index(c)].active) return false;
-    const int killer = flames_[index(c)].owner;
+    killPlayer(i, flames_[index(c)].owner);
+    return true;
+}
+
+void World::killPlayer(int i, int killer) {
+    Player& p = players_[static_cast<std::size_t>(i)];
+    if (!p.alive) return;
     p.alive = false;
     p.dying = true;
     p.killedBy = killer;
@@ -441,7 +452,85 @@ bool World::checkFlameDeath(int i) {
         else
             ++players_[static_cast<std::size_t>(killer)].kills;
     }
-    return true;
+}
+
+// ------------------------------------------------------- Clock and walls
+
+int World::secondsLeft() const {
+    if (roundLimitMs_ < 0) return -1;
+    return std::max(0, (roundLimitMs_ - roundMs_) / 1000);
+}
+
+bool World::hurry() const {
+    const int left = secondsLeft();
+    const int at = values_.get(vid::kHurrySeconds);
+    return left >= 0 && left < at && left > at - 5;
+}
+
+int World::winner() const {
+    for (int i = 0; i < kMaxPlayers; ++i)
+        if (players_[static_cast<std::size_t>(i)].present && players_[static_cast<std::size_t>(i)].alive) return i;
+    return -1;
+}
+
+void World::closeCell(Cell c) {
+    setTile(c, Tile::Solid);
+    ++wallsClosed_;
+    for (int i = 0; i < kMaxPlayers; ++i) {
+        const Player& p = players_[static_cast<std::size_t>(i)];
+        if (p.present && p.alive && pixelToCell(p.x, p.y) == c) killPlayer(i, -1);
+    }
+    powerups_[index(c)] = {};
+    if (Bomb* b = findBomb(c)) {
+        if (values_.get(vid::kWallsDetonateBombs) != 0)
+            queueDetonation(*b, -1);
+        else
+            b->active = false;
+    }
+    flames_[index(c)] = {};
+}
+
+void World::updateEnclosement(int dt) {
+    if (contenders_ <= 1) return;
+    const int left = secondsLeft();
+    if (left < 0 || left > values_.get(vid::kHurrySeconds) - 5) {
+        walls_ = {};
+        return;
+    }
+    if (!walls_.armed) {
+        walls_.armed = true;
+        walls_.timerMs = -dt;  // the 250 ms count starts on the arming tick
+        walls_.cursor = {0, 0};
+        walls_.dir = 1;
+        walls_.ring = 0;
+    }
+    const int rings = enclosementDepth_ * 2;
+    if (walls_.ring >= rings) return;
+
+    walls_.timerMs += dt;
+    // One cell per 250 ms, at most four per tick.
+    for (int n = 0; n < 4 && walls_.timerMs > 250; ++n) {
+        walls_.timerMs -= 250;
+        closeCell(walls_.cursor);
+
+        Cell next = step(walls_.cursor, walls_.dir);
+        const int r = walls_.ring;
+        if (next.x >= kGridW - r || next.y >= kGridH - r || next.x < r || next.y < r) {
+            // Turn. The corner cell is visited again on the next slot, as in the original.
+            walls_.dir = turnRight(walls_.dir);
+            next = walls_.cursor;
+            if (walls_.dir == 1) {
+                if (rings <= walls_.ring) break;
+                ++walls_.ring;
+                next = {walls_.cursor.x + 1, walls_.cursor.y + 1};
+                if (walls_.ring >= rings) {
+                    walls_.cursor = next;
+                    break;
+                }
+            }
+        }
+        walls_.cursor = next;
+    }
 }
 
 void World::checkPickup(int i) {

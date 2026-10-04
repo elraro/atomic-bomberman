@@ -158,6 +158,7 @@ int main(int argc, char** argv) {
         bool paused = false;
         int frame = 0;
         int step = 0;
+        int roundOverSteps = 0;
         Uint64 last = SDL_GetTicksNS();
         double accumulatorMs = 0.0;
 
@@ -168,7 +169,10 @@ int main(int argc, char** argv) {
                 if (e.type == SDL_EVENT_QUIT) running = false;
                 if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
                     if (e.key.key == SDLK_ESCAPE) running = false;
-                    if (e.key.key == SDLK_R) startRound(world, scheme, opt.players);
+                    if (e.key.key == SDLK_R) {
+                        startRound(world, scheme, opt.players);
+                        roundOverSteps = 0;
+                    }
                     if (e.key.key == SDLK_P) paused = !paused;
                     if (e.key.key == SDLK_N) singleStep = true;  // advance one step while paused
                 }
@@ -190,6 +194,19 @@ int main(int argc, char** argv) {
                 world.tick(kStepMs, input);
                 accumulatorMs -= kStepMs;
                 ++step;
+                // A decided round stays on screen for three seconds, then a new one starts.
+                if (world.roundOver() && roundOverSteps == 0) {
+                    const int win = world.winner();
+                    if (win >= 0)
+                        std::fprintf(stderr, "INFO  Round over winner=%d kills=%d\n", win, world.player(win).kills);
+                    else
+                        std::fprintf(stderr, "INFO  Round over draw\n");
+                }
+                if (world.roundOver() && ++roundOverSteps > 60) {
+                    startRound(world, scheme, opt.players);
+                    previous.capture(world);
+                    roundOverSteps = 0;
+                }
             }
 
             int w = 0;

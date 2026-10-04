@@ -13,7 +13,12 @@ Values Values::defaults() {
     v.set(20, 10);
     v.set(30, 20);
     v.set(31, 150);
+    v.set(25, 20);
+    v.set(27, 1);
     v.set(41, 40);
+    v.set(46, 1);
+    v.set(100, 150);
+    v.set(101, 60);
     v.set(42, 923);
     const int start[15] = {1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     for (int i = 0; i < 15; ++i) v.set(50 + i, start[i]);

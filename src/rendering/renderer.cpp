@@ -167,7 +167,48 @@ void Renderer::draw(const World& world, const RenderSnapshot& prev, float alpha,
         drawSprites(world, prev, alpha, *sprites);
     else
         drawShapes(world, prev, alpha);
+    drawHud(world);
     flush();
+}
+
+// Seven-segment digit, 14 x 24 px. Stand-in until the original font files are decoded.
+void Renderer::digit(int value, float x, float y, float r, float g, float b) {
+    static const unsigned char kSegments[10] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};
+    const unsigned char s = kSegments[value % 10];
+    const float t = 3.0f;
+    if (s & 0x01) quad(x, y, 14, t, r, g, b);
+    if (s & 0x02) quad(x + 14 - t, y, t, 12, r, g, b);
+    if (s & 0x04) quad(x + 14 - t, y + 12, t, 12, r, g, b);
+    if (s & 0x08) quad(x, y + 24 - t, 14, t, r, g, b);
+    if (s & 0x10) quad(x, y + 12, t, 12, r, g, b);
+    if (s & 0x20) quad(x, y, t, 12, r, g, b);
+    if (s & 0x40) quad(x, y + 12 - t / 2, 14, t, r, g, b);
+}
+
+void Renderer::drawHud(const World& world) {
+    // Round clock at the original's position (values 110/111: x 525, y 36 is the baseline).
+    const int left = world.secondsLeft();
+    if (left >= 0) {
+        const bool red = left < 31;
+        const float r = red ? 0.95f : 0.85f, g = red ? 0.25f : 0.75f, b = red ? 0.20f : 0.35f;
+        const float x = 520.0f, y = 10.0f;
+        digit(left / 60, x, y, r, g, b);
+        quad(x + 20, y + 6, 3, 3, r, g, b);
+        quad(x + 20, y + 16, 3, 3, r, g, b);
+        digit((left % 60) / 10, x + 29, y, r, g, b);
+        digit(left % 10, x + 49, y, r, g, b);
+    }
+    if (world.hurry() && (world.tickCount() / 4) % 2 == 0) quad(250, 14, 140, 16, 0.95f, 0.85f, 0.20f);
+    // Kill scores: one coloured pip per player with kills shown as small bars.
+    for (int i = 0; i < kMaxPlayers; ++i) {
+        const Player& p = world.player(i);
+        if (!p.present) continue;
+        const float* c = kPlayerColor[i];
+        const float px = 12.0f + static_cast<float>(i % 5) * 100.0f;
+        const float py = 8.0f + static_cast<float>(i / 5) * 20.0f;
+        quad(px, py, 10, 10, c[0], c[1], c[2], p.alive ? 1.0f : 0.35f);
+        for (int k = 0; k < p.kills && k < 12; ++k) quad(px + 14 + static_cast<float>(k) * 5, py + 2, 3, 6, 0.9f, 0.9f, 0.9f);
+    }
 }
 
 namespace {

@@ -171,6 +171,16 @@ public:
     // Skips the start-of-round input freeze (for tests and tools).
     void endStartFreeze() { startFreezeMs_ = 0; }
 
+    // --- round clock and result ---
+    // Seconds left on the round clock (whole seconds, as displayed); -1 when unlimited.
+    int secondsLeft() const;
+    void setRoundSeconds(int seconds) { roundLimitMs_ = seconds < 0 ? -1 : seconds * 1000; }
+    void setEnclosementDepth(int depth) { enclosementDepth_ = depth; }
+    bool hurry() const;                  // the "hurry" warning is showing
+    bool roundOver() const { return tickCount_ > 0 && contenders_ <= 1; }
+    int winner() const;                  // index of the surviving player, or -1 for a draw
+    int closedCells() const { return wallsClosed_; }
+
 private:
     static std::size_t index(Cell c) { return static_cast<std::size_t>(c.y * kGridW + c.x); }
 
@@ -188,6 +198,9 @@ private:
     void revealPowerup(Cell c);
     void scatterPowerup(int type);
     void updateFlames(int dt);
+    void updateEnclosement(int dt);
+    void closeCell(Cell c);
+    void killPlayer(int i, int killer);
 
     void updatePlayers(int dt, const std::array<PlayerInput, kMaxPlayers>& input);
     void updatePlayer(int i, int dt, const PlayerInput& in);
@@ -209,6 +222,18 @@ private:
     int roundMs_ = 0;
     int startFreezeMs_ = 0;
     int contenders_ = 0;
+    int roundLimitMs_ = -1;
+    int enclosementDepth_ = 0;
+
+    // Closing walls ("enclosement"): a cursor walking an inward clockwise spiral.
+    struct Walls {
+        bool armed = false;
+        int timerMs = 0;
+        Cell cursor{};
+        Dir dir = 1;
+        int ring = 0;
+    } walls_;
+    int wallsClosed_ = 0;
 
     std::array<Tile, kGridW * kGridH> tiles_{};
     std::array<Flame, kGridW * kGridH> flames_{};

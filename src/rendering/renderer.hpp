@@ -46,6 +46,8 @@ private:
     bool sprite(SpriteBank& bank, const std::string& sequence, int index, int colour, float x, float y);
     void setTexture(unsigned texture);
     void flush();
+    void drawHud(const World& world);
+    void digit(int value, float x, float y, float r, float g, float b);
     void drawShapes(const World& world, const RenderSnapshot& previous, float alpha);
     void drawSprites(const World& world, const RenderSnapshot& previous, float alpha, SpriteBank& bank);
 

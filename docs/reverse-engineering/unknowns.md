@@ -253,3 +253,17 @@ Sequence names end in `green`; `0x415ED1` references `Remap table #%u (%u.rmp)`;
 
 Status:
 RESOLVED (session 7). `N.rmp` holds a 256-entry table that is non-zero only for palette indices 100-174 (the green band); a non-zero entry replaces the index. Player sprites, bombs and flames drawn through it match the original's colours. Where in the original's blitters the lookup happens was not traced.
+
+# UNKNOWN-022
+
+Question:
+What happens in the original when the round clock reaches zero while more than one contender is alive?
+
+Evidence:
+`Match_Run` ends a round when the contender count is ≤ 1. No time-up branch has been identified yet; the clock code clamps at 0.
+
+Status:
+OPEN
+
+Next action:
+Scripted run with `playtime` at its minimum and enclosement depth 0, two idle players; watch what follows 0:00. Read the remainder of `Match_Run` (`0x42A6A9` onward).

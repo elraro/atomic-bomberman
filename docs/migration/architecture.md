@@ -33,11 +33,11 @@ GL functions are taken from the system `GL/gl.h` + `GL/glext.h` prototypes (Mesa
 
 ## What the core covers
 
-Round generation (brick density, hidden powerups, start-area clearing), start freeze, player movement and collision, direction priority, bomb dropping, fuses, blast propagation, chain reactions, flames and death, the contender window, kicking, kick-stop, jelly bounce, trigger bombs, goldflame, powerup reveal (with early-round protection), pickup, caps and exclusive pairs.
+Round generation (brick density, hidden powerups, start-area clearing), start freeze, player movement and collision, direction priority, bomb dropping, fuses, blast propagation, chain reactions, flames and death, the contender window, kicking, kick-stop, jelly bounce, trigger bombs, goldflame, powerup reveal (with early-round protection), pickup, caps and exclusive pairs, the round clock, the hurry warning, closing walls, and the round result (winner or draw).
 
 ## Not covered yet
 
-Punch, grab, spooge, flying bombs, duds, diseases, level extras, closing walls, round clock and match flow, team play, campaign, AI, networking. Each is specified to some degree in `docs/specifications/` except game modes, AI and networking.
+Punch, grab, spooge, flying bombs, duds, diseases, level extras, match flow across rounds, team play, campaign, AI, networking. What happens when the round clock reaches zero is not known yet (the modern clock simply stops at 0). Each is specified to some degree in `docs/specifications/` except game modes, AI and networking.
 
 ## Validation level
 

@@ -39,7 +39,7 @@ Options: `--scheme NAME` (file in `data/schemes`, default `basic`), `--players N
 
 `R` restarts the round, `P` pauses, `N` advances one step while paused, `Esc` quits.
 
-Graphics are placeholder shapes; the original artwork is not used yet.
+With `--game-dir`, the original backgrounds and sprites are loaded from your copy at run time; without it (or with `--shapes`) placeholder shapes are drawn. `--native` opens a 640×480 window. A decided round restarts after three seconds.
 
 ## Status
 

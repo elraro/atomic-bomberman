@@ -688,6 +688,94 @@ void testBlastAndPowerups() {  // E5, P3
     CHECK(g.w.powerup({10, 2}).state == PowerupState::Hidden);
 }
 
+void testClockAndHurry() {
+    Fixture f;
+    f.w.setRoundSeconds(70);
+    CHECK_EQ(f.w.secondsLeft(), 70);
+    f.run(20);                          // 1 s
+    CHECK_EQ(f.w.secondsLeft(), 69);
+    CHECK(!f.w.hurry());
+    f.run(180);                         // 10.0 s: the display still reads 60
+    CHECK_EQ(f.w.secondsLeft(), 60);
+    CHECK(!f.w.hurry());
+    f.run(1);                           // just past 10 s: 59
+    CHECK(f.w.hurry());
+    f.w.setRoundSeconds(-1);
+    CHECK_EQ(f.w.secondsLeft(), -1);
+    CHECK(!f.w.hurry());
+}
+
+void testClosingWalls() {  // R1, R2, R3, R4; cadence and order as observed on the original (D27, D28)
+    Fixture f;
+    f.w.setRoundSeconds(70);
+    f.place(0, {3, 3});                 // inside both rings
+    f.place(1, {11, 7});
+    f.run(280);                         // 14.0 s: 56 s left
+    CHECK_EQ(f.w.closedCells(), 0);
+    f.run(1);                           // 14.05 s: 55 s left, walls armed
+    f.run(5);                           // +250 ms: not yet (strictly more than 250 ms)
+    CHECK_EQ(f.w.closedCells(), 0);
+    f.run(1);
+    CHECK_EQ(f.w.closedCells(), 1);
+    CHECK(f.w.tile({0, 0}) == Tile::Solid);
+    CHECK(f.w.tile({1, 0}) == Tile::Blank);
+    f.run(5 * 14);                      // 14 more slots: the whole top row
+    CHECK_EQ(f.w.closedCells(), 15);
+    CHECK(f.w.tile({14, 0}) == Tile::Solid);
+    CHECK(f.w.tile({14, 1}) == Tile::Blank);
+    f.run(5);                           // the corner cell is visited a second time
+    CHECK_EQ(f.w.closedCells(), 16);
+    CHECK(f.w.tile({14, 1}) == Tile::Blank);
+    f.run(5);
+    CHECK(f.w.tile({14, 1}) == Tile::Solid);
+    f.run(5 * 200);                     // let it finish
+    // depth 1 = two rings; the third ring stays open
+    CHECK(f.w.tile({1, 1}) == Tile::Solid);
+    CHECK(f.w.tile({13, 9}) == Tile::Solid);
+    CHECK(f.w.tile({2, 2}) == Tile::Blank);
+    CHECK(f.w.tile({12, 8}) == Tile::Blank);
+    CHECK(f.w.player(0).alive);
+    CHECK(f.w.player(1).alive);
+    const int closed = f.w.closedCells();
+    f.run(100);
+    CHECK_EQ(f.w.closedCells(), closed);  // stopped
+
+    // A player or a bomb in a closing cell.
+    Fixture g(Scheme::pillars(), 3);
+    g.w.setRoundSeconds(56);            // armed after 1 s
+    g.place(0, {2, 0});
+    g.place(1, {11, 7});
+    g.place(2, {9, 7});
+    g.w.createBomb(1, {4, 0}, BombType::Regular, 1, 4000);
+    g.run(21 + 6 + 10);                 // three cells closed: (0,0), (1,0), (2,0)
+    CHECK(!g.w.player(0).alive);
+    CHECK_EQ(g.w.player(0).killedBy, -1);
+    g.run(10 + 1);                      // (3,0), (4,0): bomb queued, explodes on the next tick
+    CHECK_EQ(g.w.activeBombs(), 0);
+    CHECK(g.w.tile({4, 0}) == Tile::Solid);
+}
+
+void testRoundResult() {
+    Fixture f;
+    CHECK(!f.w.roundOver());
+    f.place(0, {2, 2});
+    f.place(1, {14, 10});
+    f.w.createBomb(1, {2, 2}, BombType::Regular, 1, 1);
+    f.run(1);
+    CHECK(!f.w.roundOver());            // the loser still counts for 20 frames
+    f.run(20);
+    CHECK(f.w.roundOver());
+    CHECK_EQ(f.w.winner(), 1);
+
+    Fixture d;                          // both die: draw
+    d.place(0, {2, 2});
+    d.place(1, {3, 2});
+    d.w.createBomb(0, {2, 2}, BombType::Regular, 1, 1);
+    d.run(25);
+    CHECK(d.w.roundOver());
+    CHECK_EQ(d.w.winner(), -1);
+}
+
 void testDeterminism() {
     auto runOnce = [] {
         Scheme s = Scheme::pillars();
@@ -745,6 +833,9 @@ int main() {
         {"start area", testStartAreaCleared},
         {"pickup and caps", testPickupAndCaps},
         {"blast and powerups", testBlastAndPowerups},
+        {"clock and hurry", testClockAndHurry},
+        {"closing walls", testClosingWalls},
+        {"round result", testRoundResult},
         {"determinism", testDeterminism},
     };
     for (const auto& [name, fn] : tests) {
