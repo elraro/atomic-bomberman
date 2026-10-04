@@ -38,6 +38,8 @@ public:
     unsigned background() const { return background_; }
     // A full-screen picture from data/res (e.g. "mainmenu", "glue0", "results"); 0 if missing.
     unsigned picture(const std::string& name);
+    // Pixel size of a picture loaded with picture(); false if it is missing.
+    bool pictureSize(const std::string& name, int* width, int* height);
 
     // Text font (font1.fon) as one texture: glyphs side by side, white on transparent.
     struct Font {
@@ -72,6 +74,7 @@ private:
     unsigned background_ = 0;
     std::string gameDir_;
     std::unordered_map<std::string, unsigned> pictures_;
+    std::unordered_map<std::string, std::pair<int, int>> pictureSizes_;
     Font font_;
 };
 

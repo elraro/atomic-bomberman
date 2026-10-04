@@ -39,7 +39,7 @@ The import reads the original folder and never changes it. It writes about 280 M
 
 | What | From the original | In the asset folder |
 |---|---|---|
-| Palette, colour remaps, fonts | `COLOR.PAL`, `0.RMP`…`9.RMP`, `FONT*.FON` | same names, lower case |
+| Palette, colour remaps, fonts, help pages | `COLOR.PAL`, `0.RMP`…`9.RMP`, `FONT*.FON`, `*.BM` | same names, lower case |
 | Pictures and lists | `DATA\RES\*.PCX`, `*.RES` | `data/res/` |
 | Schemes (maps) | `DATA\SCHEMES\*.SCH` | `data/schemes/` |
 | Sprites | `DATA\ANI\*.ANI`, `MASTER.ALI` | `data/ani/` |

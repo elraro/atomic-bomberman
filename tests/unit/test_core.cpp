@@ -11,6 +11,7 @@
 #include "game/ai.hpp"
 #include "game/roulette.hpp"
 #include "game/world.hpp"
+#include "resources/help_file.hpp"
 #include "resources/settings.hpp"
 #include "resources/ani_file.hpp"
 #include "resources/scheme_file.hpp"
@@ -888,6 +889,20 @@ void testSuicideScore() {
     }
 }
 
+void testHelpPages() {
+    const auto lines = parseHelpText("Title\r\n\tindented\r\nab\tc <IMGKURT> after<IMGJERM>\r\n\r\nlast\x1a" "ignored");
+    CHECK_EQ(static_cast<int>(lines.size()), 5);
+    CHECK(lines[0].size() == 1 && lines[0][0].text == "Title");
+    CHECK(lines[1][0].text == "    indented");           // tab to column 4
+    CHECK_EQ(static_cast<int>(lines[2].size()), 4);
+    CHECK(lines[2][0].text == "ab  c ");                 // tab fills to the next multiple of 4
+    CHECK(lines[2][1].image && lines[2][1].text == "kurt");
+    CHECK(!lines[2][2].image && lines[2][2].text == " after");
+    CHECK(lines[2][3].image && lines[2][3].text == "jerm");
+    CHECK(lines[3].empty());
+    CHECK(lines[4][0].text == "last");                   // stops at Ctrl-Z
+}
+
 void testSettings() {
     Settings s;
     s.parse("levelno=4\nnum_to_win_match=3\nenclosement_depth=9\nconveyor_speed=2\nteam_play=1\nrandom_start=1\n"
@@ -1411,6 +1426,7 @@ int main() {
         {"trapped animation", testTrappedAnimation},
         {"roulette", testRoulette},
         {"settings", testSettings},
+        {"help pages", testHelpPages},
         {"suicide score", testSuicideScore},
         {"spooge", testSpooge},
         {"diseases", testDiseases},

@@ -208,6 +208,18 @@ void Renderer::image(unsigned texture) {
         quad(0, 0, kScreenW, kScreenH, 0.05f, 0.05f, 0.12f);
 }
 
+void Renderer::picture(unsigned texture, float x, float y, float w, float h) {
+    if (texture != 0) textured(texture, x, y, w, h);
+}
+
+float Renderer::textWidth(const SpriteBank& bank, const std::string& s) const {
+    const SpriteBank::Font& f = bank.font();
+    float width = 0;
+    for (unsigned char ch : s)
+        if (ch < f.width.size()) width += static_cast<float>(f.width[ch] + f.spacing);
+    return width;
+}
+
 void Renderer::draw(const World& world, const RenderSnapshot& prev, float alpha, int windowW, int windowH,
                     SpriteBank* sprites, const std::array<int, kMaxPlayers>* wins) {
     begin(windowW, windowH);

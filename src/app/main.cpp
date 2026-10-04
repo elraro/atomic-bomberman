@@ -22,6 +22,7 @@
 #include "game/world.hpp"
 #include "rendering/renderer.hpp"
 #include "resources/asset_import.hpp"
+#include "resources/help_file.hpp"
 #include "resources/scheme_file.hpp"
 #include "resources/settings.hpp"
 
@@ -240,7 +241,7 @@ const char* controlName(Control c) {
 }
 
 constexpr int kOptionRows = 10;
-enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options };
+enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList };
 
 // Level names, original messages 150-160.
 const char* const kLevelName[11] = {"Green Acres",   "Classic Green Acres", "The Hockey Rink",  "Ancient Egypt",
@@ -443,11 +444,27 @@ int main(int argc, char** argv) {
         Screen screen = haveMenu ? Screen::MainMenu : Screen::Match;
         int menuItem = 0;
         int optionRow = 0;
+        // Help viewer (About Bomberman shows credits.bm; Online Manual lists every *.bm).
+        std::vector<ab::HelpLine> helpLines;
+        int helpTop = 0;
+        Screen helpReturn = Screen::MainMenu;
+        std::vector<std::string> helpFiles;
+        int helpRow = 0;
+        auto openHelp = [&](const std::string& file, Screen back) {
+            helpLines.clear();
+            if (auto page = ab::loadHelpFile(opt.gameDir + "/" + file)) helpLines = std::move(*page);
+            else helpLines.push_back({{false, "Help file not found: " + file}});
+            helpTop = 0;
+            helpReturn = back;
+            screen = Screen::Help;
+        };
         int optionsGlue = 2;
         int listRow = 0;
         if (opt.menuShot == 2) screen = Screen::PlayerList;
         if (opt.menuShot == 3) screen = Screen::LevelSetup;
         if (opt.menuShot == 4) screen = Screen::Options;
+        if (opt.menuShot == 5) openHelp("credits.bm", Screen::MainMenu);
+        if (opt.menuShot == 6) openHelp("manual.bm", Screen::MainMenu);
 
         ab::RenderSnapshot previous;
         std::array<int, ab::kMaxPlayers> wins{};  // round wins in the current match
@@ -593,6 +610,20 @@ int main(int argc, char** argv) {
                             // The original shows a random "glue" picture behind it (0x4148E5, value 16).
                             optionsGlue = appRng.below(std::max(1, values.get(16)));
                         }
+                        if (menuItem == 4) openHelp("credits.bm", Screen::MainMenu);  // original 0x42BDE7
+                        if (menuItem == 5) {
+                            // Message 610: every *.BM file of the game folder.
+                            helpFiles.clear();
+                            std::error_code ec;
+                            for (const auto& entry : std::filesystem::directory_iterator(opt.gameDir, ec)) {
+                                std::string ext = entry.path().extension().string();
+                                for (char& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                                if (ext == ".bm") helpFiles.push_back(entry.path().filename().string());
+                            }
+                            std::sort(helpFiles.begin(), helpFiles.end());
+                            helpRow = 0;
+                            screen = Screen::HelpList;
+                        }
                         if (menuItem == 6) running = false, farewell = true;
                         if (sound) audio.playRange(10, 10);
                     }
@@ -642,6 +673,23 @@ int main(int argc, char** argv) {
                             running = false;
                         }
                     }
+                } else if (screen == Screen::Help) {
+                    // Keys of the original's viewer: a line or a page at a time; Enter or Esc closes.
+                    const int page = std::max(2, 344 / (spritesPtr->font().height + 2));
+                    const int lastTop = std::max(0, static_cast<int>(helpLines.size()) - page);
+                    if (key == SDLK_UP) helpTop = std::max(0, helpTop - 1);
+                    if (key == SDLK_DOWN) helpTop = std::min(lastTop, helpTop + 1);
+                    if (key == SDLK_PAGEUP || key == SDLK_LEFT) helpTop = std::max(0, helpTop - (page - 1));
+                    if (key == SDLK_PAGEDOWN || key == SDLK_RIGHT || key == SDLK_SPACE) helpTop = std::min(lastTop, helpTop + page - 1);
+                    if (key == SDLK_HOME) helpTop = 0;
+                    if (key == SDLK_END) helpTop = lastTop;
+                    if (key == SDLK_ESCAPE || key == SDLK_RETURN) screen = helpReturn;
+                } else if (screen == Screen::HelpList) {
+                    const int n = static_cast<int>(helpFiles.size());
+                    if (key == SDLK_UP && n > 0) helpRow = (helpRow + n - 1) % n;
+                    if (key == SDLK_DOWN && n > 0) helpRow = (helpRow + 1) % n;
+                    if (key == SDLK_RETURN && n > 0) openHelp(helpFiles[static_cast<std::size_t>(helpRow)], Screen::HelpList);
+                    if (key == SDLK_ESCAPE) screen = Screen::MainMenu;
                 } else if (screen == Screen::Options) {
                     // The original's settings screen (0x4080DC), without its network, keyboard-layout,
                     // memory and audio-adjustment rows.
@@ -891,6 +939,47 @@ int main(int argc, char** argv) {
                         renderer.text(*spritesPtr, lines[r], tx, ty, 1.0f, 0.95f, 0.3f);
                     }
                 }
+                renderer.end();
+            } else if (screen == Screen::Help) {
+                renderer.begin(w, h);
+                renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
+                renderer.quad(20, 24, 600, 400, 0.0f, 0.0f, 0.10f, 0.82f);
+                const int lineH = spritesPtr->font().height + 2;
+                const int page = std::max(2, 344 / lineH);
+                // Lines just above and below the page are drawn too, for pictures taller than a line.
+                for (int r = -16; r < page + 16; ++r) {
+                    const int index = helpTop + r;
+                    if (index < 0 || index >= static_cast<int>(helpLines.size())) continue;
+                    float x = 34.0f;
+                    const float y = 34.0f + static_cast<float>(r * lineH);
+                    for (const ab::HelpSegment& seg : helpLines[static_cast<std::size_t>(index)]) {
+                        if (!seg.image) {
+                            if (r >= 0 && r < page) renderer.text(*spritesPtr, seg.text, x, y, 1, 1, 1);
+                            x += renderer.textWidth(*spritesPtr, seg.text);
+                            continue;
+                        }
+                        int pw = 0, ph = 0;
+                        if (!spritesPtr->pictureSize(seg.text, &pw, &ph)) continue;
+                        // Centred on its line; kept inside the panel.
+                        const float py = y + static_cast<float>(lineH - ph) / 2.0f;
+                        if (py >= 24.0f && py + static_cast<float>(ph) <= 424.0f && x + static_cast<float>(pw) <= 620.0f)
+                            renderer.picture(spritesPtr->picture(seg.text), x, py, static_cast<float>(pw), static_cast<float>(ph));
+                        x += static_cast<float>(pw);
+                    }
+                }
+                renderer.text(*spritesPtr, "Up/Down: line   PgUp/PgDn: page   Esc: done", 60, 440, 0.4f, 1.0f, 1.0f);
+                renderer.end();
+            } else if (screen == Screen::HelpList) {
+                renderer.begin(w, h);
+                renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
+                renderer.quad(40, 60, 360, 40.0f + 22.0f * static_cast<float>(helpFiles.size()), 0.0f, 0.0f, 0.10f, 0.82f);
+                renderer.text(*spritesPtr, "Available help files:", 55, 68, 1, 1, 1);  // message 600
+                for (std::size_t r = 0; r < helpFiles.size(); ++r) {
+                    const bool on = static_cast<int>(r) == helpRow;
+                    renderer.text(*spritesPtr, helpFiles[r], 80, 92.0f + 22.0f * static_cast<float>(r), on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
+                }
+                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, 107.0f + 22.0f * static_cast<float>(helpRow));
+                renderer.text(*spritesPtr, "Up/Down: select   Enter: read   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::Options) {
                 // Messages 250-263 with the original's value texts; rows from (55,40) every 22 px (value 745).

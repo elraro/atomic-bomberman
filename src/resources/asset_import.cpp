@@ -118,7 +118,7 @@ ImportReport importAssets(const std::string& source, const std::string& destinat
         return report;
     }
 
-    copyByExtension(src, dst, {".pal", ".rmp", ".fon"}, report);
+    copyByExtension(src, dst, {".pal", ".rmp", ".fon", ".bm"}, report);  // .bm: help pages
     copyByExtension(res, dst / "data" / "res", {".pcx", ".res"}, report);
     copyByExtension(findPath(src, {"data", "schemes"}), dst / "data" / "schemes", {".sch"}, report);
     copyByExtension(findPath(src, {"data", "ani"}), dst / "data" / "ani", {".ani", ".ali"}, report);

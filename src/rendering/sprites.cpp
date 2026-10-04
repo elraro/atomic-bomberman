@@ -37,9 +37,19 @@ unsigned SpriteBank::picture(const std::string& name) {
             rgba[i * 4 + 3] = 255;
         }
         tex = uploadRgba(pcx->width, pcx->height, rgba);
+        pictureSizes_[name] = {pcx->width, pcx->height};
     }
     pictures_[name] = tex;
     return tex;
+}
+
+bool SpriteBank::pictureSize(const std::string& name, int* width, int* height) {
+    if (picture(name) == 0) return false;
+    const auto it = pictureSizes_.find(name);
+    if (it == pictureSizes_.end()) return false;
+    *width = it->second.first;
+    *height = it->second.second;
+    return true;
 }
 
 SpriteBank::~SpriteBank() {

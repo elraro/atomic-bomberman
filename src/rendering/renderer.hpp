@@ -38,6 +38,8 @@ public:
     void begin(int windowW, int windowH);
     void end();
     void image(unsigned texture);  // full-screen picture (dark fill if 0)
+    void picture(unsigned texture, float x, float y, float w, float h);  // a picture at a place
+    float textWidth(const SpriteBank& bank, const std::string& s) const;
     void text(const SpriteBank& bank, const std::string& s, float x, float y, float r, float g, float b);
     bool sprite(SpriteBank& bank, const std::string& sequence, int index, int colour, float x, float y);
     void quad(float x, float y, float w, float h, float r, float g, float b, float a = 1.0f);

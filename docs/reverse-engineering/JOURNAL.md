@@ -515,3 +515,15 @@ Where: reader `0x4062DD`-`0x4065FB` (key → global), settings screen `0x4080DC`
 - Play time steps: 60, 90, 120, 150, 180, 240, 300, 600, 1001, then 60 again.
 
 Confidence: HIGH (static). Modern: `src/resources/settings.*`, Options screen in the application; network, modem, keyboard-layout and memory rows are left out.
+
+### Discovery: help viewer and `.bm` pages
+
+Where: `FUN_0041302D` (viewer, takes a file name), menu dispatch `0x42BDE7` (About Bomberman → `credits.bm`), `0x41431C` (Online Manual: lists files matching message 610 `*.BM` under message 600).
+
+Evidence:
+- `.bm` files are plain text (CR LF, Ctrl-Z at the end). Tabs are expanded to columns of four. `<IMGNAME>` places picture `NAME.pcx` (with its own `.plt`) inline, centred vertically on the line; text continues after its width.
+- Text starts at x 34; a page is 344 px high divided by the font's line height; lines up to 16 above and below the page are processed so tall pictures still show.
+- Keys: Up/Down one line, Page Up/Down a page less one line, Enter or Esc to close.
+- `options.bm`, `roulette.bm` and the others are first-party descriptions of the game's features; `roulette.bm` confirms that the Gold Bomberman is "the player/team who won the last match".
+
+Confidence: HIGH (static). Modern: `src/resources/help_file.*` (tested) and the Help screens of the application. Existing asset folders need `--import-assets` again to get the `.bm` files.
