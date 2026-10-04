@@ -34,6 +34,8 @@ struct Options {
     int frames = -1;          // stop after this many rendered frames (for automated runs)
     std::string screenshot;   // write the last frame as a PPM file
     int menuShot = 0;         // automated: 1 = capture the main menu, 2 = the player list
+    bool resultShot = false;  // automated: capture the result screen of the first decided round and exit
+    std::vector<std::string> script;  // automated: key names pressed one after another (see --script)
     bool demo = false;        // scripted input instead of the keyboard
     bool menu = true;         // start at the main menu (off for --demo, --frames, --start)
     bool native = false;      // 640x480 window, the original's resolution
@@ -58,6 +60,19 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--seed") o.seed = static_cast<std::uint32_t>(std::atoi(next().c_str()));
         else if (a == "--demo") o.demo = true;
         else if (a == "--start") o.menu = false;
+        else if (a == "--result-shot") o.resultShot = true;
+        else if (a == "--script") {
+            // Comma-separated keys: up, down, left, right, enter, esc. One is pressed every 10 frames.
+            std::string list = next(), item;
+            for (char ch : list + ",") {
+                if (ch == ',') {
+                    if (!item.empty()) o.script.push_back(item);
+                    item.clear();
+                } else {
+                    item += ch;
+                }
+            }
+        }
         else if (a == "--menu-shot") o.menuShot = std::atoi(next().c_str());
         else if (a == "--shapes") o.shapes = true;
         else if (a == "--mute") o.mute = true;
@@ -67,7 +82,7 @@ Options parseArgs(int argc, char** argv) {
         else std::fprintf(stderr, "WARN  unknown argument %s\n", a.c_str());
     }
     o.players = std::clamp(o.players, 1, ab::kMaxPlayers);
-    if (o.demo || o.frames > 0) o.menu = o.menuShot != 0;
+    if (o.demo || o.frames > 0) o.menu = o.menuShot != 0 || !o.script.empty();
     return o;
 }
 
@@ -240,7 +255,7 @@ int main(int argc, char** argv) {
         SDL_Quit();
         return 1;
     }
-    SDL_GL_SetSwapInterval(1);
+    SDL_GL_SetSwapInterval(opt.frames > 0 ? 0 : 1);  // automated runs do not wait for the display
     std::fprintf(stderr, "INFO  OpenGL %s\n", reinterpret_cast<const char*>(glGetString(GL_VERSION)));
 
     {
@@ -323,6 +338,15 @@ int main(int argc, char** argv) {
         double accumulatorMs = 0.0;
 
         while (running) {
+            // Scripted key presses for automated checks of the menu screens.
+            if (!opt.script.empty() && frame % 10 == 5 && static_cast<std::size_t>(frame / 10) < opt.script.size()) {
+                const std::string& k = opt.script[static_cast<std::size_t>(frame / 10)];
+                SDL_Event press{};
+                press.type = SDL_EVENT_KEY_DOWN;
+                press.key.key = k == "up" ? SDLK_UP : k == "down" ? SDLK_DOWN : k == "left" ? SDLK_LEFT : k == "right" ? SDLK_RIGHT
+                                : k == "esc" ? SDLK_ESCAPE : SDLK_RETURN;
+                SDL_PushEvent(&press);
+            }
             SDL_Event e;
             bool singleStep = false;
             while (SDL_PollEvent(&e)) {
@@ -453,8 +477,8 @@ int main(int argc, char** argv) {
                     } else if (matchOver) {
                         renderer.image(spritesPtr->picture("victory" + std::to_string(win)));
                         const std::string line = "PLAYER " + std::to_string(win + 1) + " WINS THE MATCH!";  // message 36
-                        renderer.text(*spritesPtr, line, 151, 95, 0, 0, 0);
-                        renderer.text(*spritesPtr, line, 150, 94, 1.0f, 0.95f, 0.3f);
+                        renderer.text(*spritesPtr, line, 211, 441, 0, 0, 0);  // below the artwork's own title
+                        renderer.text(*spritesPtr, line, 210, 440, 1.0f, 0.95f, 0.3f);
                     } else {
                         renderer.image(spritesPtr->picture("results"));
                         renderer.text(*spritesPtr, "Winner was:", 151, 141, 0, 0, 0);
@@ -515,6 +539,10 @@ int main(int argc, char** argv) {
             }
 
             ++frame;
+            if (opt.resultShot && screen == Screen::Match && world.roundOver() && roundOverSteps == 50) {
+                if (!opt.screenshot.empty()) writePpm(opt.screenshot, w, h);
+                running = false;
+            }
             if (opt.frames > 0 && frame >= opt.frames) {
                 if (!opt.screenshot.empty()) writePpm(opt.screenshot, w, h);
                 running = false;

@@ -364,3 +364,9 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 
 - Added a level/scheme/wins screen after the player list (level names from messages 150-160, schemes listed from `data/schemes`), and the original's `draw`, `results` and `victoryN` pictures after a round.
 - Checked: the level screen renders. NOT checked: the result pictures (no automated run reached a round end), and changing level from the screen (sprite bank reload).
+
+### Session 12 addendum: the unverified screens are now checked
+
+- Added `--result-shot` (capture the first decided round's result screen) and `--script` (scripted menu key presses) for automated checks; automated runs no longer wait for the display.
+- Verified by capture: draw picture, round results picture with the score list, victory picture in the winner's colour (players 3 and 4), and changing level and scheme from the level screen (graphics reloaded as level 3).
+- Fixed: the match-winner line was drawn over the victory artwork's title; it is now below it.
