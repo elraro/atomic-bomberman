@@ -1,0 +1,7 @@
+# Original game material: user-supplied, copyrighted, never committed.
+/game/
+/assets/original/
+/assets/converted/
+/build/
+/.claude/settings.local.json
+__pycache__/
