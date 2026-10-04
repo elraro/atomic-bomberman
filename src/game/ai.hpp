@@ -22,6 +22,7 @@ private:
     using Grid = std::array<int, kGridW * kGridH>;
 
     void buildDanger(const World& w);
+    void markWalls(const World& w);
     int danger(Cell c) const;
     bool blocked(const World& w, Cell c) const;      // tile or bomb
     bool safeWalkable(const World& w, Cell c) const; // free, no flame, no danger

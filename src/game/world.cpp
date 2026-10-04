@@ -887,6 +887,31 @@ void World::updateEnclosement(int dt) {
     }
 }
 
+// The same walk as updateEnclosement, without closing anything (original 0x42690D).
+std::vector<Cell> World::upcomingWallCells(int count) const {
+    std::vector<Cell> cells;
+    const int rings = enclosementDepth_ * 2;
+    if (!walls_.armed || walls_.ring >= rings) return cells;
+    Cell cursor = walls_.cursor;
+    Dir dir = walls_.dir;
+    int ring = walls_.ring;
+    for (int n = 0; n < count; ++n) {
+        Cell next = step(cursor, dir);
+        if (next.x >= kGridW - ring || next.y >= kGridH - ring || next.x < ring || next.y < ring) {
+            dir = turnRight(dir);
+            if (dir == 1) {
+                if (rings <= ring) break;
+                ++ring;
+                cursor = {cursor.x + 1, cursor.y + 1};
+            }
+            next = cursor;
+        }
+        cells.push_back(next);
+        cursor = next;
+    }
+    return cells;
+}
+
 void World::checkPickup(int i) {
     const Player& p = players_[static_cast<std::size_t>(i)];
     const Cell c = pixelToCell(p.x, p.y);

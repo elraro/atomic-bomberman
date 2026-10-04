@@ -71,7 +71,7 @@ The same eight behaviours in the same order with the same probabilities, as an i
 - Route to safety follows the original's rule (first danger-free cell within 20 steps, else the least dangerous cell seen).
 - Nearest powerup is by walking distance, as in the original (it was by straight-line distance, then checked for a path).
 - Searches are plain breadth-first searches over unblocked cells. For the path search this gives routes of the same length as the original's walker flood; the choice among equally short routes can differ.
-- Bomb and flame danger levels follow the original; the closing walls are not marked.
+- Bomb, flame and closing-wall danger levels follow the original (walls: the next 15 cells on the spiral, 250 falling by 10 per cell).
 - The attack behaviour's first distance condition is omitted.
 
 Measured behaviour of the modern AI (four AIs, standard pillar scheme at 90 % bricks, 200 rounds): 149 rounds with a single survivor, 47 draws by simultaneous deaths, 4 by time; mean round length 78.5 s; 309 of 643 deaths were by the player's own bomb. No equivalent statistics have been taken from the original yet, so how close this is in *playing strength* is unknown.

@@ -903,6 +903,24 @@ void testHelpPages() {
     CHECK(lines[4][0].text == "last");                   // stops at Ctrl-Z
 }
 
+void testUpcomingWalls() {
+    Fixture f;
+    f.place(0, {7, 5});
+    f.place(1, {8, 5});
+    CHECK(f.w.upcomingWallCells(15).empty());          // not running yet
+    f.w.setRoundSeconds(56);
+    f.run(40);                                         // 2 s: the clock is inside the closing period
+    const auto ahead = f.w.upcomingWallCells(15);
+    CHECK_EQ(static_cast<int>(ahead.size()), 15);
+    // The walls really arrive in that order: the cursor's own cell first, then these.
+    World& w = f.w;
+    const int start = w.closedCells();
+    for (int t = 0; t < 400 && w.closedCells() < start + 6; ++t) w.tick(50, f.in);
+    for (int k = 0; k < 5; ++k) CHECK(w.tile(ahead[static_cast<std::size_t>(k)]) == Tile::Solid);
+    CHECK(w.tile(ahead[5]) != Tile::Solid);
+    CHECK(ahead[0].y == 0 && ahead[1].y == 0 && ahead[1].x == ahead[0].x + 1);  // along the top row, eastward
+}
+
 void testSettings() {
     Settings s;
     s.parse("levelno=4\nnum_to_win_match=3\nenclosement_depth=9\nconveyor_speed=2\nteam_play=1\nrandom_start=1\n"
@@ -1426,6 +1444,7 @@ int main() {
         {"trapped animation", testTrappedAnimation},
         {"roulette", testRoulette},
         {"settings", testSettings},
+        {"upcoming walls", testUpcomingWalls},
         {"help pages", testHelpPages},
         {"suicide score", testSuicideScore},
         {"spooge", testSpooge},

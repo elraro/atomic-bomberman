@@ -275,6 +275,9 @@ public:
     int secondsLeft() const;
     void setRoundSeconds(int seconds) { roundLimitMs_ = seconds < 0 ? -1 : seconds * 1000; }
     void setEnclosementDepth(int depth) { enclosementDepth_ = depth; }
+    // The next cells the closing walls will reach, nearest first (empty while they are
+    // not running). The computer players treat these as dangerous.
+    std::vector<Cell> upcomingWallCells(int count) const;
     // Changes one tuning value (options that the original stores as values); takes
     // effect where the value is next read, for most of them at the next startRound.
     void setValue(int id, int value) { values_.set(id, value); }

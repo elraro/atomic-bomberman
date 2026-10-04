@@ -37,6 +37,18 @@ void AiPlayer::buildDanger(const World& w) {
             }
         }
     }
+    markWalls(w);
+}
+
+// (continued) The closing walls: the next value-910 (15) cells on their path, the nearest
+// at 100 + 10 per cell of warning, falling by 10 with each cell further ahead (0x42692D).
+void AiPlayer::markWalls(const World& w) {
+    constexpr int kAhead = 15;
+    int level = 100 + kAhead * 10;
+    for (const Cell c : w.upcomingWallCells(kAhead)) {
+        if (inGrid(c) && danger_[idx(c)] < level) danger_[idx(c)] = level;
+        level -= 10;
+    }
 }
 
 int AiPlayer::danger(Cell c) const { return inGrid(c) ? danger_[idx(c)] : 0; }
