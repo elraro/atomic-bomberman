@@ -180,8 +180,7 @@ void Renderer::flush() {
     batch_.clear();
 }
 
-void Renderer::draw(const World& world, const RenderSnapshot& prev, float alpha, int windowW, int windowH,
-                    SpriteBank* sprites, const std::array<int, kMaxPlayers>* wins) {
+void Renderer::begin(int windowW, int windowH) {
     // Letterbox the 640x480 logical screen into the window.
     const float scale = std::min(static_cast<float>(windowW) / kScreenW, static_cast<float>(windowH) / kScreenH);
     const int vw = static_cast<int>(kScreenW * scale);
@@ -198,7 +197,20 @@ void Renderer::draw(const World& world, const RenderSnapshot& prev, float alpha,
     glUseProgram(program_);
     glUniformMatrix4fv(projLoc_, 1, GL_FALSE, proj);
     glUniform1i(glGetUniformLocation(program_, "uTex"), 0);
+}
 
+void Renderer::end() { flush(); }
+
+void Renderer::image(unsigned texture) {
+    if (texture != 0)
+        textured(texture, 0, 0, kScreenW, kScreenH);
+    else
+        quad(0, 0, kScreenW, kScreenH, 0.05f, 0.05f, 0.12f);
+}
+
+void Renderer::draw(const World& world, const RenderSnapshot& prev, float alpha, int windowW, int windowH,
+                    SpriteBank* sprites, const std::array<int, kMaxPlayers>* wins) {
+    begin(windowW, windowH);
     if (sprites != nullptr && sprites->loaded())
         drawSprites(world, prev, alpha, *sprites);
     else

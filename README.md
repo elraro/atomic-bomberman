@@ -26,24 +26,22 @@ Requires CMake 3.20+ and a C++20 compiler. The front end additionally needs SDL3
 ## Run
 
 ```sh
-./build/atomic --game-dir game            # values and scheme read from your copy of the original
-./build/atomic                            # built-in defaults, empty arena
+./build/atomic --game-dir game     # main menu, original graphics and sound from your copy
+./build/atomic                     # no game files: placeholder shapes, straight into a match
 ```
 
-Computer players fill every slot beyond the humans: `--players 4 --humans 1` is one keyboard player against three AIs; `--humans 0` (or `--demo`) is all AIs.
-
-Options: `--scheme NAME` (file in `data/schemes`, default `basic`), `--players N` (1-10), `--seed N`, `--level N` (0-10, graphics theme), `--wins N` (round wins per match, default 2), `--mute`, `--shapes`, `--native`, `--demo` (scripted input), `--frames N --screenshot out.ppm` (automated capture).
-
-Player 1 with the default keys can also punch, grab and throw once the matching powerups are collected: Enter punches the bomb ahead; pressing Space while standing on your own bomb picks it up (grab) or lays a line (spooge); releasing Space throws.
+With game files the program opens on the main menu. Choose **Start Game**, set up the player list (Up/Down select a slot, Right cycles AI → KEY 0 → KEY 1 → OFF, Left switches a slot off), press Enter to play. By default player 1 uses the first key set and player 2 is a computer player, as in the original. The other menu items are not implemented.
 
 | | Move | Bomb | Action |
 |---|---|---|---|
-| Player 1 | arrow keys | Space or Right Ctrl | Enter or Right Shift |
-| Player 2 | W A S D | Tab or Left Ctrl | Q or Left Shift |
+| KEY 0 | arrow keys | Space or Right Ctrl | Enter or Right Shift |
+| KEY 1 | W A S D | Tab or Left Ctrl | Q or Left Shift |
 
-`R` restarts the round, `P` pauses, `N` advances one step while paused, `Esc` quits.
+The action button punches the bomb ahead (punch), stops your kicked bombs (kicker) and detonates trigger bombs. Pressing the bomb button while standing on your own bomb picks it up (grab; release to throw) or lays a line (spooge).
 
-With `--game-dir`, the original backgrounds and sprites are loaded from your copy at run time; without it (or with `--shapes`) placeholder shapes are drawn. `--native` opens a 640×480 window. A decided round restarts after three seconds.
+In a match: `Esc` returns to the menu, `R` restarts the round, `P` pauses, `N` advances one step while paused. A decided round restarts after three seconds; the first player to `--wins` rounds takes the match.
+
+Options: `--scheme NAME` (file in `data/schemes`, default `basic`), `--level N` (0-10: graphics, music and extras), `--wins N` (default 2), `--players N --humans H` (preset the player list; `--humans 0` or `--demo` is all computer players), `--start` (skip the menu), `--seed N`, `--mute`, `--shapes`, `--native` (640×480 window), `--frames N --screenshot out.ppm` (automated capture).
 
 ## Status
 

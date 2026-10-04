@@ -25,7 +25,28 @@ unsigned uploadRgba(int w, int h, const std::vector<std::uint8_t>& rgba) {
 
 }  // namespace
 
+unsigned SpriteBank::picture(const std::string& name) {
+    const auto it = pictures_.find(name);
+    if (it != pictures_.end()) return it->second;
+    unsigned tex = 0;
+    if (auto pcx = loadPcxFile(gameDir_ + "/data/res/" + name + ".pcx")) {
+        std::vector<std::uint8_t> rgba(pcx->indices.size() * 4);
+        for (std::size_t i = 0; i < pcx->indices.size(); ++i) {
+            const std::uint8_t* c = &pcx->palette[static_cast<std::size_t>(pcx->indices[i]) * 3];
+            rgba[i * 4] = c[0];
+            rgba[i * 4 + 1] = c[1];
+            rgba[i * 4 + 2] = c[2];
+            rgba[i * 4 + 3] = 255;
+        }
+        tex = uploadRgba(pcx->width, pcx->height, rgba);
+    }
+    pictures_[name] = tex;
+    return tex;
+}
+
 SpriteBank::~SpriteBank() {
+    for (auto& [name, tex] : pictures_)
+        if (tex != 0) glDeleteTextures(1, &tex);
     for (auto& [key, tex] : textures_) glDeleteTextures(1, &tex);
     if (background_ != 0) glDeleteTextures(1, &background_);
     if (font_.texture != 0) glDeleteTextures(1, &font_.texture);
@@ -50,6 +71,7 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
         return false;
     }
     palette_ = std::move(*pal);
+    gameDir_ = gameDir;
     for (int i = 0; i < 10; ++i)
         if (auto r = readFileBytes(gameDir + "/" + std::to_string(i) + ".rmp"); r && r->size() >= 256)
             remap_[static_cast<std::size_t>(i)].assign(r->begin(), r->begin() + 256);
@@ -68,6 +90,7 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
     addAni(ani + "kick.ani");
     addAni(ani + "extras.ani");
     addAni(ani + "kfont.ani");
+    addAni(ani + "misc.ani");
     addAni(ani + "hurry.ani");
     addAni(ani + "conveyor.ani");
     for (int n = 1; n <= 4; ++n) {

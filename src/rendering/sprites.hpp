@@ -35,6 +35,8 @@ public:
     int level() const { return level_; }
 
     unsigned background() const { return background_; }
+    // A full-screen picture from data/res (e.g. "mainmenu", "glue0", "results"); 0 if missing.
+    unsigned picture(const std::string& name);
 
     // Text font (font1.fon) as one texture: glyphs side by side, white on transparent.
     struct Font {
@@ -67,6 +69,8 @@ private:
     std::unordered_map<std::string, Ref> sequences_;
     std::map<std::tuple<std::size_t, int, int>, unsigned> textures_;
     unsigned background_ = 0;
+    std::string gameDir_;
+    std::unordered_map<std::string, unsigned> pictures_;
     Font font_;
 };
 

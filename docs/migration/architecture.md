@@ -41,7 +41,7 @@ Round generation (brick density, hidden powerups, start-area clearing), start fr
 
 ## Not covered yet
 
-Duds, team play, campaign, networking. Match flow exists only as a win counter in the application (no results or victory screens). What happens when the round clock reaches zero is not known yet (the modern clock simply stops at 0). Each is specified to some degree in `docs/specifications/` except game modes, AI and networking.
+Duds, team play, campaign, networking. The application has a main menu (only Start Game and Exit work), the player list, and a win counter with a one-line result overlay; the original's level/scheme screen, results and victory screens, options, network and manual screens are not built. What happens when the round clock reaches zero is not known yet (the modern clock simply stops at 0). Each is specified to some degree in `docs/specifications/` except game modes, AI and networking.
 
 ## Validation level
 

@@ -34,17 +34,21 @@ public:
     void draw(const World& world, const RenderSnapshot& previous, float alpha, int windowW, int windowH,
               SpriteBank* sprites = nullptr, const std::array<int, kMaxPlayers>* wins = nullptr);
 
+    // Building blocks for menu screens, in the 640x480 logical screen.
+    void begin(int windowW, int windowH);
+    void end();
+    void image(unsigned texture);  // full-screen picture (dark fill if 0)
+    void text(const SpriteBank& bank, const std::string& s, float x, float y, float r, float g, float b);
+    bool sprite(SpriteBank& bank, const std::string& sequence, int index, int colour, float x, float y);
+    void quad(float x, float y, float w, float h, float r, float g, float b, float a = 1.0f);
+
 private:
     struct Vertex {
         float x, y;
         float u, v;
         float r, g, b, a;
     };
-    void quad(float x, float y, float w, float h, float r, float g, float b, float a = 1.0f);
     void textured(unsigned texture, float x, float y, float w, float h);
-    void text(const SpriteBank& bank, const std::string& s, float x, float y, float r, float g, float b);
-    // Draws a sprite with its hot-spot at (x, y). Returns false if the sequence is unknown.
-    bool sprite(SpriteBank& bank, const std::string& sequence, int index, int colour, float x, float y);
     void setTexture(unsigned texture);
     void flush();
     void drawHud(const World& world, SpriteBank* bank, const std::array<int, kMaxPlayers>* wins);

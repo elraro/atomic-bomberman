@@ -28,10 +28,12 @@ struct Options {
     std::string gameDir;
     std::string scheme = "basic";
     int players = 2;
-    int humans = 2;           // slots 0..humans-1 use the keyboard; the rest are computer players
+    int humans = 1;           // slots 0..humans-1 use the keyboard (max 2); the rest are computer players
     int frames = -1;          // stop after this many rendered frames (for automated runs)
     std::string screenshot;   // write the last frame as a PPM file
+    int menuShot = 0;         // automated: 1 = capture the main menu, 2 = the player list
     bool demo = false;        // scripted input instead of the keyboard
+    bool menu = true;         // start at the main menu (off for --demo, --frames, --start)
     bool native = false;      // 640x480 window, the original's resolution
     int level = 0;            // level theme 0-10 (graphics)
     int wins = 2;             // round wins needed to take the match (original value 310)
@@ -53,6 +55,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--screenshot") o.screenshot = next();
         else if (a == "--seed") o.seed = static_cast<std::uint32_t>(std::atoi(next().c_str()));
         else if (a == "--demo") o.demo = true;
+        else if (a == "--start") o.menu = false;
+        else if (a == "--menu-shot") o.menuShot = std::atoi(next().c_str());
         else if (a == "--shapes") o.shapes = true;
         else if (a == "--mute") o.mute = true;
         else if (a == "--level") o.level = std::clamp(std::atoi(next().c_str()), 0, 10);
@@ -61,6 +65,7 @@ Options parseArgs(int argc, char** argv) {
         else std::fprintf(stderr, "WARN  unknown argument %s\n", a.c_str());
     }
     o.players = std::clamp(o.players, 1, ab::kMaxPlayers);
+    if (o.demo || o.frames > 0) o.menu = o.menuShot != 0;
     return o;
 }
 
@@ -99,13 +104,6 @@ void playEvents(ab::World& world, ab::Audio& audio) {
     }
 }
 
-void startRound(ab::World& world, const ab::Scheme& scheme, int players, const std::vector<ab::Extra>& extras) {
-    world.startRound(scheme, true);
-    world.setExtras(extras);
-    for (int i = 0; i < players; ++i) world.addPlayer(i);
-    std::fprintf(stderr, "INFO  Round started players=%d\n", players);
-}
-
 void writePpm(const std::string& path, int w, int h) {
     std::vector<unsigned char> px(static_cast<std::size_t>(w * h * 3));
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -118,6 +116,20 @@ void writePpm(const std::string& path, int w, int h) {
 }
 
 }  // namespace
+
+// How each player slot is controlled, as on the original's player list.
+enum class Control { Off, Key0, Key1, Ai };
+
+const char* controlName(Control c) {
+    switch (c) {
+        case Control::Key0: return "KEY 0";
+        case Control::Key1: return "KEY 1";
+        case Control::Ai: return "AI";
+        default: return "OFF";
+    }
+}
+
+enum class Screen { MainMenu, PlayerList, Match };
 
 int main(int argc, char** argv) {
     const Options opt = parseArgs(argc, argv);
@@ -156,7 +168,8 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_Window* window = SDL_CreateWindow("Atomic Bomberman (modern)", opt.native ? 640 : 960, opt.native ? 480 : 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+    SDL_Window* window = SDL_CreateWindow("Atomic Bomberman (modern)", opt.native ? 640 : 960, opt.native ? 480 : 720,
+                                          SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     if (window == nullptr) {
         std::fprintf(stderr, "ERROR SDL_CreateWindow: %s\n", SDL_GetError());
         SDL_Quit();
@@ -172,26 +185,59 @@ int main(int argc, char** argv) {
     SDL_GL_SetSwapInterval(1);
     std::fprintf(stderr, "INFO  OpenGL %s\n", reinterpret_cast<const char*>(glGetString(GL_VERSION)));
 
-    int rc = 0;
     {
         ab::Renderer renderer;
         ab::SpriteBank sprites;
-        ab::Audio audio;
-        if (!opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir)) audio.playMusic(1100 + opt.level);
         if (!opt.gameDir.empty() && !opt.shapes) sprites.load(opt.gameDir, opt.level);
+        ab::Audio audio;
+        const bool sound = !opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir);
         ab::World world(values, opt.seed);
         std::vector<ab::AiPlayer> ai;
-        for (int i = 0; i < ab::kMaxPlayers; ++i) ai.emplace_back(opt.seed * 31u + static_cast<std::uint32_t>(i) * 977u + 5u);
-        startRound(world, scheme, opt.players, extras);
+        for (int i = 0; i < ab::kMaxPlayers; ++i)
+            ai.emplace_back(opt.seed * 31u + static_cast<std::uint32_t>(i) * 977u + 5u);
+
+        // Player list. Defaults follow the command line; with none, the original's
+        // default: player 1 on the first key set, player 2 a computer player.
+        std::array<Control, ab::kMaxPlayers> control{};
+        for (int i = 0; i < opt.players; ++i)
+            control[static_cast<std::size_t>(i)] =
+                opt.demo ? Control::Ai : i == 0 && opt.humans >= 1 ? Control::Key0 : i == 1 && opt.humans >= 2 ? Control::Key1 : Control::Ai;
+
+        // The menu screens need the original pictures; without them the match starts at once.
+        const bool haveMenu = opt.menu && sprites.loaded() && sprites.picture("mainmenu") != 0;
+        Screen screen = haveMenu ? Screen::MainMenu : Screen::Match;
+        int menuItem = 0;
+        int listRow = 0;
+        if (opt.menuShot == 2) screen = Screen::PlayerList;
+
         ab::RenderSnapshot previous;
-        previous.capture(world);
+        std::array<int, ab::kMaxPlayers> wins{};  // round wins in the current match
+        int roundOverSteps = 0;
+        bool matchOver = false;
+        auto beginMatch = [&]() {
+            world.startRound(scheme, true);
+            world.setExtras(extras);
+            int n = 0;
+            for (int i = 0; i < ab::kMaxPlayers; ++i)
+                if (control[static_cast<std::size_t>(i)] != Control::Off) {
+                    world.addPlayer(i);
+                    ++n;
+                }
+            previous.capture(world);
+            roundOverSteps = 0;
+            std::fprintf(stderr, "INFO  Round started players=%d\n", n);
+        };
+        if (screen == Screen::Match) {
+            beginMatch();
+            if (sound) audio.playMusic(1100 + opt.level);
+        } else if (sound) {
+            audio.playMusic(1010);  // main menu music
+        }
 
         bool running = true;
         bool paused = false;
         int frame = 0;
         int step = 0;
-        int roundOverSteps = 0;
-        std::array<int, ab::kMaxPlayers> wins{};  // round wins in the current match
         Uint64 last = SDL_GetTicksNS();
         double accumulatorMs = 0.0;
 
@@ -200,14 +246,49 @@ int main(int argc, char** argv) {
             bool singleStep = false;
             while (SDL_PollEvent(&e)) {
                 if (e.type == SDL_EVENT_QUIT) running = false;
-                if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
-                    if (e.key.key == SDLK_ESCAPE) running = false;
-                    if (e.key.key == SDLK_R) {
-                        startRound(world, scheme, opt.players, extras);
-                        roundOverSteps = 0;
+                if (e.type != SDL_EVENT_KEY_DOWN || e.key.repeat) continue;
+                const SDL_Keycode key = e.key.key;
+                if (screen == Screen::MainMenu) {
+                    // Items as on the original's menu picture.
+                    if (key == SDLK_UP) menuItem = (menuItem + 6) % 7;
+                    if (key == SDLK_DOWN) menuItem = (menuItem + 1) % 7;
+                    if (key == SDLK_ESCAPE) running = false;
+                    if (key == SDLK_RETURN) {
+                        if (menuItem == 0) screen = Screen::PlayerList;
+                        if (menuItem == 6) running = false;
+                        if (sound) audio.playRange(10, 10);
                     }
-                    if (e.key.key == SDLK_P) paused = !paused;
-                    if (e.key.key == SDLK_N) singleStep = true;  // advance one step while paused
+                } else if (screen == Screen::PlayerList) {
+                    Control& c = control[static_cast<std::size_t>(listRow)];
+                    if (key == SDLK_UP) listRow = (listRow + ab::kMaxPlayers - 1) % ab::kMaxPlayers;
+                    if (key == SDLK_DOWN) listRow = (listRow + 1) % ab::kMaxPlayers;
+                    if (key == SDLK_LEFT) c = Control::Off;
+                    if (key == SDLK_RIGHT)  // AI -> KEY 0 -> KEY 1 -> OFF -> AI, as observed on the original
+                        c = c == Control::Ai ? Control::Key0 : c == Control::Key0 ? Control::Key1 : c == Control::Key1 ? Control::Off : Control::Ai;
+                    if (key == SDLK_ESCAPE) screen = Screen::MainMenu;
+                    if (key == SDLK_RETURN) {
+                        int n = 0;
+                        for (Control k : control) n += k != Control::Off ? 1 : 0;
+                        if (n >= 2) {
+                            wins = {};
+                            matchOver = false;
+                            screen = Screen::Match;
+                            beginMatch();
+                            if (sound) audio.playMusic(1100 + opt.level);
+                        }
+                    }
+                } else {
+                    if (key == SDLK_ESCAPE) {
+                        if (haveMenu) {
+                            screen = Screen::MainMenu;
+                            if (sound) audio.playMusic(1010);
+                        } else {
+                            running = false;
+                        }
+                    }
+                    if (key == SDLK_R) beginMatch();
+                    if (key == SDLK_P) paused = !paused;
+                    if (key == SDLK_N) singleStep = true;  // advance one step while paused
                 }
             }
 
@@ -215,48 +296,99 @@ int main(int argc, char** argv) {
             double frameMs = static_cast<double>(now - last) / 1.0e6;
             last = now;
             if (opt.frames > 0) frameMs = 1000.0 / 60.0;  // automated runs are frame-count driven
-            accumulatorMs += std::min(frameMs, 250.0);
-            if (paused) accumulatorMs = singleStep ? kStepMs : 0.0;
-
-            const bool* keys = SDL_GetKeyboardState(nullptr);
-            while (accumulatorMs >= kStepMs) {
-                std::array<ab::PlayerInput, ab::kMaxPlayers> input{};
-                for (int i = 0; i < opt.players; ++i)
-                    input[static_cast<std::size_t>(i)] = (opt.demo || i >= opt.humans)
-                                                             ? ai[static_cast<std::size_t>(i)].decide(world, i, kStepMs)
-                                                             : keyboardInput(keys, i);
-                previous.capture(world);
-                world.tick(kStepMs, input);
-                playEvents(world, audio);
-                accumulatorMs -= kStepMs;
-                ++step;
-                // A decided round stays on screen for three seconds, then a new one starts.
-                if (world.roundOver() && roundOverSteps == 0) {
-                    const int win = world.winner();
-                    if (win >= 0) {
-                        const int total = ++wins[static_cast<std::size_t>(win)];
-                        std::fprintf(stderr, "INFO  Round over winner=%d kills=%d wins=%d\n", win, world.player(win).kills, total);
-                        if (total >= opt.wins) {
-                            std::fprintf(stderr, "INFO  Match over winner=%d\n", win);
-                            wins = {};
-                        }
-                    } else {
-                        std::fprintf(stderr, "INFO  Round over draw\n");
-                    }
-                }
-                if (world.roundOver() && ++roundOverSteps > 60) {
-                    startRound(world, scheme, opt.players, extras);
-                    previous.capture(world);
-                    roundOverSteps = 0;
-                }
-            }
 
             int w = 0;
             int h = 0;
             SDL_GetWindowSizeInPixels(window, &w, &h);
+
+            if (screen == Screen::Match) {
+                accumulatorMs += std::min(frameMs, 250.0);
+                if (paused) accumulatorMs = singleStep ? kStepMs : 0.0;
+                const bool* keys = SDL_GetKeyboardState(nullptr);
+                while (accumulatorMs >= kStepMs) {
+                    std::array<ab::PlayerInput, ab::kMaxPlayers> input{};
+                    for (int i = 0; i < ab::kMaxPlayers; ++i) {
+                        const Control c = control[static_cast<std::size_t>(i)];
+                        if (c == Control::Ai) input[static_cast<std::size_t>(i)] = ai[static_cast<std::size_t>(i)].decide(world, i, kStepMs);
+                        if (c == Control::Key0) input[static_cast<std::size_t>(i)] = keyboardInput(keys, 0);
+                        if (c == Control::Key1) input[static_cast<std::size_t>(i)] = keyboardInput(keys, 1);
+                    }
+                    previous.capture(world);
+                    world.tick(kStepMs, input);
+                    playEvents(world, audio);
+                    accumulatorMs -= kStepMs;
+                    ++step;
+                    // A decided round stays on screen for three seconds, then the next one starts.
+                    if (world.roundOver() && roundOverSteps == 0) {
+                        const int win = world.winner();
+                        if (win >= 0) {
+                            const int total = ++wins[static_cast<std::size_t>(win)];
+                            std::fprintf(stderr, "INFO  Round over winner=%d kills=%d wins=%d\n", win, world.player(win).kills, total);
+                            if (total >= opt.wins) {
+                                matchOver = true;
+                                std::fprintf(stderr, "INFO  Match over winner=%d\n", win);
+                            }
+                        } else {
+                            std::fprintf(stderr, "INFO  Round over draw\n");
+                        }
+                    }
+                    if (world.roundOver() && ++roundOverSteps > 60) {
+                        if (matchOver) {
+                            wins = {};
+                            matchOver = false;
+                            if (haveMenu) {
+                                screen = Screen::MainMenu;
+                                if (sound) audio.playMusic(1010);
+                                break;
+                            }
+                        }
+                        beginMatch();
+                    }
+                }
+            }
             audio.update();
-            const float alpha = paused ? 1.0f : static_cast<float>(accumulatorMs / kStepMs);
-            renderer.draw(world, previous, alpha, w, h, &sprites, &wins);
+
+            if (screen == Screen::Match) {
+                const float alpha = paused ? 1.0f : static_cast<float>(accumulatorMs / kStepMs);
+                renderer.draw(world, previous, alpha, w, h, &sprites, &wins);
+                if (world.roundOver() && sprites.loaded()) {
+                    // Result line over the frozen field (the original shows full result screens).
+                    const int win = world.winner();
+                    const std::string line = win < 0 ? "DRAW GAME"
+                                             : matchOver ? "PLAYER " + std::to_string(win + 1) + " WINS THE MATCH!"
+                                                         : "PLAYER " + std::to_string(win + 1) + " WINS THE ROUND";
+                    renderer.begin(w, h);
+                    renderer.quad(150, 222, 340, 30, 0.0f, 0.0f, 0.0f, 0.75f);
+                    renderer.text(sprites, line, 170, 229, 1.0f, 0.95f, 0.3f);
+                    renderer.end();
+                }
+            } else if (screen == Screen::MainMenu) {
+                renderer.begin(w, h);
+                renderer.image(sprites.picture("mainmenu"));
+                // The picture carries the item texts; the game draws only the cursor
+                // (original value 700: first item at x 332, y 140, 38 px apart).
+                renderer.sprite(sprites, "cursor1", frame / 8, -1, 332.0f, 140.0f + 38.0f * static_cast<float>(menuItem));
+                renderer.end();
+            } else {
+                renderer.begin(w, h);
+                renderer.image(sprites.picture("glue0"));
+                // Original layout: heading at (40,140), list from (70,170) every 24 px (values 705/710).
+                renderer.text(sprites, "Available players:", 41, 141, 0, 0, 0);
+                renderer.text(sprites, "Available players:", 40, 140, 1, 1, 1);
+                static const float colour[ab::kMaxPlayers][3] = {
+                    {0.95f, 0.95f, 0.95f}, {0.55f, 0.55f, 0.55f}, {0.90f, 0.15f, 0.15f}, {0.20f, 0.35f, 0.95f}, {0.15f, 0.80f, 0.20f},
+                    {0.95f, 0.90f, 0.15f}, {0.15f, 0.85f, 0.85f}, {0.90f, 0.20f, 0.90f}, {0.95f, 0.55f, 0.10f}, {0.55f, 0.20f, 0.90f}};
+                for (int i = 0; i < ab::kMaxPlayers; ++i) {
+                    const std::string line = "Player " + std::to_string(i + 1) + ": " + controlName(control[static_cast<std::size_t>(i)]);
+                    const float y = 170.0f + 24.0f * static_cast<float>(i);
+                    renderer.text(sprites, line, 71, y + 1, 0, 0, 0);
+                    renderer.text(sprites, line, 70, y, colour[i][0], colour[i][1], colour[i][2]);
+                }
+                renderer.sprite(sprites, "cursor1", frame / 8, -1, 56.0f, 185.0f + 24.0f * static_cast<float>(listRow));
+                renderer.text(sprites, "Up/Down: select   Left: off   Right: change   Enter: start", 60, 440, 0.4f, 1.0f, 1.0f);
+                renderer.end();
+            }
+
             ++frame;
             if (opt.frames > 0 && frame >= opt.frames) {
                 if (!opt.screenshot.empty()) writePpm(opt.screenshot, w, h);
@@ -270,5 +402,5 @@ int main(int argc, char** argv) {
     SDL_GL_DestroyContext(gl);
     SDL_DestroyWindow(window);
     SDL_Quit();
-    return rc;
+    return 0;
 }

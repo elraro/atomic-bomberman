@@ -353,3 +353,9 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - `.fon` bitmap font format decoded (header of three i32, 8 pointer bytes, width/offset table, 1-bit rows); verified by exact size match on all three fonts and by rendering. C++ reader `parseFont` with a unit test.
 - The round clock uses sprite digits (`numeric font` in `kfont.ani`); the modern HUD now draws clock, hurry banner and score labels from the original assets at the original coordinates (values 110-119). Side-by-side with an original screenshot: clock and white player's label coincide.
 - Tests: 48 tests, 808 checks.
+
+### Session 11 addendum: music and menu flow
+
+- Level music loops (sound id 1100 + level); menu music id 1010. Exercised with SDL's dummy audio driver, not listened to.
+- The main menu's item texts are part of `mainmenu.pcx`; the game only draws the cursor (`cursor1` in `misc.ani`) at the coordinates of value 700. Found by rendering the three `.fon` fonts next to the original menu: none matches the menu lettering.
+- Application: screen state machine (main menu → player list → match), original pictures and cursor, player list with the original's layout, cycling order and defaults. Result line overlay after each round.
