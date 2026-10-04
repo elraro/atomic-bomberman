@@ -53,7 +53,25 @@ Options parseArgs(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
-        if (a == "--game-dir") o.gameDir = next();
+        if (a == "--help" || a == "-h") {
+            std::puts("Usage: atomic [options]\n"
+                      "  --import-assets DIR  import the data of an original game copy, then exit\n"
+                      "  --assets-dir DIR     where --import-assets writes (default: per-user data folder)\n"
+                      "  --game-dir DIR       imported assets or an original game folder to play from\n"
+                      "  --start              skip the menu and start a match at once\n"
+                      "  --scheme NAME        scheme (map) to play, e.g. BASIC\n"
+                      "  --level N            level theme 0-10\n"
+                      "  --players N          number of players (default 4)\n"
+                      "  --humans N           keyboard players, 0-2\n"
+                      "  --wins N             round wins needed for the match\n"
+                      "  --seed N             random seed\n"
+                      "  --mute               no sound\n"
+                      "  --native             640x480 window\n"
+                      "  --shapes             plain shapes instead of the game's graphics\n"
+                      "Testing: --demo --frames N --screenshot FILE --result-shot --menu-shot N --script KEYS");
+            std::exit(0);
+        }
+        else if (a == "--game-dir") o.gameDir = next();
         else if (a == "--scheme") o.scheme = next();
         else if (a == "--players") o.players = std::atoi(next().c_str());
         else if (a == "--humans") o.humans = std::clamp(std::atoi(next().c_str()), 0, 2);
@@ -83,7 +101,10 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--level") o.level = std::clamp(std::atoi(next().c_str()), 0, 10);
         else if (a == "--wins") o.wins = std::max(1, std::atoi(next().c_str()));
         else if (a == "--native") o.native = true;
-        else std::fprintf(stderr, "WARN  unknown argument %s\n", a.c_str());
+        else {
+            std::fprintf(stderr, "ERROR unknown argument %s (see --help)\n", a.c_str());
+            std::exit(2);
+        }
     }
     o.players = std::clamp(o.players, 1, ab::kMaxPlayers);
     if (o.demo || o.frames > 0) o.menu = o.menuShot != 0 || !o.script.empty();
