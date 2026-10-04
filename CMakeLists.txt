@@ -11,6 +11,7 @@ add_compile_options(-Wall -Wextra -Wpedantic -Wconversion -Wshadow)
 add_library(ab_game
     src/game/values.cpp
     src/game/world.cpp
+    src/game/ai.cpp
 )
 target_include_directories(ab_game PUBLIC src)
 

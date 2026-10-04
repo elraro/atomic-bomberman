@@ -333,3 +333,10 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - Renderer: `die green N`, `kick`, `punch`, `walkbomb`/`standbomb`; level theme selectable (`--level 0-10`); application counts round wins per match (`--wins`).
 - Tests: 41 tests, 758 checks, all passing. Level 3 rendered and checked by eye.
 - Not validated against the original: diseases (they are random there and cannot be forced from a scheme) and all animations.
+
+### Session 9 addendum: AI
+
+- The original's AI is a priority list of eight behaviour functions reached only through a pointer table at `0x45BA78`; they were missing from Ghidra's function list and were created by script. Structure, order, probabilities and the danger map are documented in `ai.md`. Confidence: HIGH for the structure and for behaviours 1, 2, 4, 5, 8; MEDIUM for 3, 6, 7 (their search routines were not read).
+- Modern `AiPlayer` (`src/game/ai.*`) follows the same list. It is an input source; the core is unchanged.
+- Measured: 200 rounds of four AIs end with a single survivor 149 times; about half of all deaths are self-inflicted.
+- Tests: 42 tests, 762 checks.

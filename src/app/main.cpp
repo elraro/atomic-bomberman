@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "audio/audio.hpp"
+#include "game/ai.hpp"
 #include "game/world.hpp"
 #include "rendering/renderer.hpp"
 #include "resources/scheme_file.hpp"
@@ -27,6 +28,7 @@ struct Options {
     std::string gameDir;
     std::string scheme = "basic";
     int players = 2;
+    int humans = 2;           // slots 0..humans-1 use the keyboard; the rest are computer players
     int frames = -1;          // stop after this many rendered frames (for automated runs)
     std::string screenshot;   // write the last frame as a PPM file
     bool demo = false;        // scripted input instead of the keyboard
@@ -46,6 +48,7 @@ Options parseArgs(int argc, char** argv) {
         if (a == "--game-dir") o.gameDir = next();
         else if (a == "--scheme") o.scheme = next();
         else if (a == "--players") o.players = std::atoi(next().c_str());
+        else if (a == "--humans") o.humans = std::clamp(std::atoi(next().c_str()), 0, 2);
         else if (a == "--frames") o.frames = std::atoi(next().c_str());
         else if (a == "--screenshot") o.screenshot = next();
         else if (a == "--seed") o.seed = static_cast<std::uint32_t>(std::atoi(next().c_str()));
@@ -72,16 +75,6 @@ ab::PlayerInput keyboardInput(const bool* keys, int player) {
         in.button1 = keys[SDL_SCANCODE_TAB] || keys[SDL_SCANCODE_LCTRL];
         in.button2 = keys[SDL_SCANCODE_Q] || keys[SDL_SCANCODE_LSHIFT];
     }
-    return in;
-}
-
-// Deterministic stand-in for players: wander and drop bombs. Not an AI.
-ab::PlayerInput scriptedInput(int player, int step, ab::Rng& rng) {
-    static std::array<int, ab::kMaxPlayers> dir{};
-    ab::PlayerInput in;
-    if (step % 8 == 0 || rng.below(12) == 0) dir[static_cast<std::size_t>(player)] = rng.below(4);
-    in.dir[static_cast<std::size_t>(dir[static_cast<std::size_t>(player)])] = true;
-    in.button1 = rng.below(40) == 0;
     return in;
 }
 
@@ -179,7 +172,8 @@ int main(int argc, char** argv) {
         if (!opt.gameDir.empty() && !opt.mute) audio.init(opt.gameDir);
         if (!opt.gameDir.empty() && !opt.shapes) sprites.load(opt.gameDir, opt.level);
         ab::World world(values, opt.seed);
-        ab::Rng scriptRng(opt.seed + 77);
+        std::vector<ab::AiPlayer> ai;
+        for (int i = 0; i < ab::kMaxPlayers; ++i) ai.emplace_back(opt.seed * 31u + static_cast<std::uint32_t>(i) * 977u + 5u);
         startRound(world, scheme, opt.players);
         ab::RenderSnapshot previous;
         previous.capture(world);
@@ -220,7 +214,9 @@ int main(int argc, char** argv) {
             while (accumulatorMs >= kStepMs) {
                 std::array<ab::PlayerInput, ab::kMaxPlayers> input{};
                 for (int i = 0; i < opt.players; ++i)
-                    input[static_cast<std::size_t>(i)] = opt.demo ? scriptedInput(i, step, scriptRng) : keyboardInput(keys, i);
+                    input[static_cast<std::size_t>(i)] = (opt.demo || i >= opt.humans)
+                                                             ? ai[static_cast<std::size_t>(i)].decide(world, i, kStepMs)
+                                                             : keyboardInput(keys, i);
                 previous.capture(world);
                 world.tick(kStepMs, input);
                 playEvents(world, audio);

@@ -264,3 +264,17 @@ Evidence:
 
 Status:
 RESOLVED (session 7, dynamic). With two idle players and enclosement depth 0, the "DRAW GAME" screen (`draw.pcx`, `draw.rss`) appeared 59.02 s after the start of a round whose clock began at 1:00, i.e. when the displayed clock reached 0:00. The code path has not been located.
+
+# UNKNOWN-023
+
+Question:
+What danger level do bombs write into the AI danger map, and how do the AI's three search routines order their expansion?
+
+Evidence:
+`0x4242CC`/`0x4243A5` load the level from a local (`[ebp-0x10c]`) computed earlier in `Bombs_Update`; searches at `0x4092A1`, `0x40970B`, `0x409C1F` (1.1-1.3 KB each) were not read.
+
+Status:
+OPEN (affects how closely the modern AI's choices match the original's)
+
+Next action:
+Read the block of `Bombs_Update` before `0x4242CC`; read the three search functions; then compare AI statistics (round length, suicide rate) between the original's demo matches and the modern AI.

@@ -35,9 +35,13 @@ GL functions are taken from the system `GL/gl.h` + `GL/glext.h` prototypes (Mesa
 
 Round generation (brick density, hidden powerups, start-area clearing), start freeze, player movement and collision, direction priority, bomb dropping, fuses, blast propagation, chain reactions, flames and death, the contender window, kicking, kick-stop, jelly bounce, trigger bombs, goldflame, powerup reveal (with early-round protection), pickup, caps and exclusive pairs, the round clock, the hurry warning, closing walls, the round result (winner or draw), punched, thrown and carried bombs, spooge lines, the head-hit stun, and diseases (nine effects, timer, spreading, cure on pickup).
 
+## Computer players
+
+`src/game/ai.*` implements the original's behaviour list as an input source (see `docs/reverse-engineering/ai.md` for what is faithful and what is approximated).
+
 ## Not covered yet
 
-Duds, level extras, team play, campaign, AI, networking. Match flow exists only as a win counter in the application (no results or victory screens). What happens when the round clock reaches zero is not known yet (the modern clock simply stops at 0). Each is specified to some degree in `docs/specifications/` except game modes, AI and networking.
+Duds, level extras, team play, campaign, networking. Match flow exists only as a win counter in the application (no results or victory screens). What happens when the round clock reaches zero is not known yet (the modern clock simply stops at 0). Each is specified to some degree in `docs/specifications/` except game modes, AI and networking.
 
 ## Validation level
 

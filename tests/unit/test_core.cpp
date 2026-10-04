@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "game/ai.hpp"
 #include "game/world.hpp"
 #include "resources/ani_file.hpp"
 #include "resources/scheme_file.hpp"
@@ -891,6 +892,41 @@ void testDeathAnimationChosen() {
     CHECK(f.w.player(0).deathAnim >= 1 && f.w.player(0).deathAnim <= 24);
 }
 
+void testAiSurvivesOwnBombs() {
+    // Four computer players on the standard scheme: over many rounds they must
+    // open the map, not all die at once, and usually leave a single winner.
+    Scheme s = Scheme::pillars();
+    for (int y = 0; y < kGridH; ++y)
+        for (int x = 0; x < kGridW; ++x)
+            if (s.tiles[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)] == Tile::Blank)
+                s.tiles[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)] = Tile::Brick;
+    s.brickDensity = 90;
+    int decided = 0, withWinner = 0, bombsSeen = 0, earlyWipe = 0;
+    for (std::uint32_t seed = 1; seed <= 12; ++seed) {
+        World w{Values::defaults(), seed};
+        w.startRound(s, true);
+        std::vector<AiPlayer> ai;
+        for (int i = 0; i < 4; ++i) {
+            w.addPlayer(i);
+            ai.emplace_back(seed * 100 + static_cast<std::uint32_t>(i));
+        }
+        Inputs in{};
+        int t = 0;
+        for (; t < 20 * 150 && !w.roundOver(); ++t) {
+            for (int i = 0; i < 4; ++i) in[static_cast<std::size_t>(i)] = ai[static_cast<std::size_t>(i)].decide(w, i, 50);
+            w.tick(50, in);
+            for (const Event& e : w.takeEvents()) bombsSeen += e.kind == EventKind::BombDropped ? 1 : 0;
+        }
+        if (w.roundOver()) ++decided;
+        if (w.winner() >= 0) ++withWinner;
+        if (t < 20 * 10) ++earlyWipe;  // over within ten seconds
+    }
+    CHECK(bombsSeen > 100);   // they do lay bombs
+    CHECK(decided == 12);     // every round ends (kills, or the clock)
+    CHECK(withWinner >= 4);   // and a fair share end with a survivor
+    CHECK(earlyWipe <= 2);    // they do not all blow themselves up at once
+}
+
 void testEvents() {
     Fixture f;
     f.w.takeEvents();
@@ -1070,6 +1106,7 @@ int main() {
         {"spooge", testSpooge},
         {"diseases", testDiseases},
         {"death animation", testDeathAnimationChosen},
+        {"ai plays rounds", testAiSurvivesOwnBombs},
         {"events", testEvents},
         {"clock and hurry", testClockAndHurry},
         {"closing walls", testClosingWalls},
