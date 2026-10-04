@@ -106,6 +106,10 @@ Unexplained in the D46 run: the idle second player appears at different cells in
 
 | D49 | **Arrows.** Level 3, open scheme, player with a kicker. A bomb kicked east along row 0 from cell 1 is seen 0.77 s later in column 4 just below row 0, 1.14 s later in row 2 near column 5, and 1.45 s later in column 6 above row 2. That is the route east → south at the arrow on (4,0) → east at (4,2) → north at (6,2), and the distances (154, 228 and 290 px along the route) match 200 px/s. The bomb exploded at +2.003 s after the drop | Timestamped screenshots, `extra3.res` | Extras: arrows turn a sliding bomb at the cell centre; kick speed; fuse runs while sliding |
 
+| D50 | **Flying bomb meets a player.** `testhit.sch` (working copy) starts player 2 on (2,0) and player 1 on (5,0) with punch. Player 1 drops a bomb on (5,0), steps to (6,0), turns back and punches: punch sound at +1.314 s, a bounce sound 0.459 s later (three cells, where player 2 stands) and another 0.153 s after that (one more cell); the bomb is then at rest on (1,0), beyond player 2. It explodes at +2.611 s: 1.314 s of fuse before the punch plus 0.685 s after landing = 1.999 s | Timestamps, screenshots | B15: a flying bomb does not land on a player, it makes a further one-cell hop (40 px at 260 px/s = 0.154 s); fuse paused in flight |
+
+Unexplained, from a first attempt at D50 in which one key press was lost and the bomb was never punched: the explosion sound loaded 1.864 s after the drop sound instead of 2.000 s. Every other measurement of an unpunched bomb gave 2.000 s. Not reproduced; cause unknown.
+
 ## Not yet possible
 
 Attaching a debugger, and reading game memory directly. Remaining scenarios of `docs/testing/original-behaviour.md` can now be scripted one by one.
