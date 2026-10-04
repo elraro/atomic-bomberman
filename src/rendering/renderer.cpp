@@ -382,7 +382,11 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
     for (int i : order) {
         const Player& p = world.player(i);
         if (!p.present) continue;
-        const int colour = world.displayColour(i);
+        int colour = world.displayColour(i);
+        // A diseased player flickers through random colours: the original draws the sprite
+        // with a random colour whenever bit 3 of the disease timer is set (0x41F29B).
+        if (p.alive && p.diseaseMs != 0 && (p.diseaseMs & 8) != 0)
+            colour = static_cast<int>((static_cast<unsigned>(world.tickCount()) * 2654435761u + static_cast<unsigned>(i) * 40503u) >> 16) % 10;
         if (!p.alive) {
             // Death animation, one step per 50 ms, shown once.
             const std::string seq = "die green " + std::to_string(std::max(1, p.deathAnim));
