@@ -143,6 +143,7 @@ struct Player {
     int warpY = 0;
     bool prevButton1 = false;
     bool prevButton2 = false;
+    int team = 0;       // 0 or 1; only meaningful in team play
     int kills = 0;
     int killedBy = -1;  // player index, or -1
     bool dying = false;  // death animation running
@@ -211,6 +212,14 @@ public:
     // powerups under bricks. Removes all players, bombs and flames.
     void startRound(const Scheme& scheme, bool generatePowerups);
     void addPlayer(int index);
+    // Team play: the round is decided when one team is left. Teams come from the
+    // scheme (two teams, 0 and 1). Set before adding players.
+    void setTeamPlay(bool on, const std::array<int, kMaxPlayers>& teams = {});
+    bool teamPlay() const { return teamPlay_; }
+    // Colour a player is drawn in: own colour, or the team's (white / red) in team play
+    // once the opening "true colours" period (value 32) is over.
+    int displayColour(int playerIndex) const;
+    int winningTeam() const;  // team play: the surviving team, or -1
     // Level extras for this round (call after startRound). Speed setting 0-2 selects the conveyor speed.
     void setExtras(const std::vector<Extra>& extras, int conveyorSpeedSetting = 1);
     const std::vector<Extra>& extras() const { return extras_; }
@@ -307,6 +316,8 @@ private:
     int roundMs_ = 0;
     int startFreezeMs_ = 0;
     int contenders_ = 0;
+    bool teamPlay_ = false;
+    std::array<int, kMaxPlayers> teams_{};
     int roundLimitMs_ = -1;
     int enclosementDepth_ = 0;
 

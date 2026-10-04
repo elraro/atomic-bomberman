@@ -1065,6 +1065,31 @@ void testTrampoline() {
     CHECK(f.w.tile(c) == Tile::Blank);
 }
 
+void testTeamPlay() {
+    World w{Values::defaults(), 5};
+    w.startRound(Scheme::pillars(), false);
+    w.setTeamPlay(true, {0, 1, 0, 1});
+    for (int i = 0; i < 4; ++i) w.addPlayer(i);
+    w.endStartFreeze();
+    Inputs in{};
+    CHECK_EQ(w.contenders(), 2);                 // two teams
+    CHECK_EQ(w.displayColour(1), 1);             // own colours at first
+    for (int t = 0; t < 41; ++t) w.tick(50, in);
+    CHECK_EQ(w.displayColour(0), 0);             // then team colours: white and red
+    CHECK_EQ(w.displayColour(1), 2);
+    CHECK_EQ(w.displayColour(2), 0);
+    // Kill player 1 (team 1): team 1 still has player 3.
+    w.createBomb(0, pixelToCell(w.player(1).x, w.player(1).y), BombType::Regular, 1, 1);
+    for (int t = 0; t < 30; ++t) w.tick(50, in);
+    CHECK(!w.player(1).alive);
+    CHECK(!w.roundOver());
+    w.createBomb(0, pixelToCell(w.player(3).x, w.player(3).y), BombType::Regular, 1, 1);
+    for (int t = 0; t < 30; ++t) w.tick(50, in);
+    CHECK(w.roundOver());                        // team 1 wiped out although two players live
+    CHECK_EQ(w.alivePlayers(), 2);
+    CHECK_EQ(w.winningTeam(), 0);
+}
+
 void testEvents() {
     Fixture f;
     f.w.takeEvents();
@@ -1251,6 +1276,7 @@ int main() {
         {"conveyor", testConveyor},
         {"warp", testWarp},
         {"trampoline", testTrampoline},
+        {"team play", testTeamPlay},
         {"events", testEvents},
         {"clock and hurry", testClockAndHurry},
         {"closing walls", testClosingWalls},

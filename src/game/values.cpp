@@ -15,6 +15,7 @@ Values Values::defaults() {
     v.set(31, 150);
     v.set(25, 20);
     v.set(27, 1);
+    v.set(32, 40);
     v.set(41, 40);
     v.set(46, 1);
     v.set(100, 150);

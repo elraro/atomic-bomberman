@@ -116,7 +116,9 @@ int AiPlayer::pickTarget(const World& w, int self) {
     const int start = rng_.below(kMaxPlayers);
     for (int n = 0; n < kMaxPlayers; ++n) {
         const int i = (start + n) % kMaxPlayers;
-        if (i != self && w.player(i).present && w.player(i).alive) return i;
+        if (i == self || !w.player(i).present || !w.player(i).alive) continue;
+        if (w.teamPlay() && w.player(i).team == w.player(self).team) continue;
+        return i;
     }
     return -1;
 }
@@ -197,6 +199,7 @@ PlayerInput AiPlayer::decide(const World& w, int self, int dtMs) {
         for (int i = 0; i < kMaxPlayers; ++i) {
             const Player& o = w.player(i);
             if (i == self || !o.present || !o.alive) continue;
+            if (w.teamPlay() && o.team == me.team) continue;
             const Cell oc = pixelToCell(o.x, o.y);
             if (std::abs(oc.x - here.x) + std::abs(oc.y - here.y) <= 1) enemyNear = true;
         }

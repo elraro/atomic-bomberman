@@ -337,7 +337,7 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
                 } else {
                     std::string piece = "center";
                     if (f.dir != kNoDir) piece = std::string(f.tip ? "tip" : "mid") + kDirName[f.dir];
-                    sprite(bank, "flame " + piece + " green", age, f.owner, rx, ry);
+                    sprite(bank, "flame " + piece + " green", age, f.owner >= 0 ? world.displayColour(f.owner) : -1, rx, ry);
                 }
             }
         }
@@ -364,7 +364,7 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
         const char* seq = b.type == BombType::Trigger ? "bomb trigger green"
                         : b.type == BombType::Jelly   ? "bomb jelly green"
                                                       : "bomb regular green";
-        sprite(bank, seq, frame - b.createdTick, b.owner, bx, by);
+        sprite(bank, seq, frame - b.createdTick, b.owner >= 0 ? world.displayColour(b.owner) : -1, bx, by);
     }
 
     // Players are drawn back to front.
@@ -374,11 +374,12 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
     for (int i : order) {
         const Player& p = world.player(i);
         if (!p.present) continue;
+        const int colour = world.displayColour(i);
         if (!p.alive) {
             // Death animation, one step per 50 ms, shown once.
             const std::string seq = "die green " + std::to_string(std::max(1, p.deathAnim));
             if (p.dying && p.dyingFrames < bank.sequenceLength(seq))
-                sprite(bank, seq, p.dyingFrames, i, static_cast<float>(p.x), static_cast<float>(p.y));
+                sprite(bank, seq, p.dyingFrames, colour, static_cast<float>(p.x), static_cast<float>(p.y));
             continue;
         }
         if (p.special == Special::WarpOut || p.special == Special::WarpIn) continue;  // inside the warp
@@ -394,15 +395,15 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
         const std::string dir = kDirName[static_cast<unsigned>(p.facing) & 3u];
         const bool carrying = p.holding >= 0;
         bool drawn = false;
-        if (p.action == 1) drawn = sprite(bank, "kick " + dir, p.actionFrames, i, px, py);
-        if (p.action == 2) drawn = sprite(bank, "punch " + dir, p.actionFrames, i, px, py);
+        if (p.action == 1) drawn = sprite(bank, "kick " + dir, p.actionFrames, colour, px, py);
+        if (p.action == 2) drawn = sprite(bank, "punch " + dir, p.actionFrames, colour, px, py);
         if (!drawn && carrying)
-            drawn = sprite(bank, std::string(p.moving ? "walkbomb " : "standbomb ") + dir, p.moving ? p.animCounter / 3 : 0, i, px, py);
+            drawn = sprite(bank, std::string(p.moving ? "walkbomb " : "standbomb ") + dir, p.moving ? p.animCounter / 3 : 0, colour, px, py);
         if (!drawn) {
             if (p.moving)
-                sprite(bank, "walk " + dir, p.animCounter / 3, i, px, py);
+                sprite(bank, "walk " + dir, p.animCounter / 3, colour, px, py);
             else
-                sprite(bank, "stand " + dir, 0, i, px, py);
+                sprite(bank, "stand " + dir, 0, colour, px, py);
         }
     }
 }

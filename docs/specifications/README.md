@@ -24,5 +24,6 @@ Numbers written as `V(n)` are entries of the original `data/res/valuelst.res`; t
 | `bombs.md` | Bomb lifecycle, fuse, kicked/punched/held bombs |
 | `explosions.md` | Blast propagation, flames, interactions |
 | `powerups.md` | Types, generation, pickup, diseases |
+| `game-modes.md` | Pre-game screens, free-for-all, team play, match flow |
 
-Not written yet (insufficient knowledge): `game-modes.md` (team play, campaign, match scoring), `networking.md`, AI, level extras (arrows, warps, conveyors, trampolines are only described where they touch the rules above).
+Not written yet (insufficient knowledge): `networking.md`, campaign mode. The AI is described in `../reverse-engineering/ai.md`.

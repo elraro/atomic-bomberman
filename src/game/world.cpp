@@ -93,9 +93,27 @@ void World::startRound(const Scheme& scheme, bool generatePowerups) {
     }
 }
 
+void World::setTeamPlay(bool on, const std::array<int, kMaxPlayers>& teams) {
+    teamPlay_ = on;
+    teams_ = teams;
+}
+
+int World::displayColour(int i) const {
+    if (!teamPlay_ || roundMs_ < values_.get(32) * frameMs_) return i;
+    return players_[static_cast<std::size_t>(i)].team != 0 ? 2 : 0;  // team 0 white, team 1 red
+}
+
+int World::winningTeam() const {
+    if (!teamPlay_ || contenders_ > 1) return -1;
+    for (const Player& p : players_)
+        if (p.present && p.alive) return p.team;
+    return -1;
+}
+
 void World::addPlayer(int i) {
     Player& p = players_[static_cast<std::size_t>(i)];
     p = Player{};
+    p.team = teamPlay_ ? teams_[static_cast<std::size_t>(i)] : 0;
     p.present = true;
     p.alive = true;
     const Cell c = startCells_[static_cast<std::size_t>(i)];
@@ -119,7 +137,14 @@ void World::addPlayer(int i) {
         powerups_[index(c)] = {};
     }
     for (Dir d = 0; d < 4; ++d) clear(step(c, d));
-    contenders_ = alivePlayers();
+    if (teamPlay_) {
+        std::array<bool, 2> alive{};
+        for (const Player& q : players_)
+            if (q.present && q.alive) alive[static_cast<std::size_t>(q.team & 1)] = true;
+        contenders_ = (alive[0] ? 1 : 0) + (alive[1] ? 1 : 0);
+    } else {
+        contenders_ = alivePlayers();
+    }
 }
 
 void World::setExtras(const std::vector<Extra>& extras, int conveyorSpeedSetting) {
@@ -692,6 +717,7 @@ void World::updatePlayers(int dt, const std::array<PlayerInput, kMaxPlayers>& in
     if (startFreezeMs_ > 0) startFreezeMs_ = std::max(0, startFreezeMs_ - dt);
 
     int contenders = 0;
+    std::array<bool, 2> teamAlive{};
     for (int i = 0; i < kMaxPlayers; ++i) {
         Player& p = players_[static_cast<std::size_t>(i)];
         if (!p.present) continue;
@@ -706,9 +732,13 @@ void World::updatePlayers(int dt, const std::array<PlayerInput, kMaxPlayers>& in
                 p.dyingAcc -= frameMs_;
             }
         }
-        if (p.alive || (p.dying && p.dyingFrames < values_.get(kOutsurviveFrames))) ++contenders;
+        if (p.alive || (p.dying && p.dyingFrames < values_.get(kOutsurviveFrames))) {
+            ++contenders;
+            teamAlive[static_cast<std::size_t>(p.team & 1)] = true;
+        }
     }
-    contenders_ = contenders;
+    // In team play the contenders are the teams that still have someone standing.
+    contenders_ = teamPlay_ ? (teamAlive[0] ? 1 : 0) + (teamAlive[1] ? 1 : 0) : contenders;
 
     // Carried bombs follow their holder. A holder who died takes the bomb with them.
     for (Bomb& b : bombs_) {
@@ -764,6 +794,7 @@ bool World::hurry() const {
 
 int World::winner() const {
     if (contenders_ > 1) return -1;  // time ran out
+    if (teamPlay_) return -1;        // use winningTeam()
     for (int i = 0; i < kMaxPlayers; ++i)
         if (players_[static_cast<std::size_t>(i)].present && players_[static_cast<std::size_t>(i)].alive) return i;
     return -1;

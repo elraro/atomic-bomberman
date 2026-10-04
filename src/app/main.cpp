@@ -269,6 +269,10 @@ int main(int argc, char** argv) {
         for (std::size_t i = 0; i < schemes.size(); ++i)
             if (schemes[i].file == opt.scheme) schemeIndex = static_cast<int>(i);
         int setupRow = 0;
+        bool teamPlay = false;
+        std::array<int, ab::kMaxPlayers> teams{};
+        if (!opt.gameDir.empty())
+            if (auto sf = ab::loadSchemeFile(opt.gameDir + "/data/schemes/" + opt.scheme + ".sch")) teams = sf->team;
 
         auto spritesPtr = std::make_unique<ab::SpriteBank>();
         if (!opt.gameDir.empty() && !opt.shapes) spritesPtr->load(opt.gameDir, level);
@@ -281,8 +285,10 @@ int main(int argc, char** argv) {
             }
             extras = ab::loadExtrasFile(opt.gameDir + "/data/res/extra" + std::to_string(level) + ".res");
             if (!schemes.empty())
-                if (auto sf = ab::loadSchemeFile(opt.gameDir + "/data/schemes/" + schemes[static_cast<std::size_t>(schemeIndex)].file + ".sch"))
+                if (auto sf = ab::loadSchemeFile(opt.gameDir + "/data/schemes/" + schemes[static_cast<std::size_t>(schemeIndex)].file + ".sch")) {
                     scheme = sf->scheme;
+                    teams = sf->team;
+                }
         };
         ab::Audio audio;
         const bool sound = !opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir);
@@ -313,6 +319,7 @@ int main(int argc, char** argv) {
         auto beginMatch = [&]() {
             world.startRound(scheme, true);
             world.setExtras(extras);
+            world.setTeamPlay(teamPlay, teams);
             int n = 0;
             for (int i = 0; i < ab::kMaxPlayers; ++i)
                 if (control[static_cast<std::size_t>(i)] != Control::Off) {
@@ -379,8 +386,9 @@ int main(int argc, char** argv) {
                 } else if (screen == Screen::LevelSetup) {
                     // Level, scheme and match length, as on the original's second pre-game screen.
                     const int d = key == SDLK_RIGHT ? 1 : key == SDLK_LEFT ? -1 : 0;
-                    if (key == SDLK_UP) setupRow = (setupRow + 2) % 3;
-                    if (key == SDLK_DOWN) setupRow = (setupRow + 1) % 3;
+                    if (key == SDLK_UP) setupRow = (setupRow + 3) % 4;
+                    if (key == SDLK_DOWN) setupRow = (setupRow + 1) % 4;
+                    if (d != 0 && setupRow == 3) teamPlay = !teamPlay;
                     if (d != 0 && setupRow == 0) level = (level + d + 11) % 11;
                     if (d != 0 && setupRow == 1 && !schemes.empty())
                         schemeIndex = (schemeIndex + d + static_cast<int>(schemes.size())) % static_cast<int>(schemes.size());
@@ -437,7 +445,7 @@ int main(int argc, char** argv) {
                     ++step;
                     // A decided round stays on screen for three seconds, then the next one starts.
                     if (world.roundOver() && roundOverSteps == 0) {
-                        const int win = world.winner();
+                        const int win = world.teamPlay() ? world.winningTeam() : world.winner();
                         if (win >= 0) {
                             const int total = ++wins[static_cast<std::size_t>(win)];
                             std::fprintf(stderr, "INFO  Round over winner=%d kills=%d wins=%d\n", win, world.player(win).kills, total);
@@ -470,10 +478,17 @@ int main(int argc, char** argv) {
                 renderer.draw(world, previous, alpha, w, h, spritesPtr.get(), &wins);
                 if (world.roundOver() && spritesPtr->loaded() && roundOverSteps > 20) {
                     // After a second on the frozen field: the original's result pictures.
-                    const int win = world.winner();
+                    const int win = world.teamPlay() ? world.winningTeam() : world.winner();
                     renderer.begin(w, h);
                     if (win < 0) {
                         renderer.image(spritesPtr->picture("draw"));
+                    } else if (world.teamPlay()) {
+                        // Team result: the original's team pictures (white team 0, red team 1).
+                        renderer.image(spritesPtr->picture("team" + std::to_string(win)));
+                        const std::string line = std::string(matchOver ? "TEAM " : "Team ") + std::to_string(win + 1) +
+                                                 (matchOver ? " WINS THE MATCH!" : " wins the round   score: " + std::to_string(wins[static_cast<std::size_t>(win)]));
+                        renderer.text(*spritesPtr, line, 211, 441, 0, 0, 0);
+                        renderer.text(*spritesPtr, line, 210, 440, 1.0f, 0.95f, 0.3f);
                     } else if (matchOver) {
                         renderer.image(spritesPtr->picture("victory" + std::to_string(win)));
                         const std::string line = "PLAYER " + std::to_string(win + 1) + " WINS THE MATCH!";  // message 36
@@ -499,11 +514,12 @@ int main(int argc, char** argv) {
             } else if (screen == Screen::LevelSetup) {
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue1"));
-                const std::string lines[3] = {
+                const std::string lines[4] = {
                     kLevelName[level],
                     schemes.empty() ? std::string("(built-in arena)") : "Scheme: " + schemes[static_cast<std::size_t>(schemeIndex)].title,
-                    std::to_string(winsNeeded) + " Wins to win match"};
-                for (int r = 0; r < 3; ++r) {
+                    std::to_string(winsNeeded) + " Wins to win match",
+                    std::string("Team play: ") + (teamPlay ? "ON (teams from the scheme)" : "OFF")};
+                for (int r = 0; r < 4; ++r) {
                     const float y = 180.0f + 24.0f * static_cast<float>(r);
                     renderer.text(*spritesPtr, lines[r], 71, y + 1, 0, 0, 0);
                     renderer.text(*spritesPtr, lines[r], 70, y, 1, 1, 1);

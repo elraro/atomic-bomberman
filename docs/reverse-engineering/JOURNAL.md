@@ -370,3 +370,9 @@ Write the behavioural specifications for map, physics, players, bombs, explosion
 - Added `--result-shot` (capture the first decided round's result screen) and `--script` (scripted menu key presses) for automated checks; automated runs no longer wait for the display.
 - Verified by capture: draw picture, round results picture with the score list, victory picture in the winner's colour (players 3 and 4), and changing level and scheme from the level screen (graphics reloaded as level 3).
 - Fixed: the match-winner line was drawn over the victory artwork's title; it is now below it.
+
+### Session 12 addendum 2: team play
+
+- Core: `setTeamPlay`, contenders counted per team, `winningTeam`, team colours after value 32 frames (team 0 → colour 0, team 1 → colour 2, from `Players_InitRound`). AI skips team-mates. Application: toggle on the level screen, team result pictures.
+- Checked by a scripted four-AI team match (two white, two red, bombs in team colours). Tests: 49 tests, 818 checks.
+- `docs/specifications/game-modes.md` written.
