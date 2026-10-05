@@ -1247,8 +1247,17 @@ void testMovieDecoder() {
     bytes({'j', 'u', 'n', 'k'});                                       // the movie may start anywhere in a file
     for (char c : std::string("Interplay MVE File\x1a")) m.push_back(static_cast<std::uint8_t>(c));
     bytes({0, 0x1a, 0x00, 0x00, 0x01, 0x33, 0x11});
-    const std::size_t chunk = m.size();
-    bytes({0, 0, 3, 0});                                               // chunk header, length patched below
+    std::size_t chunk = 0;
+    auto beginChunk = [&]() {
+        chunk = m.size();
+        bytes({0, 0, 3, 0});                                           // chunk header, length patched at the end
+    };
+    auto endChunk = [&]() {
+        const std::size_t len = m.size() - chunk - 4;
+        m[chunk] = static_cast<std::uint8_t>(len & 255);
+        m[chunk + 1] = static_cast<std::uint8_t>(len >> 8);
+    };
+    beginChunk();
     op(0x02, 0, {0x10, 0x27, 0, 0, 5, 0});                             // 10000 us x 5 = 0.05 s per picture
     op(0x03, 0, {0, 0, 0, 0, 0x22, 0x56, 0, 0});                       // mono, 8-bit, 22050 Hz
     op(0x05, 0, {2, 0, 1, 0});                                         // 2 x 1 blocks
@@ -1259,14 +1268,16 @@ void testMovieDecoder() {
                  1, 2, 0x0F, 0, 0, 0, 0, 0, 0, 0xFF});                 // colours 1,2 and eight rows of bits
     op(0x08, 0, {0, 0, 1, 0, 2, 0, 128, 255});                         // two 8-bit samples for stream 1
     op(0x07, 0, {0, 0, 0, 0});
+    endChunk();
+    beginChunk();
     // Second picture: block 0 from the previous picture, block 1 from one block to the left of the new one.
     op(0x0F, 0, {0x30});
     op(0x11, 3, {0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 0, 0, 0});       // motion byte 0: 8 left, 0 up
     op(0x07, 0, {0, 0, 0, 0});
+    endChunk();
+    beginChunk();
     op(0x00, 0, {});
-    const std::size_t len = m.size() - chunk - 4;
-    m[chunk] = static_cast<std::uint8_t>(len & 255);
-    m[chunk + 1] = static_cast<std::uint8_t>(len >> 8);
+    endChunk();
 
     MveDecoder d;
     CHECK(d.openBytes(m));
