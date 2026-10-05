@@ -13,6 +13,7 @@
 #include "game/world.hpp"
 #include "resources/campaign_file.hpp"
 #include "resources/help_file.hpp"
+#include "resources/mve_file.hpp"
 #include "resources/settings.hpp"
 #include "resources/ani_file.hpp"
 #include "resources/scheme_file.hpp"
@@ -1235,6 +1236,66 @@ void testWallsRemoveWarps() {
     CHECK(f.w.extras()[0].type == ExtraType::Arrow);
 }
 
+void testMovieDecoder() {
+    // A two-picture movie built by hand: 16x8 pixels (two blocks), 8-bit sound.
+    std::vector<std::uint8_t> m;
+    auto bytes = [&](std::initializer_list<int> v) { for (int b : v) m.push_back(static_cast<std::uint8_t>(b)); };
+    auto op = [&](int type, int version, std::initializer_list<int> data) {
+        bytes({static_cast<int>(data.size() & 255), static_cast<int>(data.size() >> 8), type, version});
+        bytes(data);
+    };
+    bytes({'j', 'u', 'n', 'k'});                                       // the movie may start anywhere in a file
+    for (char c : std::string("Interplay MVE File\x1a")) m.push_back(static_cast<std::uint8_t>(c));
+    bytes({0, 0x1a, 0x00, 0x00, 0x01, 0x33, 0x11});
+    const std::size_t chunk = m.size();
+    bytes({0, 0, 3, 0});                                               // chunk header, length patched below
+    op(0x02, 0, {0x10, 0x27, 0, 0, 5, 0});                             // 10000 us x 5 = 0.05 s per picture
+    op(0x03, 0, {0, 0, 0, 0, 0x22, 0x56, 0, 0});                       // mono, 8-bit, 22050 Hz
+    op(0x05, 0, {2, 0, 1, 0});                                         // 2 x 1 blocks
+    op(0x0C, 0, {1, 0, 2, 0, 63, 0, 0, 0, 63, 0});                     // colours 1 = red, 2 = green
+    op(0x0F, 0, {0x7E});                                               // block 0: solid (E), block 1: two colours (7)
+    op(0x11, 3, {0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 0, 0,             // 14-byte header
+                 1,                                                    // solid colour 1
+                 1, 2, 0x0F, 0, 0, 0, 0, 0, 0, 0xFF});                 // colours 1,2 and eight rows of bits
+    op(0x08, 0, {0, 0, 1, 0, 2, 0, 128, 255});                         // two 8-bit samples for stream 1
+    op(0x07, 0, {0, 0, 0, 0});
+    // Second picture: block 0 from the previous picture, block 1 from one block to the left of the new one.
+    op(0x0F, 0, {0x30});
+    op(0x11, 3, {0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 0, 0, 0});       // motion byte 0: 8 left, 0 up
+    op(0x07, 0, {0, 0, 0, 0});
+    op(0x00, 0, {});
+    const std::size_t len = m.size() - chunk - 4;
+    m[chunk] = static_cast<std::uint8_t>(len & 255);
+    m[chunk + 1] = static_cast<std::uint8_t>(len >> 8);
+
+    MveDecoder d;
+    CHECK(d.openBytes(m));
+    CHECK_EQ(static_cast<int>(d.movieOffset()), 4);
+    CHECK(d.nextFrame());
+    CHECK_EQ(d.width(), 16);
+    CHECK_EQ(d.height(), 8);
+    CHECK(d.frameSeconds() > 0.049 && d.frameSeconds() < 0.051);
+    auto pixel = [&](int x, int y) { return std::array<int, 3>{d.rgba()[static_cast<std::size_t>((y * 16 + x) * 4)],
+                                                                d.rgba()[static_cast<std::size_t>((y * 16 + x) * 4 + 1)],
+                                                                d.rgba()[static_cast<std::size_t>((y * 16 + x) * 4 + 2)]}; };
+    CHECK(pixel(0, 0) == (std::array<int, 3>{255, 0, 0}));             // the solid block
+    CHECK(pixel(8, 0) == (std::array<int, 3>{0, 255, 0}));             // row 0 bits 0000 1111: low bits first
+    CHECK(pixel(12, 0) == (std::array<int, 3>{255, 0, 0}));
+    CHECK(pixel(8, 1) == (std::array<int, 3>{255, 0, 0}));             // row 1: all zero bits
+    CHECK(pixel(15, 7) == (std::array<int, 3>{0, 255, 0}));            // row 7: all one bits
+    const auto sound = d.takeAudio();
+    CHECK_EQ(static_cast<int>(sound.size()), 2);
+    CHECK_EQ(sound[0], 0);
+    CHECK(sound[1] > 32000);
+    CHECK(d.nextFrame());
+    CHECK(pixel(0, 0) == (std::array<int, 3>{255, 0, 0}));             // kept from the first picture
+    CHECK(pixel(8, 0) == (std::array<int, 3>{255, 0, 0}));             // copied from the block to its left
+    CHECK(!d.nextFrame());
+    CHECK_EQ(d.framesDecoded(), 2);
+    MveDecoder none;
+    CHECK(!none.openBytes({1, 2, 3}));
+}
+
 void testSettings() {
     Settings s;
     s.parse("levelno=4\nnum_to_win_match=3\nenclosement_depth=9\nconveyor_speed=2\nteam_play=1\nrandom_start=1\n"
@@ -1768,6 +1829,7 @@ int main() {
         {"trapped animation", testTrappedAnimation},
         {"roulette", testRoulette},
         {"settings", testSettings},
+        {"movie decoder", testMovieDecoder},
         {"dead owner's trigger bombs", testDeadOwnersTriggerBombs},
         {"walls remove warps", testWallsRemoveWarps},
         {"death scatter", testDeathScatter},
