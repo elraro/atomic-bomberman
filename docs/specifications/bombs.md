@@ -67,3 +67,7 @@ A grabbed bomb follows its holder and its fuse is paused; its elapsed time is re
 ## Conveyors
 
 A resting bomb on a conveyor is carried at the conveyor's speed. [M]
+
+## Trigger bombs of a dying owner
+
+While a player is dying, that player's trigger bombs turn into ordinary bombs, so their fuses run and they explode by themselves. [S] (`0x424C47`, called every update of the dying branch.)

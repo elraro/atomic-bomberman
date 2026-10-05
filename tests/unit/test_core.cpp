@@ -1190,6 +1190,51 @@ void testDeathScatter() {
     CHECK_EQ(onField(kPowBomb), 3);                     // once only
 }
 
+void testDeadOwnersTriggerBombs() {
+    Fixture f(Scheme::pillars(), 3);
+    f.place(0, {0, 0});
+    f.place(1, {14, 10});
+    f.place(2, {4, 0});
+    f.w.player(0).inventory[kPowTrigger] = 1;
+    f.press1(0);                                        // a trigger bomb at (0,0)
+    f.run(1);
+    f.place(0, {6, 0});
+    f.run(60);
+    CHECK_EQ(f.w.activeBombs(), 1);                     // waits for its owner for ever
+    // Another player's blast kills the owner; the trigger bomb then runs like any bomb.
+    f.place(2, {7, 0});
+    f.press1(2);
+    f.run(1);
+    f.place(2, {14, 0});
+    f.run(45);
+    CHECK(!f.w.player(0).alive);
+    CHECK_EQ(f.w.activeBombs(), 1);
+    f.run(45);
+    CHECK_EQ(f.w.activeBombs(), 0);                     // 2 s after its owner died it has gone off
+}
+
+void testWallsRemoveWarps() {
+    Fixture f;
+    std::vector<Extra> extras(3);
+    extras[0].type = ExtraType::Warp;
+    extras[0].cell = {4, 4};
+    extras[0].id = 0;
+    extras[0].linkTo = 0;
+    extras[1].type = ExtraType::Trampoline;
+    extras[1].cell = {6, 6};
+    extras[2].type = ExtraType::Arrow;
+    extras[2].cell = {8, 8};
+    f.w.setExtras(extras);
+    f.place(0, {0, 10});
+    f.place(1, {14, 10});
+    f.run(2);
+    CHECK_EQ(static_cast<int>(f.w.extras().size()), 3);
+    f.w.setRoundSeconds(56);                            // inside the closing period
+    f.run(40);
+    CHECK_EQ(static_cast<int>(f.w.extras().size()), 1); // the arrow stays
+    CHECK(f.w.extras()[0].type == ExtraType::Arrow);
+}
+
 void testSettings() {
     Settings s;
     s.parse("levelno=4\nnum_to_win_match=3\nenclosement_depth=9\nconveyor_speed=2\nteam_play=1\nrandom_start=1\n"
@@ -1718,6 +1763,8 @@ int main() {
         {"trapped animation", testTrappedAnimation},
         {"roulette", testRoulette},
         {"settings", testSettings},
+        {"dead owner's trigger bombs", testDeadOwnersTriggerBombs},
+        {"walls remove warps", testWallsRemoveWarps},
         {"death scatter", testDeathScatter},
         {"ice delay", testIceDelay},
         {"brick regeneration", testBrickRegeneration},

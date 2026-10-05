@@ -897,6 +897,12 @@ void World::updatePlayers(int dt, const std::array<PlayerInput, kMaxPlayers>& in
             // A dying player still counts as a contender for a short while,
             // so two players dying close together produce a draw. The count
             // starts in the tick of death, as in the original.
+            // Its trigger bombs become ordinary bombs: their fuses start (original 0x424C47).
+            for (Bomb& b : bombs_)
+                if (b.active && b.owner == i && b.type == BombType::Trigger) {
+                    b.type = BombType::Regular;
+                    b.createdTick = tickCount_;
+                }
             p.dyingAcc += dt;
             while (p.dyingAcc > 0) {
                 ++p.dyingFrames;
@@ -1044,6 +1050,10 @@ void World::updateEnclosement(int dt) {
         walls_.cursor = {0, 0};
         walls_.dir = 1;
         walls_.ring = 0;
+        // Warp holes and trampolines go away when the walls start (original 0x405D0C).
+        extras_.erase(std::remove_if(extras_.begin(), extras_.end(),
+                                     [](const Extra& e) { return e.type == ExtraType::Warp || e.type == ExtraType::Trampoline; }),
+                      extras_.end());
     }
     const int rings = enclosementDepth_ * 2;
     if (walls_.ring >= rings) return;
