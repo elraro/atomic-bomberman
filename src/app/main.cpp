@@ -21,6 +21,7 @@
 #include "app/names.hpp"
 #include "app/net_ui.hpp"
 #include "audio/audio.hpp"
+#include "free/free_data.hpp"
 #include "game/ai.hpp"
 #include "game/match.hpp"
 #include "game/roulette.hpp"
@@ -62,6 +63,7 @@ struct Options {
     int attractSeconds = -1;  // --attract-seconds N: idle time on the menu before the demo (default: value 92)
     bool debug = false;       // --debug: the original's debug keys (it used the KWD environment variable)
     bool noIntro = false;     // --no-intro: go straight to the main menu
+    bool freeAssets = false;  // --free: the free asset set even if original game data is installed
     std::string connect;      // --connect ADDRESS: join that network game at once
     int host = 0;             // --host [PORT]: host a network game at once
     bool playersSet = false;  // --players or --humans given
@@ -83,6 +85,7 @@ Options parseArgs(int argc, char** argv) {
                       "  --import-assets DIR  import the data of an original game copy, then exit\n"
                       "  --assets-dir DIR     where --import-assets writes (default: per-user data folder)\n"
                       "  --game-dir DIR       imported assets or an original game folder to play from\n"
+                      "  --free               play with the free asset set even if original game data is found\n"
                       "  --start              skip the menu and start a match at once\n"
                       "  --scheme NAME        scheme (map) to play, e.g. BASIC\n"
                       "  --level N            level theme 0-10\n"
@@ -136,6 +139,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--native") o.native = true;
         else if (a == "--roulette") o.roulette = true;
         else if (a == "--no-intro") o.noIntro = true;
+        else if (a == "--free") o.freeAssets = true;
         else if (a == "--debug") o.debug = true;
         else if (a == "--attract-seconds") o.attractSeconds = std::atoi(next().c_str());
         else if (a == "--intro-shot") o.introShot = std::atoi(next().c_str());
@@ -282,6 +286,7 @@ void writePpm(const std::string& path, int w, int h) {
 }  // namespace
 
 bool looksLikeGameDir(const std::string& dir) {
+    if (ab::isFreeAssetDir(dir)) return true;
     return std::ifstream(dir + "/color.pal").good() && std::ifstream(dir + "/data/res/valuelst.res").good();
 }
 
@@ -354,17 +359,29 @@ int main(int argc, char** argv) {
         return 0;
     }
     const std::string requested = opt.gameDir;
-    opt.gameDir = findGameDir(requested);
+    opt.gameDir = opt.freeAssets ? std::string() : findGameDir(requested);
     if (opt.gameDir.empty()) {
-        std::fprintf(stderr,
-                     "WARN  No original game files found%s%s.\n"
-                     "WARN  Running without menu, original graphics and sound (placeholder shapes only).\n"
-                     "WARN  Import them once from your copy of the original game:\n"
-                     "WARN      atomic --import-assets PATH_TO_ORIGINAL_GAME\n"
-                     "WARN  or point the program at it directly with --game-dir PATH.\n",
-                     requested.empty() ? "" : " under ", requested.c_str());
-    } else {
-        std::fprintf(stderr, "INFO  Game files: %s\n", opt.gameDir.c_str());
+        // No original game data: the free asset set, written once to the per-user folder.
+        std::string freeDir = "free-assets";
+        if (char* pref = SDL_GetPrefPath("atomic-bomberman-modern", "atomic")) {
+            freeDir = std::string(pref) + "free-assets";
+            SDL_free(pref);
+        }
+        if (ab::ensureFreeAssets(freeDir, true)) {
+            opt.gameDir = freeDir;
+            if (!opt.freeAssets)
+                std::fprintf(stderr,
+                             "INFO  No original game files found%s%s: playing with the free asset set.\n"
+                             "INFO  To use the original graphics and sounds, import them from your copy of the game:\n"
+                             "INFO      atomic --import-assets PATH_TO_ORIGINAL_GAME\n",
+                             requested.empty() ? "" : " under ", requested.c_str());
+        } else {
+            std::fprintf(stderr, "WARN  Cannot write the free asset set to %s: running with placeholder shapes, no menu, no sound.\n", freeDir.c_str());
+        }
+    }
+    if (!opt.gameDir.empty()) {
+        std::fprintf(stderr, "INFO  Game files: %s%s\n", opt.gameDir.c_str(), ab::isFreeAssetDir(opt.gameDir) ? " (free asset set)" : "");
+        if (ab::isFreeAssetDir(opt.gameDir)) opt.noIntro = true;  // the intro movie and logos are the original's
     }
 
     // Saved settings (the original's options.ini keys). Automated runs ignore the file so

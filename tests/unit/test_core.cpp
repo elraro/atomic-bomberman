@@ -8,6 +8,10 @@
 #include <string>
 #include <vector>
 
+#include <filesystem>
+
+#include "free/free_art.hpp"
+#include "free/free_data.hpp"
 #include "game/ai.hpp"
 #include "game/roulette.hpp"
 #include "game/world.hpp"
@@ -1859,6 +1863,153 @@ void testStateTransfer() {
     CHECK_EQ(b.stateHash(), before);
 }
 
+// The free asset set has to hold everything the game asks for by name.
+void testFreeAssets() {
+    const FreeArt art = makeFreeArt();
+    std::vector<std::string> needed = {"shadow", "spin", "goldman", "xxx", "hurry", "cursor1", "ring", "extra warp 1", "extra trampoline",
+                                       "bomb regular green", "bomb regular green dud", "bomb trigger green", "bomb jelly green",
+                                       "flame center green"};
+    for (const char* dir : {"north", "east", "south", "west"}) {
+        for (const char* what : {"stand ", "walk ", "kick ", "punch ", "pickup ", "walkbomb ", "standbomb ", "ghost ", "rover ",
+                                 "extra arrow ", "extra conveyor "})
+            needed.push_back(std::string(what) + dir);
+        needed.push_back(std::string("flame mid") + dir + " green");
+        needed.push_back(std::string("flame tip") + dir + " green");
+    }
+    for (const char* power : {"bomb", "flame", "disease", "kicker", "skate", "punch", "grab", "spooge", "goldflame", "trigger", "jelly",
+                              "disease3", "random", "clog"})
+        needed.push_back(std::string("power ") + power);
+    for (int level = 0; level <= 10; ++level)
+        for (const char* what : {"tile %d solid", "tile %d brick", "flame brick %d"}) {
+            char name[32];
+            std::snprintf(name, sizeof name, what, level);
+            needed.emplace_back(name);
+        }
+    const Values values = Values::defaults();
+    for (int k = 1; k <= values.get(vid::kDeathAnimations); ++k) needed.push_back("die green " + std::to_string(k));
+    for (int k = 0; k < values.get(vid::kCornerheadCount); ++k) needed.push_back("cornerhead " + std::to_string(k));
+    int missing = 0;
+    for (const std::string& name : needed) {
+        const auto it = art.sequences.find(name);
+        if (it == art.sequences.end() || it->second.empty()) {
+            ++missing;
+            std::printf("  missing sequence %s\n", name.c_str());
+        }
+    }
+    CHECK_EQ(missing, 0);
+    CHECK_EQ(art.sequences.at("numeric font").size(), 11u);  // ten digits and the colon
+    CHECK(art.sequences.at("kick south").size() >= 8 && art.sequences.at("punch south").size() >= 10);
+    CHECK_EQ(art.sequences.at("cornerhead 0").size(), static_cast<std::size_t>(kCornerheadFrames));
+    int bad = 0, tinted = 0;
+    for (const FreeFrame& f : art.frames) {
+        if (f.width <= 0 || f.height <= 0 || f.rgba.size() != static_cast<std::size_t>(f.width * f.height * 4) || f.tint.size() != static_cast<std::size_t>(f.width * f.height)) ++bad;
+        for (std::uint8_t t : f.tint) tinted += t;
+    }
+    CHECK_EQ(bad, 0);
+    CHECK(tinted > 0);
+    // The player colour reaches the tinted pixels only.
+    const FreeFrame& stand = art.frames[static_cast<std::size_t>(art.sequences.at("stand south")[0])];
+    const std::vector<std::uint8_t> red = colouredFrame(stand, 2), blue = colouredFrame(stand, 3);
+    int differ = 0, wrong = 0;
+    for (std::size_t i = 0; i < stand.tint.size(); ++i) {
+        const bool same = red[i * 4] == blue[i * 4] && red[i * 4 + 2] == blue[i * 4 + 2];
+        if (!same) ++differ;
+        if (!same && stand.tint[i] == 0) ++wrong;
+    }
+    CHECK(differ > 50);
+    CHECK_EQ(wrong, 0);
+
+    for (const char* name : {"mainmenu", "glue0", "glue7", "field0", "field10", "results", "draw", "victory0", "victory9", "team0", "team1",
+                             "roulette", "title"}) {
+        const auto pic = makeFreePicture(name);
+        CHECK(pic && pic->width == 640 && pic->height == 480 && pic->rgba.size() == 640u * 480u * 4u);
+    }
+    CHECK(!makeFreePicture("iplogo"));
+    CHECK(!makeFreePicture("field11"));
+    const FreeFont font = makeFreeFont();
+    CHECK(font.height > 8 && font.width.size() == 128 && font.alpha.size() == static_cast<std::size_t>(font.atlasWidth * font.height));
+    int blank = 0;
+    for (int ch = 33; ch < 127; ++ch) {
+        int lit = 0;
+        for (int y = 0; y < font.height; ++y)
+            for (int x = 0; x < font.width[static_cast<std::size_t>(ch)]; ++x) lit += font.alpha[static_cast<std::size_t>(y * font.atlasWidth + font.x[static_cast<std::size_t>(ch)] + x)] > 128 ? 1 : 0;
+        if (lit == 0) ++blank;
+    }
+    CHECK_EQ(blank, 0);
+
+    // Sounds: every id the game plays without the original's voices, none silent.
+    const FreeSounds sounds = makeFreeSounds();
+    std::vector<int> ids = {10, 20, 40, 100, 120, 130, 135, 140, 141, 142, 150, 160, 170, 200, 300, 350, 360, 400, 550,
+                            1000, 1010, 1020, 1130, 1300, 1310, 1320, 1330, 1400, 2300, 2600, 2700};
+    for (int level = 0; level <= 10; ++level) ids.push_back(1100 + level);
+    int unknown = 0, silent = 0;
+    for (int id : ids) {
+        bool found = false;
+        for (const auto& [have, name] : sounds.ids) found = found || (have == id && sounds.samples.count(name) != 0);
+        if (!found) ++unknown;
+    }
+    for (const auto& [name, samples] : sounds.samples) {
+        int peak = 0;
+        for (std::int16_t v : samples) peak = std::max(peak, std::abs(static_cast<int>(v)));
+        if (samples.size() < 200 || peak < 2000) ++silent;
+    }
+    CHECK_EQ(unknown, 0);
+    CHECK_EQ(silent, 0);
+
+    // On disk: a folder the game and the server can use as their game data.
+    const std::string dir = (std::filesystem::temp_directory_path() / "ab-free-assets-test").string();
+    std::filesystem::remove_all(dir);
+    CHECK(!isFreeAssetDir(dir));
+    CHECK(ensureFreeAssets(dir, false));
+    CHECK(isFreeAssetDir(dir));
+    CHECK(!std::filesystem::exists(dir + "/data/res/soundlst.res"));
+    Values fromFile;
+    CHECK(fromFile.loadFile(dir + "/data/res/valuelst.res"));
+    CHECK(fromFile.entries() == Values::defaults().entries());
+    const std::vector<SchemeEntry> schemes = listSchemes(dir + "/data/schemes", "");
+    CHECK_EQ(schemes.size(), 8u);
+    bool basic = false;
+    for (const SchemeEntry& entry : schemes) {
+        basic = basic || entry.file == "basic";
+        const auto file = loadSchemeFile(entry.path);
+        CHECK(file.has_value());
+        if (!file) continue;
+        // Nobody starts in a wall, and no two players share a cell.
+        for (int p = 0; p < kMaxPlayers; ++p) {
+            const Cell c = file->scheme.start[static_cast<std::size_t>(p)];
+            CHECK(inGrid(c) && file->scheme.tiles[static_cast<std::size_t>(c.y)][static_cast<std::size_t>(c.x)] != Tile::Solid);
+            for (int q = 0; q < p; ++q) CHECK(!(file->scheme.start[static_cast<std::size_t>(q)] == c));
+        }
+        // A round on it can be played to an end by computer players.
+        World w{Values::defaults(), 5};
+        w.startRound(file->scheme, true);
+        std::vector<AiPlayer> ai;
+        for (int i = 0; i < 4; ++i) w.addPlayer(i), ai.emplace_back(static_cast<std::uint32_t>(40 + i));
+        for (int t = 0; t < 6000 && !w.roundOver(); ++t) {
+            Inputs in{};
+            for (int i = 0; i < 4; ++i) in[static_cast<std::size_t>(i)] = ai[static_cast<std::size_t>(i)].decide(w, i, 50);
+            w.tick(50, in);
+        }
+        CHECK(w.roundOver());
+    }
+    CHECK(basic);
+    int extras = 0;
+    for (int level = 0; level <= 10; ++level)
+        for (const Extra& e : loadExtrasFile(dir + "/data/res/extra" + std::to_string(level) + ".res")) {
+            ++extras;
+            CHECK(inGrid(e.cell) || (e.type == ExtraType::Trampoline && e.cell.x == -1));
+        }
+    CHECK(extras > 30);
+    CHECK(loadHelpFile(dir + "/manual.bm").has_value() && loadHelpFile(dir + "/credits.bm").has_value());
+    // With sounds asked for, the folder is completed; asked again, nothing is rewritten.
+    CHECK(ensureFreeAssets(dir, true));
+    CHECK(std::filesystem::exists(dir + "/data/res/soundlst.res") && std::filesystem::file_size(dir + "/data/sound/boom0.wav") > 1000);
+    const auto stamp = std::filesystem::last_write_time(dir + "/free-assets.txt");
+    CHECK(ensureFreeAssets(dir, false));
+    CHECK(std::filesystem::last_write_time(dir + "/free-assets.txt") == stamp);
+    std::filesystem::remove_all(dir);
+}
+
 }  // namespace
 
 int main() {
@@ -1931,6 +2082,7 @@ int main() {
         {"round result", testRoundResult},
         {"determinism", testDeterminism},
         {"state transfer", testStateTransfer},
+        {"free assets", testFreeAssets},
     };
     for (const auto& [name, fn] : tests) {
         const int before = g_failures;

@@ -1,8 +1,10 @@
 # Installing the modern Atomic Bomberman
 
-The modern game is a new program. It contains none of the original game's graphics, sounds or level data: those are imported once from **your own copy** of Atomic Bomberman (Interplay, 1997). Without them the program still runs, but only with placeholder shapes, no menu and no sound.
+The modern game is a new program. It contains none of the original game's graphics, sounds or level data.
 
-You need:
+**You can play straight away.** With no original game on the machine the program uses its own free set of graphics, sounds, music and arenas (it writes them to its per-user data folder on first start). Steps 2 and 3 below are only for people who own Atomic Bomberman (Interplay, 1997) and want the original look and sound: those are imported once from **your own copy**.
+
+For the import you need:
 
 - the modern game (a download, or built from source: see the end of this page),
 - a copy of the original game: an installed folder or the CD. It is the folder that contains `BM95.EXE`, `COLOR.PAL` and a `DATA` folder.
@@ -20,7 +22,7 @@ You need:
 
 They are attached to the workflow run (Actions → build → latest run → Artifacts) and, for tagged versions (`v*`), to the release page. Unpack the package anywhere; it holds the game (`atomic` or `atomic.exe`), the dedicated network server (`atomic_server` or `atomic_server.exe`), the README, the license and this file. Nothing else needs installing: SDL3 is built into the program. A graphics driver with OpenGL 3.3 is required.
 
-## 2. Import the game data (once)
+## 2. Import the original game data (optional, once)
 
 Run the program with `--import-assets` and the path of the original game.
 
@@ -117,7 +119,7 @@ To play over a network, one player chooses **Start Network Game** in the menu an
 ./atomic_server --name "My server" --game-dir /path/to/assets
 ```
 
-- It looks for the game data like the game does: `--game-dir`, the `ATOMIC_GAME_DIR` environment variable, an `assets` folder in the current folder, the per-user folder, or a `game` folder. It only needs the schemes, `valuelst.res` and the level extras; without any game data it serves one built-in arena.
+- It looks for the game data like the game does: `--game-dir`, the `ATOMIC_GAME_DIR` environment variable, an `assets` folder in the current folder, the per-user folder, or a `game` folder. It only needs the schemes, `valuelst.res` and the level extras; without any original game data it serves the eight arenas of the free asset set.
 - Port **27410**, TCP and UDP, unless `--port` says otherwise. Open it in the firewall and, behind a router, forward both.
 - `--password TEXT` keeps strangers out. `--hidden` stops it answering searches on the local network.
 - `atomic_server --help` lists everything. `Ctrl-C` or `quit` stops it.

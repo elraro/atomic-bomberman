@@ -1,4 +1,5 @@
-// Sprites built from the user's copy of the original data files.
+// Sprites built from the user's copy of the original data files, or, for a
+// folder of the free asset set, drawn by the program (free/free_art.hpp).
 // Converts frames to GL textures on demand, applying the original palette
 // lookup and the per-player colour remap.
 #pragma once
@@ -11,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "free/free_art.hpp"
 #include "resources/ani_file.hpp"
 
 namespace ab {
@@ -33,6 +35,7 @@ public:
     // files needed in a match. Returns false if the essential files are missing.
     bool load(const std::string& gameDir, int level);
     bool loaded() const { return loaded_; }
+    bool freeSet() const { return free_; }
     int level() const { return level_; }
     // Makes the tiles of another level theme available too ("tile N solid", "tile N brick").
     void ensureTiles(int level);
@@ -67,6 +70,11 @@ private:
         std::size_t seq;
     };
     bool addAni(const std::string& path);
+    bool loadFree(int level);
+
+    bool free_ = false;  // the free asset set: frames from art_ instead of files_
+    FreeArt art_;
+    std::map<std::pair<int, int>, unsigned> freeTextures_;
     unsigned makeTexture(const AniFrame& f, int colour);
 
     bool loaded_ = false;

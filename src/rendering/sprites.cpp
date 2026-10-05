@@ -2,9 +2,11 @@
 
 #include <algorithm>
 
+#include "free/free_data.hpp"
 #include "rendering/gl.hpp"
 
 #include <cstdio>
+#include <fstream>
 
 namespace ab {
 
@@ -32,7 +34,12 @@ unsigned SpriteBank::picture(const std::string& name) {
     const auto it = pictures_.find(name);
     if (it != pictures_.end()) return it->second;
     unsigned tex = 0;
-    if (auto pcx = loadPcxFile(gameDir_ + "/data/res/" + name + ".pcx")) {
+    if (free_) {
+        if (const auto pic = makeFreePicture(name)) {
+            tex = uploadRgba(pic->width, pic->height, pic->rgba);
+            pictureSizes_[name] = {pic->width, pic->height};
+        }
+    } else if (auto pcx = loadPcxFile(gameDir_ + "/data/res/" + name + ".pcx")) {
         std::vector<std::uint8_t> rgba(pcx->indices.size() * 4);
         for (std::size_t i = 0; i < pcx->indices.size(); ++i) {
             const std::uint8_t* c = &pcx->palette[static_cast<std::size_t>(pcx->indices[i]) * 3];
@@ -60,6 +67,7 @@ bool SpriteBank::pictureSize(const std::string& name, int* width, int* height) {
 std::vector<std::string> SpriteBank::sequenceNames() const {
     std::vector<std::string> names;
     for (const auto& [name, ref] : sequences_) names.push_back(name);
+    for (const auto& [name, frames] : art_.sequences) names.push_back(name);
     std::sort(names.begin(), names.end());
     return names;
 }
@@ -67,6 +75,7 @@ std::vector<std::string> SpriteBank::sequenceNames() const {
 std::size_t SpriteBank::textureBytes() { return gTextureBytes; }
 
 void SpriteBank::ensureTiles(int level) {
+    if (free_) return;  // the free set holds every level's tiles
     if (level < 0 || level > 10 || level == level_ || tilesLoaded_[static_cast<std::size_t>(level)]) return;
     tilesLoaded_[static_cast<std::size_t>(level)] = true;
     addAni(gameDir_ + "/data/ani/tiles" + std::to_string(level) + ".ani");
@@ -76,6 +85,7 @@ SpriteBank::~SpriteBank() {
     for (auto& [name, tex] : pictures_)
         if (tex != 0) glDeleteTextures(1, &tex);
     for (auto& [key, tex] : textures_) glDeleteTextures(1, &tex);
+    for (auto& [key, tex] : freeTextures_) glDeleteTextures(1, &tex);
     if (background_ != 0) glDeleteTextures(1, &background_);
     if (font_.texture != 0) glDeleteTextures(1, &font_.texture);
 }
@@ -92,7 +102,28 @@ bool SpriteBank::addAni(const std::string& path) {
     return true;
 }
 
+bool SpriteBank::loadFree(int level) {
+    free_ = true;
+    art_ = makeFreeArt();
+    level_ = level;
+    if (const auto field = makeFreePicture("field" + std::to_string(level))) background_ = uploadRgba(field->width, field->height, field->rgba);
+    const FreeFont ff = makeFreeFont();
+    std::vector<std::uint8_t> rgba(ff.alpha.size() * 4, 255);
+    for (std::size_t i = 0; i < ff.alpha.size(); ++i) rgba[i * 4 + 3] = ff.alpha[i];
+    font_.texture = uploadRgba(ff.atlasWidth, ff.height, rgba);
+    font_.height = ff.height;
+    font_.spacing = ff.spacing;
+    font_.atlasWidth = ff.atlasWidth;
+    font_.x = ff.x;
+    font_.width = ff.width;
+    loaded_ = true;
+    std::fprintf(stderr, "INFO  Free graphics set made: frames=%zu sequences=%zu level=%d\n", art_.frames.size(), art_.sequences.size(), level);
+    return true;
+}
+
 bool SpriteBank::load(const std::string& gameDir, int level) {
+    gameDir_ = gameDir;
+    if (isFreeAssetDir(gameDir) && !std::ifstream(gameDir + "/color.pal").good()) return loadFree(level);
     auto pal = loadPaletteFile(gameDir + "/color.pal");
     if (!pal) {
         std::fprintf(stderr, "WARN  cannot read color.pal under %s\n", gameDir.c_str());
@@ -173,6 +204,10 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
 }
 
 int SpriteBank::sequenceLength(const std::string& name) const {
+    if (free_) {
+        const auto found = art_.sequences.find(name);
+        return found == art_.sequences.end() ? 0 : static_cast<int>(found->second.size());
+    }
     const auto it = sequences_.find(name);
     return it == sequences_.end() ? 0 : static_cast<int>(files_[it->second.file].sequences[it->second.seq].steps.size());
 }
@@ -200,6 +235,16 @@ unsigned SpriteBank::makeTexture(const AniFrame& f, int colour) {
 }
 
 std::optional<Sprite> SpriteBank::sprite(const std::string& sequence, int index, int colour) {
+    if (free_) {
+        const auto found = art_.sequences.find(sequence);
+        if (found == art_.sequences.end() || found->second.empty()) return std::nullopt;
+        const int frame = found->second[static_cast<std::size_t>(index) % found->second.size()];
+        const FreeFrame& f = art_.frames[static_cast<std::size_t>(frame)];
+        const auto key = std::make_pair(frame, colour);
+        auto tex = freeTextures_.find(key);
+        if (tex == freeTextures_.end()) tex = freeTextures_.emplace(key, uploadRgba(f.width, f.height, colouredFrame(f, colour))).first;
+        return Sprite{tex->second, f.width, f.height, f.hotX, f.hotY, 0, 0};
+    }
     const auto it = sequences_.find(sequence);
     if (it == sequences_.end()) return std::nullopt;
     const AniFile& file = files_[it->second.file];

@@ -14,6 +14,7 @@
 #include <thread>
 #include <vector>
 
+#include "free/free_data.hpp"
 #include "net/server.hpp"
 #include "resources/settings.hpp"
 
@@ -23,6 +24,7 @@ std::atomic<bool> g_stop{false};
 void onSignal(int) { g_stop = true; }
 
 bool looksLikeGameDir(const std::string& dir) {
+    if (ab::isFreeAssetDir(dir)) return true;
     return std::ifstream(dir + "/color.pal").good() && std::ifstream(dir + "/data/res/valuelst.res").good();
 }
 
@@ -118,11 +120,16 @@ int main(int argc, char** argv) {
     if (!schemesDirGiven)
         if (const std::string user = userDataDir(); !user.empty()) config.userSchemesDir = user + "schemes";
     config.log = logLine;
+    if (config.gameDir.empty()) {
+        // No original game data: the arenas and level extras of the free asset set.
+        const std::string freeDir = userDataDir().empty() ? std::string("free-assets") : userDataDir() + "free-assets";
+        if (ab::ensureFreeAssets(freeDir, false)) config.gameDir = freeDir;
+    }
     if (config.gameDir.empty())
         logLine("WARN  No game data found" + (requested.empty() ? std::string() : " under " + requested) +
                 ": serving the built-in arena with default values (see --game-dir)");
     else
-        logLine("INFO  Game data: " + config.gameDir);
+        logLine("INFO  Game data: " + config.gameDir + (ab::isFreeAssetDir(config.gameDir) ? " (free asset set)" : ""));
 
     ab::net::Server server;
     if (!server.start(config)) {

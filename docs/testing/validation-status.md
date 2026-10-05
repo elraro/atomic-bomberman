@@ -85,3 +85,7 @@ The client-server mode of `../specifications/networking.md` is this project's ow
 - By hand on one machine with the real game data: dedicated server with scripted clients over several rounds and levels; the game joining as player and as watcher; screens captured from unattended runs.
 - The automated tests also pass on Windows in CI.
 - Not done: two real machines, real loss and delay, NAT, the Windows game started by a person, a Linux build against a Windows build, a person at the keyboard in the lobby. Details in `../migration/networking.md`.
+
+## Free asset set (new; nothing to compare with the original)
+
+The graphics, sounds and arenas used when no original data is present are this project's own (`../migration/free-assets.md`). Tested for completeness and playability by `ab_tests` "free assets" and looked at as still screenshots. Not listened to; not watched in motion.

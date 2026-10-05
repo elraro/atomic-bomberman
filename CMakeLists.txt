@@ -35,6 +35,15 @@ add_library(ab_resources src/resources/scheme_file.cpp src/resources/ani_file.cp
 target_link_libraries(ab_resources PUBLIC ab_game)
 ab_warnings(ab_resources)
 
+# The free asset set, made by code: graphics, sounds and data for people without the original game.
+add_library(ab_free src/free/free_art.cpp src/free/free_sound.cpp src/free/free_data.cpp)
+target_link_libraries(ab_free PUBLIC ab_game ab_resources)
+ab_warnings(ab_free)
+
+add_executable(free_art_dump tools/diagnostics/free_art_dump.cpp)
+target_link_libraries(free_art_dump PRIVATE ab_free)
+ab_warnings(free_art_dump)
+
 # Network play: sockets, protocol, server and client. No SDL: the dedicated
 # server is built from this alone.
 add_library(ab_net src/net/socket.cpp src/net/protocol.cpp src/net/server.cpp src/net/client.cpp)
@@ -47,7 +56,7 @@ ab_warnings(ab_net)
 # Dedicated server: no window, no SDL.
 find_package(Threads REQUIRED)
 add_executable(atomic_server src/server/main.cpp)
-target_link_libraries(atomic_server PRIVATE ab_net Threads::Threads)
+target_link_libraries(atomic_server PRIVATE ab_net ab_free Threads::Threads)
 ab_warnings(atomic_server)
 install(TARGETS atomic_server RUNTIME DESTINATION .)
 
@@ -77,7 +86,7 @@ if(SDL3_FOUND)
         src/rendering/renderer.cpp
         src/rendering/sprites.cpp
         src/audio/audio.cpp)
-    target_link_libraries(atomic PRIVATE ab_game ab_resources ab_net SDL3::SDL3)
+    target_link_libraries(atomic PRIVATE ab_game ab_resources ab_net ab_free SDL3::SDL3)
     ab_warnings(atomic)
     install(TARGETS atomic RUNTIME DESTINATION .)
 else()
@@ -96,7 +105,7 @@ target_link_libraries(net_bot PRIVATE ab_net)
 ab_warnings(net_bot)
 
 add_executable(ab_tests tests/unit/test_core.cpp)
-target_link_libraries(ab_tests PRIVATE ab_game ab_resources)
+target_link_libraries(ab_tests PRIVATE ab_game ab_resources ab_free)
 ab_warnings(ab_tests)
 add_test(NAME core COMMAND ab_tests)
 

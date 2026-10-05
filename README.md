@@ -16,7 +16,7 @@
 
 </div>
 
-> **Unofficial fan project.** Not affiliated with Interplay, Hudson Soft or Konami. No original game files are included: you bring your own copy. See the [disclaimer](#disclaimer).
+> **Unofficial fan project.** Not affiliated with Interplay, Hudson Soft or Konami. No original game files are included. It plays out of the box with its own free graphics and sounds; with your own copy of the original you get the original look and sound. See the [disclaimer](#disclaimer).
 
 ## 🔥 What is this?
 
@@ -37,7 +37,8 @@ The original is then run side by side (under Wine, driven by scripted key presse
 | 👥 **Up to 10 players** | Two on the keyboard, gamepads, the rest AI; free-for-all or team play |
 | 🌐 **Network play** | A new client-server mode over TCP/UDP: host from the menu or run the dedicated server; lobby, chat, LAN search |
 | ⏱️ **The endgame** | Round clock, "hurry", closing walls, draws, match victories |
-| 🎨 **Original look and sound** | Graphics, HUD fonts, sound effects and music loaded from your own copy of the game |
+| 🆓 **Playable without the original** | A free set of graphics, sounds, music and arenas, made by the program's own code |
+| 🎨 **Original look and sound** | Graphics, HUD fonts, sound effects and music loaded from your own copy of the game, if you have one |
 | 🧪 **Tested** | Automated tests of the game rules run on every push (67 tests at the time of writing); 33 mechanics confirmed against the running original |
 
 ## 📸 Screenshots
@@ -50,21 +51,23 @@ The original is then run side by side (under Wine, driven by scripted key presse
 
 </div>
 
-Without game files the program still runs, drawing everything as plain shapes:
+Without the original game the program uses its own free set (robots instead of the original characters, synthesised sound):
 
-<div align="center"><img src="docs/images/shapes.png" width="40%" alt="Placeholder shapes mode, no original assets"></div>
+<div align="center"><img src="docs/images/free-menu.png" width="40%" alt="Main menu of the free asset set"> <img src="docs/images/free-match.png" width="40%" alt="A match with the free graphics"></div>
 
 ## 🚀 Quick start
 
 1. **Get a build** from the [Actions artifacts or a release](INSTALL.md#1-get-the-program), or build it yourself (below).
-2. **Import the game data** from your own copy of the original, once:
-   ```sh
-   ./atomic --import-assets /path/to/original/game
-   ```
-3. **Play:**
+2. **Play:**
    ```sh
    ./atomic
    ```
+   That is all: with no original game on the machine it starts with the free asset set.
+3. **Optional, if you own the original game** (installed or on CD): import its data once for the original graphics, sounds, music and all its arenas.
+   ```sh
+   ./atomic --import-assets /path/to/original/game
+   ```
+   `--free` switches back to the free set at any time.
 
 Full instructions, folder locations and troubleshooting: **[INSTALL.md](INSTALL.md)**.
 
@@ -84,9 +87,9 @@ Needs CMake 3.20+ and a C++20 compiler. `-DAB_FETCH_SDL3=ON` downloads SDL3 and 
 ./build/atomic
 ```
 
-The program needs the original game's data for the menu, graphics and sound. It looks in: `--game-dir PATH`, the `ATOMIC_GAME_DIR` environment variable, an imported `assets` folder (next to the executable, in the current folder, or in the per-user data folder), or a `game` folder with a copy of the original. The terminal prints `INFO  Game files: …` when it is found; if it is not, the window title says so and the program falls back to placeholder shapes with no menu.
+The program looks for the original game's data in: `--game-dir PATH`, the `ATOMIC_GAME_DIR` environment variable, an imported `assets` folder (next to the executable, in the current folder, or in the per-user data folder), or a `game` folder with a copy of the original. The terminal prints `INFO  Game files: …` with what it uses. If none of these holds the original, it plays with the free asset set, which it writes to the per-user data folder on first start ([how it is made](docs/migration/free-assets.md)).
 
-With game files the program opens on the main menu. Choose **Start Game**, set up the player list (Up/Down select a slot, Right cycles AI → KEY 0 → KEY 1 → OFF, Left switches a slot off), press Enter, then choose level, scheme and wins (Left/Right) and press Enter to play. By default player 1 uses the first key set and player 2 is a computer player, as in the original. Options, About Bomberman, Online Manual and Exit work as well; **Start Network Game** and **Join Network Game** open the network mode described below. F1 opens the help pages from any screen. As in the original there are two hidden features: press **Ctrl-E six times** on the main menu for the level (scheme) editor, and **C five times** on the player list for campaign mode. Schemes made with the editor are saved in a `schemes` folder next to your saved settings (Linux: `~/.local/share/atomic-bomberman-modern/atomic/schemes`) and appear in the scheme list.
+The program opens on the main menu. Choose **Start Game**, set up the player list (Up/Down select a slot, Right cycles AI → KEY 0 → KEY 1 → OFF, Left switches a slot off), press Enter, then choose level, scheme and wins (Left/Right) and press Enter to play. By default player 1 uses the first key set and player 2 is a computer player, as in the original. Options, About Bomberman, Online Manual and Exit work as well; **Start Network Game** and **Join Network Game** open the network mode described below. F1 opens the help pages from any screen. As in the original there are two hidden features: press **Ctrl-E six times** on the main menu for the level (scheme) editor, and **C five times** on the player list for campaign mode. Schemes made with the editor are saved in a `schemes` folder next to your saved settings (Linux: `~/.local/share/atomic-bomberman-modern/atomic/schemes`) and appear in the scheme list.
 
 | | Move | Bomb | Action |
 |---|---|---|---|
@@ -101,7 +104,7 @@ The action button punches the bomb ahead (punch), stops your kicked bombs (kicke
 
 In a match: `Esc` or `Ctrl-Q` returns to the menu, `R` restarts the round, `P` pauses, `N` advances one step while paused, `F1` opens the help pages. The result screen waits for `Enter` or `Space` (it goes on by itself after six seconds when only computer players are in the game, or after `Alt-W`); the first player to reach the wins target takes the match. With `--debug` (or the environment variable `KWD=1`, as in the original) three of the original's debug keys work in a match: `Ctrl-A` lists the animation sequences, `Alt-D` shows an information window, `F10` clears a campaign stage.
 
-Options: `--scheme NAME` (file in `data/schemes`, default `basic`), `--level N` (0-10: graphics, music and extras), `--wins N` (default 2), `--players N --humans H` (preset the player list; `--humans 0` or `--demo` is all computer players), `--start` (skip the menu), `--campaign NAME` (play a campaign file: `simple`, `ghosts`, `crouton`), `--no-intro` (skip the intro movie, the logo and the title screens), `--roulette` (bonus-game wheel for the winner of a match, before the next match), `--connect ADDRESS` (join a network game at once), `--host [PORT]` (host one at once), `--seed N`, `--mute`, `--shapes`, `--native` (640×480 window), `--frames N --screenshot out.ppm` (automated capture), `--result-shot` (capture the first result screen), `--script up,down,left,right,enter,esc` (scripted menu keys, one every 10 frames).
+Options: `--scheme NAME` (file in `data/schemes`, default `basic`), `--level N` (0-10: graphics, music and extras), `--wins N` (default 2), `--players N --humans H` (preset the player list; `--humans 0` or `--demo` is all computer players), `--start` (skip the menu), `--campaign NAME` (play a campaign file: `simple`, `ghosts`, `crouton`), `--no-intro` (skip the intro movie, the logo and the title screens), `--roulette` (bonus-game wheel for the winner of a match, before the next match), `--connect ADDRESS` (join a network game at once), `--host [PORT]` (host one at once), `--seed N`, `--mute`, `--free` (the free asset set even when the original is installed), `--shapes`, `--native` (640×480 window), `--frames N --screenshot out.ppm` (automated capture), `--result-shot` (capture the first result screen), `--script up,down,left,right,enter,esc` (scripted menu keys, one every 10 frames).
 
 ## 🌐 Network play
 
@@ -155,6 +158,7 @@ A few things learned along the way:
 | `src/game/` | Gameplay core and computer players. Deterministic, no platform dependencies |
 | `src/app/`, `src/rendering/`, `src/audio/` | SDL3 window and input, OpenGL 3.3 renderer, sound and music |
 | `src/resources/` | Readers for the original's file formats, and the asset importer |
+| `src/free/` | The free asset set: graphics, sounds, music and arenas made by code |
 | `src/net/`, `src/server/` | Network mode: sockets, protocol, server, client; the dedicated server program |
 | `tests/unit/` | Tests that encode the specified rules |
 | `tools/asset-extractor/` | Python reader and extractor for `.ani` sprite files |
@@ -169,6 +173,7 @@ Playable: local matches against computer players or a second person, on every le
 Not there yet:
 
 - Nobody has play-tested it thoroughly; expect rough edges.
+- The free asset set's sounds and music are generated by formula and have not been listened to; its animations were only checked as still frames.
 - The Windows build and the GitHub Actions workflow are new and may need fixes.
 - Network play is a new client-server mode (see above). Its automated tests pass on Linux and Windows (GitHub Actions) and scripted matches ran on one Linux machine; it has not been played between two real computers, and the Windows game window has not been started in this mode.
 - About 30 scenarios of the test matrix have not been observed on the original yet (mostly random ones: diseases, duds, powerup placement).
