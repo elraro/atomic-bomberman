@@ -374,6 +374,25 @@ void NetUi::update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxL
     }
     if (hosting_) server_.update(nowMs);  // what was just sent is handled without a frame's delay
 
+    // The bonus wheel: the same wheel as the server's, run from its seed at 25 frames a second.
+    if (const net::RouletteMsg* show = client_.roulette()) {
+        if (!wheel_ || wheelSeed_ != show->seed) {
+            wheel_ = std::make_unique<Roulette>(wheelValues_, show->seed);
+            wheelSeed_ = show->seed;
+            wheelFrames_ = 0;
+        }
+        const int due = static_cast<int>((nowMs - client_.rouletteSince()) / 40);
+        for (int n = 0; wheelFrames_ < due && n < 200; ++n, ++wheelFrames_) {
+            const bool wasStopped = wheel_->state() == Roulette::State::Stopped;
+            const int ticks = wheel_->step();
+            if (ticks > 0 && hooks_.sound) hooks_.sound(1300);
+            if (!wasStopped && wheel_->state() == Roulette::State::Stopped && hooks_.sound) hooks_.sound(show->prize == kPowClog ? 1320 : 1310);
+            if (wheelFrames_ == 50 || wheel_->state() == Roulette::State::Stopped) wheel_->press();
+        }
+    } else {
+        wheel_.reset();
+    }
+
     const State state = client_.state();
     if (state == State::Round && client_.roundId() != lastRound_) {
         lastRound_ = client_.roundId();
@@ -468,7 +487,7 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
         const auto& servers = browser_.servers();
         if (servers.empty()) label(r, bank, "(searching...)", 100, 196, 0.7f, 0.7f, 0.7f);
         for (std::size_t i = 0; i < servers.size() && i < 8; ++i) {
-            static const char* const kPhase[3] = {"in the lobby", "playing", "playing"};
+            static const char* const kPhase[4] = {"in the lobby", "playing", "playing", "playing"};
             const net::ServerInfo& info = servers[i].info;
             const float y = 196.0f + 22.0f * static_cast<float>(i);
             const bool on = row_ == kJoinFields + static_cast<int>(i);
@@ -590,6 +609,32 @@ void NetUi::drawChat(Renderer& r, SpriteBank& bank, std::uint64_t nowMs) {
     else if (client_.seat() < 0 && client_.state() == State::Round) label(r, bank, "Watching - you play in the next match   T: chat", 150, 456, 0.8f, 0.8f, 0.8f);
 }
 
+void NetUi::drawRoulette(Renderer& r, SpriteBank& bank) {
+    static const char* const kPower[kPowTypeCount] = {"bomb", "flame", "disease", "kicker", "skate", "punch", "grab", "spooge",
+                                                      "goldflame", "trigger", "jelly", "disease3", "random", "clog", "clog"};
+    static const char* const kPrizeText[kPowTypeCount] = {
+        "an extra bomb", "longer flame length", "a disease", "the ability to kick bombs", "extra speed",
+        "the ability to punch bombs", "the ability to grab bombs", "the spooger", "goldflame", "a trigger mechanism",
+        "jelly (bouncy) bombs", "super bad disease", "random", "a speed brake (slowness)", ""};
+    const net::RouletteMsg& show = *client_.roulette();
+    r.image(bank.picture("roulette"));
+    float x = 0, y = 0;
+    for (int s = 0; s < Roulette::kSlots; ++s) {
+        wheel_->screenPosition(wheel_->slotPosition(s), &x, &y);
+        r.sprite(bank, std::string("power ") + kPower[Roulette::kPrize[static_cast<std::size_t>(s)]], 0, -1, x, y);
+    }
+    wheel_->screenPosition(wheel_->pointer(), &x, &y);
+    r.sprite(bank, "ring", 0, -1, x, y);
+    const std::string who = show.teamPlay ? "Team " + std::to_string(show.winner + 1) : client_.lobby().seatName(show.winner);
+    const std::string top = "The wheel turns for " + (who.empty() ? std::string("the Gold Player") : who);
+    label(r, bank, top, 320.0f - r.textWidth(bank, top) / 2.0f, 100, 1, 1, 1);
+    if (wheel_->state() == Roulette::State::Stopped && show.prize >= 0) {
+        // The server's word on the prize (it is its wheel that counts).
+        const std::string lines[3] = {"The Gold Player has", kPrizeText[show.prize], "for the next match!!"};
+        for (int i = 0; i < 3; ++i) label(r, bank, lines[i], 320.0f - r.textWidth(bank, lines[i]) / 2.0f, 220.0f + 20.0f * static_cast<float>(i), 1.0f, 0.95f, 0.3f);
+    }
+}
+
 void NetUi::drawResult(Renderer& r, SpriteBank& bank) {
     const net::RoundEndMsg& end = client_.result();
     const net::LobbyState& lobby = client_.lobby();
@@ -656,6 +701,9 @@ void NetUi::draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int fr
     r.begin(windowW, windowH);
     if (mode_ == Mode::Join || mode_ == Mode::Host) {
         drawEntry(r, bank, frame);
+    } else if (mode_ == Mode::Session && client_.roulette() != nullptr && wheel_) {
+        drawRoulette(r, bank);
+        drawChat(r, bank, nowMs);
     } else if (mode_ == Mode::Session) {
         drawLobby(r, bank, frame, nowMs);
     } else {

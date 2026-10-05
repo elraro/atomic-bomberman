@@ -30,12 +30,12 @@ inline constexpr int kMaxLocalPlayers = 4;  // players at one computer
 
 // Key is the one message sent unencrypted in each direction (and Reject, when the versions differ).
 enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, UdpState, NeedState, Continue, Pong, Locals, Ban, Unban, Admin, Login, KeyExchange = 100 };
-enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Steps, RoundEnd, Snapshot, Ping, KeyExchange = 100 };
+enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Steps, RoundEnd, Snapshot, Ping, Roulette, KeyExchange = 100 };
 // A datagram of a connection: its contents are encrypted. Searches on the LAN stay in the clear.
 inline constexpr std::uint8_t kSealedDatagram = 0x80;
 enum class UdpMsg : std::uint8_t { Probe = 1, ProbeAck, Input, Steps, Query, Info };
 
-enum class Phase : std::uint8_t { Lobby = 0, Round = 1, Result = 2 };
+enum class Phase : std::uint8_t { Lobby = 0, Round = 1, Result = 2, Roulette = 3 };
 enum class SeatKind : std::uint8_t { Empty = 0, Human = 1, Computer = 2 };
 
 // Match settings the administrator can change, in the order the lobby lists them.
@@ -212,6 +212,16 @@ struct RoundEndMsg {
     bool campaignOver = false;        // that was the last stage
 };
 
+// The bonus wheel before a match: everybody runs the same wheel from the seed and sees it
+// stop on the prize.
+struct RouletteMsg {
+    std::uint32_t seed = 0;
+    int winner = -1;        // the gold player: a seat, or a team in team play
+    bool teamPlay = false;
+    int prize = -1;         // powerup type the wheel stops on
+    int frames = 0;         // wheel frames (25 a second) until it has stopped
+};
+
 struct SnapshotMsg {
     std::uint32_t roundId = 0;
     std::uint32_t step = 0;
@@ -248,6 +258,8 @@ void encode(ByteWriter& w, const InputMsg& m);
 bool decode(ByteReader& r, InputMsg& m);
 void encode(ByteWriter& w, const RoundEndMsg& m);
 bool decode(ByteReader& r, RoundEndMsg& m);
+void encode(ByteWriter& w, const RouletteMsg& m);
+bool decode(ByteReader& r, RouletteMsg& m);
 void encode(ByteWriter& w, const SnapshotMsg& m);
 bool decode(ByteReader& r, SnapshotMsg& m);
 void encode(ByteWriter& w, const ServerInfo& m);

@@ -715,9 +715,24 @@ void testNetRoulette() {
     };
     const int winner = playMatch();
     CHECK(winner >= 0);
-    // The second match: the wheel is spun by the server, announced in the chat, and the
-    // prize is in the round setup of every round, for that player only.
+    // The second match begins with the wheel: everybody is sent its seed, and running the
+    // same wheel from that seed stops on the prize the server announces.
     ann.sendStart();
+    CHECK(h.until([&] { return ann.roulette() != nullptr; }));
+    CHECK(h.server.phase() == Phase::Roulette);
+    {
+        const RouletteMsg show = *ann.roulette();
+        CHECK_EQ(show.winner, winner);
+        const Values values = Values::defaults();
+        Roulette wheel(values, show.seed);
+        int frame = 0;
+        for (; frame < 5000 && wheel.prize() < 0; ++frame) {
+            wheel.step();
+            if (frame == 50 || wheel.state() == Roulette::State::Stopped) wheel.press();
+        }
+        CHECK_EQ(wheel.prize(), show.prize);
+        CHECK_EQ(frame, show.frames);
+    }
     CHECK(h.until([&] { return ann.state() == Client::State::Round; }));
     int prizes = 0, type = -1;
     for (int i = 0; i < kMaxPlayers; ++i)

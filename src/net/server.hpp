@@ -137,6 +137,8 @@ private:
     int lastWinner_ = -1;   // winner of the last match (player or team), for the roulette
     int prizeType_ = -1;
     int prizeWinner_ = -1;
+    std::uint64_t rouletteUntil_ = 0;  // while the wheel is shown
+    std::string rouletteSay_;
     LobbyState lobby_;
     bool lobbyDirty_ = true;
     std::uint64_t lobbySentAt_ = 0;

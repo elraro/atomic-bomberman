@@ -134,6 +134,7 @@ void Client::sendLogin(const std::string& password) {
 
 void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     start_ = m;
+    rouletteOn_ = false;
     end_ = RoundEndMsg{};
     ended_ = false;
     queue_.clear();
@@ -215,6 +216,7 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             LobbyState m;
             if (!decode(r, m)) break;
             lobby_ = std::move(m);
+            if (lobby_.phase == Phase::Lobby) rouletteOn_ = false;
             if (lobby_.phase == Phase::Lobby && (state_ == State::Round || state_ == State::Result)) {
                 world_.reset();
                 predicted_.reset();
@@ -240,6 +242,14 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
         case ServerMsg::Steps: {
             StepsMsg m;
             if (decode(r, m)) handleSteps(m);
+            break;
+        }
+        case ServerMsg::Roulette: {
+            RouletteMsg m;
+            if (!decode(r, m)) break;
+            roulette_ = m;
+            rouletteOn_ = true;
+            rouletteAt_ = nowMs;
             break;
         }
         case ServerMsg::RoundEnd: {

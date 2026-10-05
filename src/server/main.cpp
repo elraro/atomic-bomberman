@@ -170,7 +170,7 @@ int main(int argc, char** argv) {
             } else if (line.rfind("say ", 0) == 0) {
                 server.say(ab::net::cleanText(line.substr(4), ab::net::kMaxChat));
             } else if (line == "status") {
-                static const char* const kPhase[3] = {"lobby", "round", "result"};
+                static const char* const kPhase[4] = {"lobby", "round", "result", "roulette"};
                 const ab::net::LobbyState& lobby = server.lobby();
                 logLine("INFO  Status phase=" + std::string(kPhase[static_cast<int>(server.phase())]) + " players=" +
                         std::to_string(server.players()) + " scheme=\"" + lobby.settings.schemeTitle + "\" level=" +

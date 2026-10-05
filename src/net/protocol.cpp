@@ -289,7 +289,7 @@ bool decode(ByteReader& r, LobbyState& m) {
         if (c.seat < -1 || c.seat >= kMaxPlayers) return false;
         m.clients.push_back(std::move(c));
     }
-    if (!r.ok() || phase > 2 || s.level < -1 || s.level > 10 || s.enclosementDepth > 3 || s.conveyorSpeed > 2) return false;
+    if (!r.ok() || phase > 3 || s.level < -1 || s.level > 10 || s.enclosementDepth > 3 || s.conveyorSpeed > 2) return false;
     m.phase = static_cast<Phase>(phase);
     return true;
 }
@@ -515,6 +515,23 @@ bool decode(ByteReader& r, RoundEndMsg& m) {
     return r.ok() && m.campaign <= 2 && m.winner >= -1 && m.winner < kMaxPlayers;
 }
 
+void encode(ByteWriter& w, const RouletteMsg& m) {
+    w.u32(m.seed);
+    w.i8(m.winner);
+    w.flag(m.teamPlay);
+    w.i8(m.prize);
+    w.u16(static_cast<std::uint16_t>(m.frames));
+}
+
+bool decode(ByteReader& r, RouletteMsg& m) {
+    m.seed = r.u32();
+    m.winner = r.i8();
+    m.teamPlay = r.flag();
+    m.prize = r.i8();
+    m.frames = r.u16();
+    return r.ok() && m.winner >= 0 && m.winner < kMaxPlayers && m.prize >= -1 && m.prize < kPowTypeCount && m.frames <= 5000;
+}
+
 void encode(ByteWriter& w, const SnapshotMsg& m) {
     w.u32(m.roundId);
     w.u32(m.step);
@@ -546,7 +563,7 @@ bool decode(ByteReader& r, ServerInfo& m) {
     m.seats = r.u8();
     const int phase = r.u8();
     m.password = r.flag();
-    if (!r.ok() || phase > 2) return false;
+    if (!r.ok() || phase > 3) return false;
     m.phase = static_cast<Phase>(phase);
     return true;
 }

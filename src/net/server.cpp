@@ -743,11 +743,15 @@ std::string Server::startMatch() {
     // more of a powerup in every round of this one. Nobody watches the wheel over the network:
     // the server spins it, as the game does for itself when no human is there to press the key.
     prizeType_ = -1;
+    log("INFO  Match started level=" + std::to_string(level_) + " scheme=\"" + settings_.schemeTitle + "\" players=" + std::to_string(occupied));
     if (settings_.goldman && lastWinner_ >= 0) {
-        Roulette wheel(values_, (static_cast<std::uint32_t>(rng_.next()) << 16) ^ static_cast<std::uint32_t>(rng_.next()));
-        for (int frame = 0; frame < 100000 && wheel.prize() < 0; ++frame) {
+        RouletteMsg show;
+        show.seed = (static_cast<std::uint32_t>(rng_.next()) << 16) ^ static_cast<std::uint32_t>(rng_.next());
+        Roulette wheel(values_, show.seed);
+        int frame = 0;
+        for (; frame < 5000 && wheel.prize() < 0; ++frame) {
             wheel.step();
-            if (frame == 50 || wheel.state() == Roulette::State::Stopped) wheel.press();
+            if (frame == 50 || wheel.state() == Roulette::State::Stopped) wheel.press();  // the key is pressed after two seconds
         }
         prizeType_ = wheel.prize();
         prizeWinner_ = lastWinner_;
@@ -757,10 +761,19 @@ std::string Server::startMatch() {
             "jelly (bouncy) bombs", "super bad disease", "random", "a speed brake (slowness)", ""};
         if (prizeType_ >= 0) {
             const std::string who = settings_.teamPlay ? "team " + std::to_string(prizeWinner_ + 1) : lobby_.seatName(prizeWinner_);
-            say("The Gold Player (" + who + ") has " + kPrizeText[prizeType_] + " for this match!!");
+            rouletteSay_ = "The Gold Player (" + who + ") has " + kPrizeText[prizeType_] + " for this match!!";
+            // Everybody watches the wheel (25 frames a second) and then the prize for a few seconds.
+            show.winner = prizeWinner_;
+            show.teamPlay = settings_.teamPlay;
+            show.prize = prizeType_;
+            show.frames = frame;
+            broadcast(ServerMsg::Roulette, encoded(show));
+            phase_ = Phase::Roulette;
+            rouletteUntil_ = now_ + static_cast<std::uint64_t>(frame) * 40 + 4000;
+            lobbyDirty_ = true;
+            return {};
         }
     }
-    log("INFO  Match started level=" + std::to_string(level_) + " scheme=\"" + settings_.schemeTitle + "\" players=" + std::to_string(occupied));
     startRound();
     return {};
 }
@@ -1029,6 +1042,11 @@ void Server::update(std::uint64_t nowMs) {
 
     if (phase_ == Phase::Round) {
         stepRound();
+    } else if (phase_ == Phase::Roulette) {
+        if (now_ >= rouletteUntil_) {
+            say(rouletteSay_);
+            startRound();
+        }
     } else if (phase_ == Phase::Result) {
         // Clients on UDP may still miss the last steps.
         if (now_ - resendAt_ >= 100) {

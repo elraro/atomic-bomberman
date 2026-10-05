@@ -10,6 +10,9 @@
 #include <string>
 #include <vector>
 
+#include <memory>
+
+#include "game/roulette.hpp"
 #include "net/client.hpp"
 #include "net/server.hpp"
 #include "rendering/renderer.hpp"
@@ -66,6 +69,7 @@ private:
     void drawEntry(Renderer& r, SpriteBank& bank, int frame);
     void drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t nowMs);
     void drawResult(Renderer& r, SpriteBank& bank);
+    void drawRoulette(Renderer& r, SpriteBank& bank);
     void drawChat(Renderer& r, SpriteBank& bank, std::uint64_t nowMs);
     std::vector<std::string> wrap(Renderer& r, SpriteBank& bank, const std::string& s, float width) const;
 
@@ -100,6 +104,10 @@ private:
     bool continueSent_ = false;
     std::uint64_t escapeAt_ = 0; // first Esc: a second one within three seconds leaves
     RenderSnapshot previous_;
+    Values wheelValues_ = Values::defaults();
+    std::unique_ptr<Roulette> wheel_;  // the bonus wheel while the server shows it
+    std::uint32_t wheelSeed_ = 0;
+    int wheelFrames_ = 0;
 };
 
 }  // namespace ab

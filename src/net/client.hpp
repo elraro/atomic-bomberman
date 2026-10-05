@@ -101,6 +101,9 @@ public:
     const MatchScore& score() const { return state_ == State::Result ? end_.score : start_.score; }
     const RoundEndMsg& result() const { return end_; }
     const RoundStartMsg& roundStart() const { return start_; }
+    // The bonus wheel being shown before a match, or null. `rouletteSince()` is when it began.
+    const RouletteMsg* roulette() const { return rouletteOn_ ? &roulette_ : nullptr; }
+    std::uint64_t rouletteSince() const { return rouletteAt_; }
     std::uint32_t stepsApplied() const { return applied_; }
     int snapshotsLoaded() const { return snapshots_; }
 
@@ -150,6 +153,9 @@ private:
 
     RoundStartMsg start_;
     RoundEndMsg end_;
+    RouletteMsg roulette_;
+    bool rouletteOn_ = false;
+    std::uint64_t rouletteAt_ = 0;
     bool ended_ = false;             // RoundEnd received for this round
     std::unique_ptr<World> world_;
     std::deque<Step> queue_;         // received, not yet applied
