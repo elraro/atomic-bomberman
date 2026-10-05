@@ -77,6 +77,7 @@ const char* const kUsage =
     "  --upnp             ask the router to forward the port (UPnP), for a server behind a home router\n"
     "The first player to join is the administrator: changes the settings, starts the match.\n"
     "  --admin-password TEXT  a player who types /login TEXT in the chat becomes administrator\n"
+    "  --identity-file FILE   the server's lasting key (default: server.key in the per-user folder)\n"
     "  --ban-file FILE    where banned addresses are kept (default: bans.txt in the per-user folder)\n"
     "Commands on standard input: status, say TEXT, kick NAME, ban NAME, unban ADDRESS, bans, quit.\n";
 
@@ -116,6 +117,7 @@ int main(int argc, char** argv) {
         else if (a == "--upnp") config.upnp = true;
         else if (a == "--ban-file") config.banFile = next();
         else if (a == "--admin-password") config.adminPassword = next();
+        else if (a == "--identity-file") config.identityFile = next();
         else {
             std::fprintf(stderr, "ERROR unknown argument %s (see --help)\n", a.c_str());
             return 2;
@@ -126,6 +128,7 @@ int main(int argc, char** argv) {
     if (!schemesDirGiven)
         if (const std::string user = userDataDir(); !user.empty()) config.userSchemesDir = user + "schemes";
     if (config.banFile.empty() && !userDataDir().empty()) config.banFile = userDataDir() + "bans.txt";
+    if (config.identityFile.empty() && !userDataDir().empty()) config.identityFile = userDataDir() + "server.key";
     config.log = logLine;
     if (config.gameDir.empty()) {
         // No original game data: the arenas and level extras of the free asset set.

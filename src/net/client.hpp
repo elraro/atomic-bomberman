@@ -39,6 +39,15 @@ public:
     // `address` is "host" or "host:port". The name lookup may block briefly.
     void connect(const std::string& address, const std::string& name, const std::string& password, std::uint64_t nowMs);
     void disconnect();
+    // Where the identities of servers visited are remembered ("address fingerprint" lines).
+    // A server whose identity differs from the remembered one is refused; forgetServer()
+    // drops the memory of an address so that the next visit is a first one.
+    void setKnownServersFile(const std::string& path) { knownFile_ = path; }
+    void forgetServer(const std::string& address);
+    bool identityChanged() const { return identityChanged_; }  // why the last connection failed
+    const std::string& serverIdentity() const { return identity_; }   // fingerprint of the server in use
+    bool serverWasKnown() const { return identityKnown_; }
+    void checkIdentityOnLoopback() { identityOnLoopback_ = true; }  // for the tests
     // Network traffic. Does not advance the round.
     void update(std::uint64_t nowMs);
     // What happened in a step, for the sounds. With prediction on, this player's own actions
@@ -131,6 +140,12 @@ private:
     UdpSocket udp_;
     Address server_{};
     std::string name_;
+    std::string address_;      // as given to connect()
+    std::string knownFile_;
+    std::string identity_;
+    bool identityKnown_ = false;
+    bool identityChanged_ = false;
+    bool identityOnLoopback_ = false;
     std::string password_;
     std::uint64_t connectAt_ = 0;
     bool helloSent_ = false;   // the key exchange was started

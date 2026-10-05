@@ -34,6 +34,7 @@ struct ServerConfig {
     bool upnp = false;                  // ask the router to forward the port (UPnP)
     std::string banFile;                // banned addresses, one per line (empty: bans last until the server stops)
     int maxPerAddress = 10;             // connections accepted from one address at a time
+    std::string identityFile;           // the server's lasting key (made on first start); empty: a new identity every start
     std::string adminPassword;          // whoever gives it ("/login PASSWORD") becomes administrator; empty: off
     std::function<void(const std::string&)> log;  // one line per event; may be empty
 };
@@ -50,6 +51,8 @@ public:
     bool running() const { return running_; }
     std::uint16_t port() const { return listener_.port(); }
     const std::string& error() const { return error_; }
+    // What players compare to know it is this server: "3F9A-11C0-7B42-E5D8".
+    std::string identity() const { return fingerprint(identityPublic_); }
 
     // Network and game logic up to the given time (ms of a monotonic clock).
     void update(std::uint64_t nowMs);
@@ -115,6 +118,7 @@ private:
     std::vector<std::unique_ptr<Peer>> peers_;
     std::uint64_t now_ = 0;
     std::uint64_t joinCounter_ = 0;
+    Key identitySecret_{}, identityPublic_{};
     int adminId_ = -1;  // the administrator's client id; -1: whoever has been here longest
     Rng rng_{1};
 

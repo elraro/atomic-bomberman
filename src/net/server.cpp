@@ -106,6 +106,24 @@ bool Server::start(const ServerConfig& config) {
         }
         std::sort(campaigns_.begin(), campaigns_.end());
     }
+    // The identity: a key kept from one start to the next, so that players' games can tell
+    // this server from one pretending to be it.
+    bool haveIdentity = false;
+    if (!config.identityFile.empty()) {
+        std::ifstream in(config.identityFile);
+        std::string hex;
+        in >> hex;
+        haveIdentity = fromHex(hex, identitySecret_);
+    }
+    if (!haveIdentity) {
+        randomBytes(identitySecret_.data(), identitySecret_.size());
+        if (!config.identityFile.empty()) {
+            std::ofstream out(config.identityFile, std::ios::binary);
+            out << toHex(identitySecret_) << "\n";
+            if (!out) log("WARN  Cannot write the identity file " + config.identityFile + ": a new identity at every start");
+        }
+    }
+    identityPublic_ = x25519Base(identitySecret_);
     adminId_ = -1;
     blocked_.clear();
     connects_.clear();
@@ -142,7 +160,7 @@ bool Server::start(const ServerConfig& config) {
     routerNotice_.clear();
     if (config.upnp) mapper_.start(listener_.port(), "Atomic Bomberman");
     log("INFO  Server \"" + config.name + "\" listening port=" + std::to_string(listener_.port()) + " schemes=" +
-        std::to_string(schemes_.size()) + (config.password.empty() ? "" : " password=yes"));
+        std::to_string(schemes_.size()) + (config.password.empty() ? "" : " password=yes") + " identity=" + identity());
     return true;
 }
 
@@ -521,12 +539,13 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
         Key secret{};
         randomBytes(secret.data(), secret.size());
         const Key ours = x25519Base(secret);
-        if (!deriveSession(secret, theirs, theirs, ours, p.keys)) {
+        if (!deriveSession(secret, theirs, theirs, ours, x25519(identitySecret_, theirs), identityPublic_, p.keys)) {
             p.gone = true;
             return;
         }
         ByteWriter w;
         for (std::uint8_t b : ours) w.u8(b);
+        for (std::uint8_t b : identityPublic_) w.u8(b);
         p.socket.send(static_cast<std::uint8_t>(ServerMsg::KeyExchange), w.data());
         p.socket.setKeys(p.keys.toClient, p.keys.toServer);
         p.keyed = true;

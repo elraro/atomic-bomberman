@@ -2,10 +2,26 @@
 
 #include <algorithm>
 #include <exception>
+#include <fstream>
+#include <map>
+#include <sstream>
 
 namespace ab::net {
 
 namespace {
+std::map<std::string, std::string> readKnown(const std::string& path) {
+    std::map<std::string, std::string> known;
+    std::ifstream in(path);
+    std::string address, print;
+    while (in >> address >> print) known[address] = print;
+    return known;
+}
+
+void writeKnown(const std::string& path, const std::map<std::string, std::string>& known) {
+    std::ofstream out(path, std::ios::binary);
+    for (const auto& [address, print] : known) out << address << " " << print << "\n";
+}
+
 constexpr std::uint64_t kConnectTimeoutMs = 8000;
 constexpr std::size_t kChatKept = 100;
 constexpr int kMaxProbes = 12;
@@ -39,6 +55,10 @@ void Client::disconnect() {
 
 void Client::connect(const std::string& address, const std::string& name, const std::string& password, std::uint64_t nowMs) {
     disconnect();
+    address_ = address;
+    identity_.clear();
+    identityKnown_ = false;
+    identityChanged_ = false;
     name_ = name;
     password_ = password;
     connectAt_ = nowMs;
@@ -69,6 +89,14 @@ std::array<int, kMaxLocalPlayers> Client::seats() const {
         if (seat.kind == SeatKind::Human && seat.client == id_ && lobby_.client(id_) != nullptr) mine[seat.local] = s;
     }
     return mine;
+}
+
+void Client::forgetServer(const std::string& address) {
+    if (knownFile_.empty()) return;
+    const auto at = resolveHostPort(address, kDefaultPort);
+    if (!at) return;
+    std::map<std::string, std::string> known = readKnown(knownFile_);
+    if (known.erase(at->text()) > 0) writeKnown(knownFile_, known);
 }
 
 int Client::seat() const {
@@ -187,9 +215,29 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
     switch (static_cast<ServerMsg>(type)) {
         case ServerMsg::KeyExchange: {
             if (keyed_) break;
-            Key theirs{};
+            Key theirs{}, identity{};
             for (std::uint8_t& b : theirs) b = r.u8();
-            if (!r.ok() || !deriveSession(secret_, theirs, public_, theirs, keys_)) return fail("Bad answer from the server");
+            for (std::uint8_t& b : identity) b = r.u8();
+            if (!r.ok()) return fail("Bad answer from the server");
+            // Is this the server that was at this address before? (A server on this very
+            // machine is not asked.) Whoever answers must also own the identity it shows:
+            // without that key it cannot arrive at the connection's keys.
+            identity_ = fingerprint(identity);
+            if (!knownFile_.empty() && (!server_.loopback() || identityOnLoopback_)) {
+                std::map<std::string, std::string> known = readKnown(knownFile_);
+                const auto it = known.find(server_.text());
+                if (it != known.end() && it->second != identity_) {
+                    identityChanged_ = true;
+                    return fail("This is not the server that was at " + server_.text() + " before (identity " + identity_ + ", remembered " + it->second +
+                                "). Someone may be listening in, or the server was set up anew.");
+                }
+                identityKnown_ = it != known.end();
+                if (!identityKnown_) {
+                    known[server_.text()] = identity_;
+                    writeKnown(knownFile_, known);
+                }
+            }
+            if (!deriveSession(secret_, theirs, public_, theirs, x25519(secret_, identity), identity, keys_)) return fail("Bad answer from the server");
             socket_.setKeys(keys_.toServer, keys_.toClient);
             keyed_ = true;
             secret_ = {};

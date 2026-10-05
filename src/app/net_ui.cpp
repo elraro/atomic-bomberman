@@ -133,6 +133,7 @@ void NetUi::connectTo(const std::string& address, bool remember) {
     }
     connectingTo_ = address;
     client_.setPrediction(cfg_.netPrediction);
+    if (!userSchemesDir_.empty()) client_.setKnownServersFile(userSchemesDir_ + "/../known_servers.txt");
     client_.connect(address, playerName(), password_, net::clockMs());
     lastState_ = State::Connecting;
     lastRound_ = 0;
@@ -169,7 +170,8 @@ void NetUi::startHost() {
     config.settings.diseasesDestroyable = cfg_.diseasesDestroyable;
     config.settings.computers = 1;
     config.upnp = true;
-    if (!userSchemesDir_.empty()) config.banFile = userSchemesDir_ + "/../bans.txt";  // beside the settings file  // a hosted game tries to open the router's port; the lobby says how it went
+    if (!userSchemesDir_.empty()) config.banFile = userSchemesDir_ + "/../bans.txt";  // beside the settings file
+    if (!userSchemesDir_.empty()) config.identityFile = userSchemesDir_ + "/../server.key";  // a hosted game tries to open the router's port; the lobby says how it went
     config.log = [](const std::string& line) { std::fprintf(stderr, "%s\n", line.c_str()); };
     if (!server_.start(config)) {
         error_ = server_.error() + " (is a server already running on it?)";
@@ -244,6 +246,14 @@ void NetUi::key(unsigned key, bool ctrl) {
     if (key != SDLK_ESCAPE) escapeAt_ = 0;
 
     if (mode_ == Mode::Error) {
+        // A server whose identity changed: F8 forgets the old one, so that joining again
+        // accepts the new (for when the server really was set up anew).
+        if (key == SDLK_F8 && identityChanged_) {
+            client_.forgetServer(connectingTo_);
+            identityChanged_ = false;
+            error_ = "The old identity is forgotten. Join again to accept the new one.";
+            return;
+        }
         if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_ESCAPE) {
             mode_ = entry_;
             row_ = entry_ == Mode::Host ? kHostRows - 1 : 1;
@@ -402,6 +412,7 @@ void NetUi::update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxL
     if (state == lastState_) return;
     if (state == State::Failed) {
         error_ = client_.error();
+        identityChanged_ = client_.identityChanged();
         const Mode back = entry_;
         close();
         entry_ = back;
@@ -550,6 +561,10 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
         if (c.seat < 0) watching += (watching.empty() ? "Watching: " : ", ") + c.name;
     if (!watching.empty()) label(r, bank, wrap(r, bank, watching, 280).front(), 24, 268, 0.7f, 0.7f, 0.7f);
     label(r, bank, "* administrator", 24, 290, 0.6f, 0.6f, 0.6f);
+    if (!client_.serverIdentity().empty()) {
+        const std::string id = "id " + client_.serverIdentity();
+        label(r, bank, id, 304.0f - r.textWidth(bank, id), 290, 0.6f, 0.6f, 0.6f);
+    }
 
     label(r, bank, wrap(r, bank, client_.serverName(), 284).front(), 332, 16, 1.0f, 0.95f, 0.3f);
     for (int row = 0; row < kLobbyRows; ++row) {
@@ -719,7 +734,7 @@ void NetUi::draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int fr
         r.quad(100, 180, 440, boxH, 0.0f, 0.0f, 0.10f, 0.88f);
         for (std::size_t i = 0; i < lines.size(); ++i)
             label(r, bank, lines[i], 320.0f - r.textWidth(bank, lines[i]) / 2.0f, 196.0f + 24.0f * static_cast<float>(i), i == 0 ? 1.0f : 0.9f, i == 0 ? 0.95f : 0.9f, i == 0 ? 0.3f : 0.9f);
-        const std::string ok = mode_ == Mode::Error ? "Enter: Ok" : "Esc: cancel";
+        const std::string ok = mode_ == Mode::Error ? (identityChanged_ ? "Enter: Ok   F8: forget the old identity" : "Enter: Ok") : "Esc: cancel";
         label(r, bank, ok, 320.0f - r.textWidth(bank, ok) / 2.0f, 180.0f + boxH - 30.0f, 0.4f, 1.0f, 1.0f);
     }
     r.end();

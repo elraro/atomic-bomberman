@@ -17,7 +17,7 @@ namespace ab::net {
 
 inline constexpr std::uint32_t kTcpMagic = 0x4E4D4241u;  // "ABMN"
 inline constexpr std::uint32_t kUdpMagic = 0x554D4241u;  // "ABMU"
-inline constexpr std::uint16_t kProtocolVersion = 4;
+inline constexpr std::uint16_t kProtocolVersion = 5;
 inline constexpr std::uint16_t kDefaultPort = 27410;
 // Every server also listens here for searches on the local network, whatever its own port.
 inline constexpr std::uint16_t kDiscoveryPort = 27409;

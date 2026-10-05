@@ -375,13 +375,17 @@ bool equalConstantTime(const std::uint8_t* a, const std::uint8_t* b, std::size_t
     return diff == 0;
 }
 
-bool deriveSession(const Key& ownSecret, const Key& theirPublic, const Key& clientPublic, const Key& serverPublic, SessionKeys& out) {
+bool deriveSession(const Key& ownSecret, const Key& theirPublic, const Key& clientPublic, const Key& serverPublic, const Key& identityShared,
+                   const Key& identityPublic, SessionKeys& out) {
     const Key shared = x25519(ownSecret, theirPublic);
-    u8 zero = 0;
+    u8 zero = 0, zeroIdentity = 0;
     for (u8 b : shared) zero |= b;
-    if (zero == 0) return false;
+    for (u8 b : identityShared) zeroIdentity |= b;
+    if (zero == 0 || zeroIdentity == 0) return false;
     Bytes material(shared.begin(), shared.end());
-    const char* label = "atomic-bomberman-modern net 3";
+    material.insert(material.end(), identityShared.begin(), identityShared.end());
+    material.insert(material.end(), identityPublic.begin(), identityPublic.end());
+    const char* label = "atomic-bomberman-modern net 5";
     material.insert(material.end(), label, label + std::strlen(label));
     material.insert(material.end(), clientPublic.begin(), clientPublic.end());
     material.insert(material.end(), serverPublic.begin(), serverPublic.end());
@@ -396,6 +400,40 @@ bool deriveSession(const Key& ownSecret, const Key& theirPublic, const Key& clie
     out.udpToServer = sub(3);
     out.udpToClient = sub(4);
     return true;
+}
+
+std::string toHex(const Key& key) {
+    static const char* const kDigits = "0123456789abcdef";
+    std::string out;
+    for (u8 b : key) out += kDigits[b >> 4], out += kDigits[b & 15];
+    return out;
+}
+
+bool fromHex(const std::string& hex, Key& key) {
+    if (hex.size() != 64) return false;
+    for (std::size_t i = 0; i < 32; ++i) {
+        int v = 0;
+        for (std::size_t j = 0; j < 2; ++j) {
+            const char ch = hex[2 * i + j];
+            const int d = ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : -1;
+            if (d < 0) return false;
+            v = v * 16 + d;
+        }
+        key[i] = static_cast<u8>(v);
+    }
+    return true;
+}
+
+std::string fingerprint(const Key& identityPublic) {
+    const Key hash = sha256(identityPublic.data(), identityPublic.size());
+    static const char* const kDigits = "0123456789ABCDEF";
+    std::string out;
+    for (std::size_t i = 0; i < 8; ++i) {
+        if (i > 0 && i % 2 == 0) out += '-';
+        out += kDigits[hash[i] >> 4];
+        out += kDigits[hash[i] & 15];
+    }
+    return out;
 }
 
 Key passwordProof(const std::string& password, const Key& master) {

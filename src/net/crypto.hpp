@@ -48,8 +48,15 @@ struct SessionKeys {
     Key udpToServer{};
     Key udpToClient{};
 };
-// False if the shared secret is degenerate (a hostile public key).
-bool deriveSession(const Key& ownSecret, const Key& theirPublic, const Key& clientPublic, const Key& serverPublic, SessionKeys& out);
+// `identityShared` is the secret between the client's fresh key and the server's lasting
+// identity key (each side computes it with what it holds): only the true owner of that
+// identity arrives at the same keys. False if a shared secret is degenerate (a hostile key).
+bool deriveSession(const Key& ownSecret, const Key& theirPublic, const Key& clientPublic, const Key& serverPublic, const Key& identityShared,
+                   const Key& identityPublic, SessionKeys& out);
+// A server identity as people compare it: "3F9A-11C0-7B42-E5D8".
+std::string fingerprint(const Key& identityPublic);
+std::string toHex(const Key& key);
+bool fromHex(const std::string& hex, Key& key);
 // What a client sends instead of the password: it shows knowledge of the password for this
 // connection only, and tells an eavesdropper nothing.
 Key passwordProof(const std::string& password, const Key& master);

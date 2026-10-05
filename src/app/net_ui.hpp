@@ -88,6 +88,7 @@ private:
     std::string portText_;
     std::string error_;
     std::string connectingTo_;
+    bool identityChanged_ = false;  // the error shown is a changed server identity
 
     net::Client client_;
     net::Server server_;

@@ -901,18 +901,29 @@ void testCrypto() {
     randomBytes(a.data(), 32);
     randomBytes(b.data(), 32);
     CHECK(a != b);
+    // The server also has a lasting identity key; both ends mix in the secret between it and
+    // the client's fresh key, so only the identity's owner arrives at the same keys.
+    Key id{};
+    randomBytes(id.data(), 32);
+    const Key idPublic = x25519Base(id);
     SessionKeys client, server;
-    CHECK(deriveSession(a, x25519Base(b), x25519Base(a), x25519Base(b), client));
-    CHECK(deriveSession(b, x25519Base(a), x25519Base(a), x25519Base(b), server));
+    CHECK(deriveSession(a, x25519Base(b), x25519Base(a), x25519Base(b), x25519(a, idPublic), idPublic, client));
+    CHECK(deriveSession(b, x25519Base(a), x25519Base(a), x25519Base(b), x25519(id, x25519Base(a)), idPublic, server));
     CHECK(client.master == server.master && client.toServer == server.toServer && client.udpToClient == server.udpToClient);
     CHECK(client.toServer != client.toClient && client.udpToServer != client.toServer);
     CHECK(passwordProof("secret", client.master) == passwordProof("secret", server.master));
     CHECK(passwordProof("secret", client.master) != passwordProof("Secret", client.master));
-    SessionKeys other;
-    CHECK(deriveSession(a, x25519Base(a), x25519Base(a), x25519Base(a), other));
-    CHECK(passwordProof("secret", other.master) != passwordProof("secret", client.master));
+    // Someone who shows that identity without owning it does not get the keys.
+    Key thief{};
+    randomBytes(thief.data(), 32);
+    SessionKeys stolen;
+    CHECK(deriveSession(b, x25519Base(a), x25519Base(a), x25519Base(b), x25519(thief, x25519Base(a)), idPublic, stolen));
+    CHECK(stolen.master != client.master);
+    CHECK_EQ(fingerprint(idPublic).size(), 19u);
+    Key back{};
+    CHECK(ab::net::fromHex(ab::net::toHex(id), back) && back == id && !ab::net::fromHex("xyz", back));
     SessionKeys bad;
-    CHECK(!deriveSession(a, Key{}, x25519Base(a), Key{}, bad));  // a public key of zeros gives no secret
+    CHECK(!deriveSession(a, Key{}, x25519Base(a), Key{}, x25519(a, idPublic), idPublic, bad));  // a public key of zeros gives no secret
 }
 
 // Someone in the middle who passes every message on: sees only noise, and cannot change
@@ -1126,6 +1137,73 @@ void testBansAndLimits() {
     std::filesystem::remove(banFile);
 }
 
+// A server keeps its identity from one start to the next, and a client notices when the
+// server at an address is not the one it knows.
+void testServerIdentity() {
+    const auto tmp = std::filesystem::temp_directory_path();
+    const std::string identityFile = (tmp / "ab-net-identity-test.key").string(), knownFile = (tmp / "ab-net-known-test.txt").string();
+    std::filesystem::remove(identityFile);
+    std::filesystem::remove(knownFile);
+    ServerConfig config;
+    config.discoverable = false;
+    config.identityFile = identityFile;
+    std::uint16_t port = 0;
+    std::string identity;
+    auto visit = [&](Harness& h, Client& c) {
+        c.setKnownServersFile(knownFile);
+        c.checkIdentityOnLoopback();  // the tests have only this machine
+        c.connect("127.0.0.1:" + std::to_string(port), "Ann", "", h.now);
+        h.until([&] { return c.state() == Client::State::Lobby || c.state() == Client::State::Failed; });
+    };
+    {
+        Harness h;
+        config.port = 0;
+        CHECK(h.server.start(config));
+        port = h.server.port();
+        identity = h.server.identity();
+        CHECK_EQ(identity.size(), 19u);
+        h.clients.push_back(std::make_unique<Client>());
+        Client& ann = *h.clients.back();
+        visit(h, ann);
+        CHECK(ann.state() == Client::State::Lobby);
+        CHECK(ann.serverIdentity() == identity);
+        CHECK(!ann.serverWasKnown());  // the first visit: remembered from now on
+        ann.disconnect();
+        visit(h, ann);
+        CHECK(ann.state() == Client::State::Lobby && ann.serverWasKnown());
+    }
+    config.port = port;
+    {
+        // The same server started again: the same identity, from its file.
+        Harness h;
+        CHECK(h.server.start(config));
+        CHECK(h.server.identity() == identity);
+        h.clients.push_back(std::make_unique<Client>());
+        visit(h, *h.clients.back());
+        CHECK(h.clients.back()->state() == Client::State::Lobby && h.clients.back()->serverWasKnown());
+    }
+    {
+        // Another server at that address (no identity file: a fresh identity): refused, with
+        // the reason; after forgetting the old one it is a first visit again.
+        Harness h;
+        config.identityFile.clear();
+        CHECK(h.server.start(config));
+        CHECK(h.server.identity() != identity);
+        h.clients.push_back(std::make_unique<Client>());
+        Client& ann = *h.clients.back();
+        visit(h, ann);
+        CHECK(ann.state() == Client::State::Failed);
+        CHECK(ann.identityChanged());
+        CHECK(ann.error().find(identity) != std::string::npos && ann.error().find(h.server.identity()) != std::string::npos);
+        CHECK_EQ(h.server.players(), 0);
+        ann.forgetServer("127.0.0.1:" + std::to_string(port));
+        visit(h, ann);
+        CHECK(ann.state() == Client::State::Lobby && !ann.serverWasKnown() && !ann.identityChanged());
+    }
+    std::filesystem::remove(identityFile);
+    std::filesystem::remove(knownFile);
+}
+
 // The network keys of the settings file.
 void testNetSettings() {
     Settings s;
@@ -1195,6 +1273,7 @@ int main() {
         {"lobby", testLobby},
         {"encryption on the wire", testEncryptionOnTheWire},
         {"bans and limits", testBansAndLimits},
+        {"server identity", testServerIdentity},
         {"round over udp", [] { testRound(true); }},
         {"round over tcp only", [] { testRound(false); }},
         {"leave during round", testLeaveDuringRound},
