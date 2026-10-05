@@ -116,7 +116,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--assets-dir") o.assetsDir = next();
         else if (a == "--result-shot") o.resultShot = true;
         else if (a == "--script") {
-            // Comma-separated keys: up, down, left, right, enter, esc. One is pressed every 10 frames.
+            // Comma-separated keys: up, down, left, right, enter, esc, space, backspace, t, f2, f3,
+            // text=CHARACTERS (typed), wait (nothing). One every 10 frames.
             std::string list = next(), item;
             for (char ch : list + ",") {
                 if (ch == ',') {
@@ -946,10 +947,16 @@ int main(int argc, char** argv) {
             if (!opt.script.empty() && frame % 10 == 5 && static_cast<std::size_t>(frame / 10) < opt.script.size()) {
                 const std::string& k = opt.script[static_cast<std::size_t>(frame / 10)];
                 SDL_Event press{};
-                press.type = SDL_EVENT_KEY_DOWN;
-                press.key.key = k == "up" ? SDLK_UP : k == "down" ? SDLK_DOWN : k == "left" ? SDLK_LEFT : k == "right" ? SDLK_RIGHT
-                                : k == "esc" ? SDLK_ESCAPE : SDLK_RETURN;
-                SDL_PushEvent(&press);
+                if (k.rfind("text=", 0) == 0) {  // typed characters (the string outlives the event)
+                    press.type = SDL_EVENT_TEXT_INPUT;
+                    press.text.text = k.c_str() + 5;
+                } else {
+                    press.type = SDL_EVENT_KEY_DOWN;
+                    press.key.key = k == "up" ? SDLK_UP : k == "down" ? SDLK_DOWN : k == "left" ? SDLK_LEFT : k == "right" ? SDLK_RIGHT
+                                    : k == "esc" ? SDLK_ESCAPE : k == "f2" ? SDLK_F2 : k == "f3" ? SDLK_F3 : k == "t" ? SDLK_T
+                                    : k == "space" ? SDLK_SPACE : k == "backspace" ? SDLK_BACKSPACE : SDLK_RETURN;
+                }
+                if (k != "wait") SDL_PushEvent(&press);
             }
             SDL_Event e;
             bool singleStep = false;
