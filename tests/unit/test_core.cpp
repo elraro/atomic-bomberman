@@ -1103,6 +1103,59 @@ void testSoundEvents() {
     CHECK_EQ(strings, 1);
 }
 
+void testIceDelay() {
+    Fixture f;
+    f.w.setLevelRules(250, 0);                          // the hockey rink
+    f.place(0, {0, 0});
+    f.place(1, {14, 10});
+    const int x0 = f.w.player(0).x;
+    f.hold(0, 1);
+    f.run(5);                                           // 250 ms: the request is not old enough yet
+    CHECK_EQ(f.w.player(0).x, x0);
+    f.run(4);
+    CHECK(f.w.player(0).x > x0);                        // now it is acted on
+    f.hold(0, kNoDir);
+    const int x1 = f.w.player(0).x;
+    f.run(4);
+    CHECK(f.w.player(0).x > x1);                        // and letting go takes as long: the player slides on
+    f.run(4);
+    const int x2 = f.w.player(0).x;
+    f.run(4);
+    CHECK_EQ(f.w.player(0).x, x2);
+    // A computer player is not delayed.
+    Fixture g;
+    g.w.setLevelRules(250, 0);
+    g.w.setHuman(0, false);
+    g.place(0, {0, 0});
+    g.place(1, {14, 10});
+    const int gx = g.w.player(0).x;
+    g.hold(0, 1);
+    g.run(2);
+    CHECK(g.w.player(0).x > gx);
+}
+
+void testBrickRegeneration() {
+    Fixture f;                                          // pillars: no bricks at all
+    f.w.setLevelRules(0, 4);                            // the haunted house
+    f.place(0, {0, 0});
+    f.place(1, {1, 0});
+    auto bricks = [&]() {
+        int n = 0;
+        for (int y = 0; y < kGridH; ++y)
+            for (int x = 0; x < kGridW; ++x) n += f.w.tile({x, y}) == Tile::Brick ? 1 : 0;
+        return n;
+    };
+    f.run(80);                                          // 4 s: not yet (strictly more than 4 s)
+    CHECK_EQ(bricks(), 0);
+    f.run(2);
+    CHECK_EQ(bricks(), 1);
+    f.run(82);
+    CHECK_EQ(bricks(), 2);
+    for (int y = 0; y < kGridH; ++y)                    // never within 4 cells of a player
+        for (int x = 0; x < kGridW; ++x)
+            if (f.w.tile({x, y}) == Tile::Brick) CHECK(x + y > 4 && (x - 1) + y > 4);
+}
+
 void testSettings() {
     Settings s;
     s.parse("levelno=4\nnum_to_win_match=3\nenclosement_depth=9\nconveyor_speed=2\nteam_play=1\nrandom_start=1\n"
@@ -1631,6 +1684,8 @@ int main() {
         {"trapped animation", testTrappedAnimation},
         {"roulette", testRoulette},
         {"settings", testSettings},
+        {"ice delay", testIceDelay},
+        {"brick regeneration", testBrickRegeneration},
         {"sound events", testSoundEvents},
         {"scheme powers", testSchemePowers},
         {"campaign file", testCampaignFile},

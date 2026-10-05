@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "game/geometry.hpp"
@@ -175,6 +176,9 @@ struct Player {
     int team = 0;       // 0 or 1; only meaningful in team play
     int kills = 0;
     int killedBy = -1;  // player index, or -1
+    // The last 30 directions asked for and how long ago (ms), newest first: on a level
+    // with a control delay (ice) the one acted on is the newest that is old enough.
+    std::array<std::pair<int, Dir>, 30> dirHistory{};
     int goodPickups = 0; // powerups picked up this round, diseases apart
     bool human = true;   // campaign: only human players respawn and are hurt by enemies
     int lives = 0;       // campaign: respawns left
@@ -326,6 +330,13 @@ public:
     void setValue(int id, int value) { values_.set(id, value); }
     // "Win matches by kill total": a suicide no longer costs a kill.
     void setWinByKills(bool on) { winByKills_ = on; }
+    // Level rules: the control delay of human players in ms (value 450 + level; the hockey
+    // rink's ice) and the seconds between brick regeneration attempts (value 340 + level;
+    // the haunted house). Zero switches either off.
+    void setLevelRules(int controlDelayMs, int regenerationSeconds) {
+        controlDelayMs_ = controlDelayMs;
+        regenerationSeconds_ = regenerationSeconds;
+    }
     // Scheme rule: powerup types the "random" powerup must not turn into.
     void setForbiddenRandom(const std::array<bool, 13>& forbidden) { forbiddenRandom_ = forbidden; }
     bool hurry() const;                  // the "hurry" warning is showing
@@ -366,6 +377,7 @@ private:
     void closeCell(Cell c);
     void clearStartArea(Cell c);
     void updateAliens(int dt);
+    void regenerateTile(int dt);
     void updateCampaign(int dt);
     bool alienPassable(AlienType type, Cell c) const;
     void killPlayer(int i, int killer);
@@ -397,6 +409,9 @@ private:
     int roundLimitMs_ = -1;
     int enclosementDepth_ = 0;
     bool winByKills_ = false;
+    int controlDelayMs_ = 0;
+    int regenerationSeconds_ = 0;
+    int regenerationMs_ = 0;
     std::array<bool, 13> forbiddenRandom_{};
     bool campaign_ = false;
     int campaignResult_ = 0;

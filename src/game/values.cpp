@@ -50,6 +50,11 @@ Values Values::defaults() {
     v.set(651, 4);
     v.set(665, 2);
     v.set(667, 3);
+    v.set(695, 4);
+    for (int level = 0; level <= 10; ++level) {
+        v.set(340 + level, level == 7 ? 4 : 0);    // brick regeneration: the haunted house
+        v.set(450 + level, level == 2 ? 250 : 0);  // control delay: the hockey rink
+    }
     v.set(1000, 320);
     v.set(1001, 240);
     v.set(1002, 200);

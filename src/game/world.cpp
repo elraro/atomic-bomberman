@@ -58,6 +58,7 @@ void World::startRound(const Scheme& scheme, bool generatePowerups) {
     walls_ = {};
     wallsClosed_ = 0;
     hurryAnnounced_ = false;
+    regenerationMs_ = 0;
     aliens_.clear();
     campaignResult_ = 0;
     campaignRetry_ = false;
@@ -277,6 +278,7 @@ void World::addPlayer(int i) {
     // (The original does this on the player's first update.)
     clearStartArea(c);
     p.lives = campaign_ ? 1 : 0;
+    p.dirHistory.fill({0, kNoDir});
     if (teamPlay_) {
         std::array<bool, 2> alive{};
         for (const Player& q : players_)
@@ -422,6 +424,7 @@ void World::tick(int dtMs, const std::array<PlayerInput, kMaxPlayers>& input) {
     updateExtras();
     updateBombs(dt);
     updateFlames(dt);
+    regenerateTile(dt);
     updateEnclosement(dt);
     updatePlayers(dt, input);
     if (campaign_ && campaignResult_ == 0) updateCampaign(dt);
@@ -1052,6 +1055,30 @@ void World::updateEnclosement(int dt) {
     }
 }
 
+// Brick regeneration (original 0x426704, levels with value 340 + level > 0): every that
+// many seconds, while the round is undecided, up to 100 random cells are tried; the first
+// blank one with no powerup, no bomb and no player within value 695 cells becomes a brick.
+void World::regenerateTile(int dt) {
+    if (regenerationSeconds_ <= 0 || contenders_ <= 1) return;
+    regenerationMs_ += dt;
+    if (regenerationMs_ <= regenerationSeconds_ * 1000) return;
+    regenerationMs_ = 0;
+    const int radius = values_.get(vid::kRegenerationClearRadius);
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        const Cell c{rng_.below(kGridW), rng_.below(kGridH)};
+        if (tile(c) != Tile::Blank || powerups_[index(c)].state != PowerupState::None || bombAt(c) != nullptr) continue;
+        bool clear = true;
+        for (const Player& p : players_) {
+            if (!p.present) continue;
+            const Cell pc = pixelToCell(p.x, p.y);
+            if (std::abs(pc.x - c.x) + std::abs(pc.y - c.y) <= radius) clear = false;
+        }
+        if (!clear) continue;
+        setTile(c, Tile::Brick);
+        break;
+    }
+}
+
 // The same walk as updateEnclosement, without closing anything (original 0x42690D).
 std::vector<Cell> World::upcomingWallCells(int count) const {
     std::vector<Cell> cells;
@@ -1383,6 +1410,18 @@ void World::updatePlayer(int i, int dt, const PlayerInput& in) {
 
     Dir requested = chooseDirection(p, effective);
     if (requested != kNoDir && p.disease[kDisReverse]) requested = opposite(requested);
+    if (p.human) {
+        // Control delay (original 0x41FBB6): every entry ages, the new request goes in front,
+        // and the direction used is the newest one at least the level's delay old (the
+        // oldest of the 30 if none is). With no delay that is the new request itself.
+        for (auto& entry : p.dirHistory) entry.first += dt;
+        for (std::size_t k = p.dirHistory.size() - 1; k > 0; --k) p.dirHistory[k] = p.dirHistory[k - 1];
+        p.dirHistory[0] = {0, requested};
+        for (const auto& entry : p.dirHistory) {
+            requested = entry.second;
+            if (controlDelayMs_ <= entry.first) break;
+        }
+    }
     p.moving = false;
     const Extra* under = extraAt(pixelToCell(p.x, p.y));
     const bool onConveyor = under != nullptr && under->type == ExtraType::Conveyor;

@@ -623,6 +623,7 @@ int main(int argc, char** argv) {
             world.setValue(ab::vid::kDiseasesDestroyable, cfg.diseasesDestroyable ? 1 : 0);
             world.setValue(ab::vid::kRoundSeconds, cfg.playTime);
             world.setWinByKills(cfg.winByKills);
+            world.setLevelRules(values.get(450 + level), values.get(340 + level));
             // Scheme powerup rules (original 0x404630): a born-with above zero replaces the
             // starting amount, an override replaces the level's count, and forbidden types
             // are kept out of the random powerup. Other types keep the game's own values.
@@ -647,9 +648,10 @@ int main(int argc, char** argv) {
                     world.addPlayer(i);
                     ++n;
                 }
+            // Computer players are marked: the level's control delay is for humans only.
+            for (int i = 0; i < ab::kMaxPlayers; ++i)
+                if (world.player(i).present) world.setHuman(i, control[static_cast<std::size_t>(i)] != Control::Ai);
             if (campaignMode) {
-                for (int i = 0; i < ab::kMaxPlayers; ++i)
-                    if (world.player(i).present) world.setHuman(i, control[static_cast<std::size_t>(i)] != Control::Ai);
                 const ab::CampaignStage& st = stages[static_cast<std::size_t>(stageIndex)];
                 world.spawnAliens(ab::AlienType::Ghost, st.ghosts, st.ghostSpeed);
                 world.spawnAliens(ab::AlienType::Rover, st.rovers, st.roverSpeed);

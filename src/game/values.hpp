@@ -57,6 +57,7 @@ inline constexpr int kBombStringChance = 650;   // 1 in N for the voice line (ro
 inline constexpr int kBombStringSize = 651;
 inline constexpr int kGrabPauseFrames = 665;
 inline constexpr int kJellyTurnChance = 667;
+inline constexpr int kRegenerationClearRadius = 695;
 inline constexpr int kRouletteCentreX = 1000;
 inline constexpr int kRouletteCentreY = 1001;
 inline constexpr int kRouletteRadiusX = 1002;

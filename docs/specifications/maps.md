@@ -66,3 +66,8 @@ Enabled by the enclosement depth option (0-3, default V(27) [1]). [D]
 ## Scheme powerup settings
 
 Each scheme carries, for powerup types 0-12, a born-with amount, an optional override of the level's count, and a forbidden flag (`-P` lines). When the scheme is applied: a born-with above zero replaces the starting amount of that powerup; an override replaces the number generated under bricks (same meaning of negative numbers); a forbidden type is never chosen by the random powerup, which is re-rolled until it lands on an allowed type. [S, D for born-with and override]
+
+## Level rules
+
+- **Control delay** (value 450 + level; only the hockey rink, 250 ms): a human player's direction is acted on that many milliseconds after it was asked for, both when starting and when stopping or turning. The original keeps the last 30 requests with their age; computer players are not delayed. [S]
+- **Brick regeneration** (value 340 + level; only the haunted house, 4 s): while the round is undecided, every such interval up to 100 random cells are tried, and the first blank cell with no powerup, no bomb and no player within value 695 (4) cells (Manhattan) becomes a brick. The original measures the interval in real time. [S]
