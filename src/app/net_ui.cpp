@@ -343,9 +343,8 @@ void NetUi::update(std::uint64_t nowMs, const PlayerInput& local) {
         client_.setInput(chatOpen_ ? PlayerInput{} : local);
         client_.advance(
             nowMs, [this](World& w) { previous_.capture(w); },
-            [this](World& w) {
-                if (hooks_.stepped) hooks_.stepped(w);
-                else w.takeEvents();
+            [this](const World& w, const std::vector<Event>& events) {
+                if (hooks_.stepped) hooks_.stepped(w, events);
             });
     }
     if (hosting_) server_.update(nowMs);  // what was just sent is handled without a frame's delay

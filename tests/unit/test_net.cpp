@@ -486,6 +486,27 @@ void testPrediction() {
     h.spin(50);
     if (ann.state() == Client::State::Round && ann.stepsApplied() == h.server.steps()) CHECK_EQ(ann.world()->stateHash(), h.server.world()->stateHash());
     CHECK_EQ(ann.snapshotsLoaded(), 0);
+    // Ann drops a bomb: its sound is reported exactly once, whether the prediction or the
+    // server's confirmation gets there first (over the loopback interface either may).
+    int dropsHeard = 0;
+    Client::EventSink sink = [&](const World&, const std::vector<Event>& events) {
+        for (const Event& e : events) dropsHeard += e.kind == EventKind::BombDropped && e.player == 0 ? 1 : 0;
+    };
+    PlayerInput drop;
+    drop.button1 = true;
+    ann.setInput(drop);
+    for (int waited = 0; waited < 1500; waited += 5) {
+        h.server.update(h.now);
+        for (auto& c : h.clients) {
+            c->update(h.now);
+            c->advance(h.now, nullptr, c.get() == &ann ? sink : Client::EventSink());
+        }
+        h.now += 5;
+        std::this_thread::yield();
+        if (waited == 300) ann.setInput({});
+    }
+    CHECK_EQ(dropsHeard, 1);
+    CHECK_EQ(h.server.world()->bombsOwnedBy(0), 1);
     // Somebody else's change of mind is what prediction cannot know: Bob starts walking,
     // Ann's picture is briefly wrong about him and then right again.
     bob.setInput(east);

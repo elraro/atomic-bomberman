@@ -23,7 +23,7 @@ public:
     // What the screens need from the rest of the program.
     struct Hooks {
         std::function<void(int level)> roundStarted;                 // load the level's graphics, play its music
-        std::function<void(World&)> stepped;                         // the sounds of a step
+        std::function<void(const World&, const std::vector<Event>&)> stepped;  // the sounds of a step
         std::function<void(bool draw, bool matchOver)> resultShown;  // the result tune and voice line
         std::function<void()> lobbyEntered;                          // the pre-game tune
         std::function<void(int id)> sound;                           // a menu sound (10 choose, 20 move, 40 refuse)

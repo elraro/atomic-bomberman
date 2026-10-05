@@ -41,9 +41,13 @@ public:
     void disconnect();
     // Network traffic. Does not advance the round.
     void update(std::uint64_t nowMs);
-    // Applies the steps that are due. `before` and `after` are called around each one
-    // (to remember positions for drawing, and to play the step's sounds).
-    int advance(std::uint64_t nowMs, const std::function<void(World&)>& before, const std::function<void(World&)>& after);
+    // What happened in a step, for the sounds. With prediction on, this player's own actions
+    // (dropping, punching, picking up...) are reported from the predicted step, at once, and
+    // left out when the server confirms them.
+    using EventSink = std::function<void(const World&, const std::vector<Event>&)>;
+    // Applies the steps that are due. `before` is called before the picture changes (to
+    // remember positions for drawing), `events` with each step's events.
+    int advance(std::uint64_t nowMs, const std::function<void(World&)>& before, const EventSink& events);
     // How far the present time is between the last step and the next, 0-1 (for drawing).
     float stepAlpha(std::uint64_t nowMs) const;
 
@@ -98,8 +102,9 @@ private:
     void handleSteps(const StepsMsg& m);
     void beginRound(const RoundStartMsg& m, std::uint64_t nowMs);
     void sendInput(std::uint64_t nowMs);
-    void applyStep(const StepInputs& bytes, const std::function<void(World&)>& after);
-    void predict();
+    void applyStep(const StepInputs& bytes, const EventSink& events);
+    void predict(const EventSink& events);
+    bool ownAction(const Event& e) const;
 
     State state_ = State::Idle;
     std::string error_;
@@ -143,6 +148,14 @@ private:
     std::map<std::uint32_t, std::uint8_t> mine_;      // own input assumed for each step not yet confirmed
     StepInputs lastInputs_{};                         // everyone's input in the last confirmed step
     std::uint64_t nextLocalAt_ = 0;
+    std::uint64_t now_ = 0;
+    std::uint32_t soundedUpTo_ = 0;                   // predicted steps whose own-action sounds were given out
+    struct Heard {
+        EventKind kind;
+        int player;
+        std::uint64_t atMs;
+    };
+    std::vector<Heard> heard_;                        // own actions already reported from a prediction
     std::uint8_t inputSent_ = 0;
     std::uint64_t inputSentAt_ = 0;
 };

@@ -104,6 +104,8 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     predicted_.reset();
     predictedValid_ = false;
     target_ = 0;
+    soundedUpTo_ = 0;
+    heard_.clear();
     mine_.clear();
     lastInputs_ = {};
     nextLocalAt_ = nowMs;
@@ -189,6 +191,7 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             queue_.clear();
             hashes_.clear();
             applied_ = m.step;
+            soundedUpTo_ = std::max(soundedUpTo_, m.step);
             mine_.clear();
             awaitingState_ = false;
             ++snapshots_;
@@ -276,14 +279,41 @@ void Client::update(std::uint64_t nowMs) {
     socket_.pump();
 }
 
-void Client::applyStep(const StepInputs& bytes, const std::function<void(World&)>& after) {
+// Things a player does with their own hands: worth hearing without the round trip.
+bool Client::ownAction(const Event& e) const {
+    if (e.player < 0 || e.player != seat()) return false;
+    switch (e.kind) {
+        case EventKind::BombDropped:
+        case EventKind::BombPunched:
+        case EventKind::BombGrabbed:
+        case EventKind::BombThrown:
+        case EventKind::Pickup:
+        case EventKind::PickupJelly:
+        case EventKind::PickupAwesome:
+        case EventKind::TrampolineJump:
+        case EventKind::Warped: return true;
+        default: return false;
+    }
+}
+
+void Client::applyStep(const StepInputs& bytes, const EventSink& events) {
     std::array<PlayerInput, kMaxPlayers> input{};
     for (std::size_t i = 0; i < input.size(); ++i) input[i] = unpackInput(bytes[i]);
     world_->tick(kStepMs, input);
     lastInputs_ = bytes;
     ++applied_;
-    if (after) after(*world_);
-    else world_->takeEvents();
+    std::vector<Event> happened = world_->takeEvents();
+    // An own action that was already heard from the prediction is not heard twice. A
+    // prediction that did not come true is forgotten after a second and a half.
+    std::erase_if(heard_, [&](const Heard& h) { return now_ - h.atMs > 1500; });
+    std::erase_if(happened, [&](const Event& e) {
+        if (!ownAction(e)) return false;
+        const auto it = std::find_if(heard_.begin(), heard_.end(), [&](const Heard& h) { return h.kind == e.kind && h.player == e.player; });
+        if (it == heard_.end()) return false;
+        heard_.erase(it);
+        return true;
+    });
+    if (events && !happened.empty()) events(*world_, happened);
     if (const auto it = hashes_.find(applied_); it != hashes_.end()) {
         if (it->second != world_->stateHash() && !awaitingState_) {
             awaitingState_ = true;
@@ -297,7 +327,7 @@ void Client::applyStep(const StepInputs& bytes, const std::function<void(World&)
 // present input should reach the server for. Own inputs are the ones remembered for each
 // of those steps; everybody else is assumed to keep doing what they did last. It is thrown
 // away and rebuilt on every local step, so a wrong guess lasts until the server's word arrives.
-void Client::predict() {
+void Client::predict(const EventSink& events) {
     const int mySeat = seat();
     int ahead = predictionSteps_;
     if (ahead <= 0) {
@@ -320,13 +350,21 @@ void Client::predict() {
         const auto own = mine_.find(s);
         input[static_cast<std::size_t>(mySeat)] = unpackInput(own != mine_.end() ? own->second : input_);
         predicted_->tick(kStepMs, input);
-        predicted_->takeEvents();  // sounds come from the confirmed steps, once
+        // Sounds come from the confirmed steps, except this player's own actions: those are
+        // given out the first time a step is predicted.
+        std::vector<Event> happened = predicted_->takeEvents();
+        if (s <= soundedUpTo_) continue;
+        soundedUpTo_ = s;
+        std::erase_if(happened, [&](const Event& e) { return !ownAction(e); });
+        for (const Event& e : happened) heard_.push_back({e.kind, e.player, now_});
+        if (events && !happened.empty()) events(*predicted_, happened);
     }
     predictedValid_ = true;
 }
 
-int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& before, const std::function<void(World&)>& after) {
+int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& before, const EventSink& after) {
     if (state_ != State::Round || !world_) return 0;
+    now_ = nowMs;
     int ran = 0;
     const bool predicting = prediction_ && seat() >= 0;
     try {
@@ -346,7 +384,7 @@ int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& befo
                 if (nowMs > nextLocalAt_ + 500) nextLocalAt_ = nowMs;  // after a stall: no burst of steps
                 while (nowMs >= nextLocalAt_) {
                     if (before) before(predictedValid_ ? *predicted_ : *world_);
-                    predict();
+                    predict(after);
                     nextLocalAt_ += kStepMs;
                     lastStepAt_ = nowMs;
                 }

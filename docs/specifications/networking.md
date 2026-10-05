@@ -34,7 +34,9 @@ What a player sees is not the confirmed state but a guess at the state a few ste
 - The copy is thrown away and rebuilt every local step, so a wrong guess (another player turned, a bomb was dropped) lasts only until the server's steps say otherwise; the drawing interpolates over one step, which softens the correction.
 - No prediction for watchers, after the round is decided, or when switched off (Options, "Network: Show Own Moves At Once"; `net_prediction` in the settings file).
 
-Known effects: other players are drawn where they would be if they had not changed direction, so at high delay they visibly jump when they do; sounds follow the confirmed state, so the sound of one's own bomb comes after the picture of it by the round-trip time.
+Sounds follow the confirmed state, with one exception: the player's own actions (dropping, punching, grabbing or throwing a bomb, picking up a powerup, a trampoline, a warp) are heard from the predicted step, at once, and are left out when the server confirms them. A predicted action that never comes true has been heard for nothing; it is forgotten after 1.5 s.
+
+Known effect: other players are drawn where they would be if they had not changed direction, so at high delay they visibly jump when they do.
 
 ## Transport
 
@@ -131,7 +133,7 @@ The dedicated server reads the game data (tuning values, schemes, level extras) 
 
 ## Limits accepted for now
 
-- Prediction covers the picture only: sounds still arrive with the round-trip delay, and other players' changes of direction appear as small corrections.
+- Prediction covers the picture and the sounds of one's own actions; everything else (explosions, other players) is heard with the round-trip delay, and other players' changes of direction appear as small corrections.
 - IPv4 only; no NAT traversal: the host's port must be reachable.
 - One player per client; no roulette, no campaign.
 - Clients trust the server's snapshots (see `../migration/networking.md`).

@@ -231,8 +231,8 @@ ab::PlayerInput gamepadInput(SDL_Gamepad* pad) {
 }
 
 // Sound id ranges of the original's soundlst.res for each gameplay event.
-void playEvents(ab::World& world, ab::Audio& audio) {
-    for (const ab::Event& e : world.takeEvents()) {
+void playEvents(const ab::World& world, const std::vector<ab::Event>& events, ab::Audio& audio) {
+    for (const ab::Event& e : events) {
         switch (e.kind) {
             // Sound ids as at the original's call sites; each is the first of a run of
             // consecutive ids from which one is taken.
@@ -661,7 +661,7 @@ int main(int argc, char** argv) {
             if (cfg.disableGameMusic) audio.stopMusic();
             else audio.playMusic(1100 + lv);
         };
-        netHooks.stepped = [&](ab::World& w) { playEvents(w, audio); };
+        netHooks.stepped = [&](const ab::World& w, const std::vector<ab::Event>& events) { playEvents(w, events, audio); };
         netHooks.resultShown = [&](bool draw, bool decided) {
             if (!sound) return;
             audio.playMusic(1130);
@@ -1407,7 +1407,7 @@ int main(int argc, char** argv) {
                     }
                     previous.capture(world);
                     world.tick(kStepMs, input);
-                    playEvents(world, audio);
+                    playEvents(world, world.takeEvents(), audio);
                     accumulatorMs -= kStepMs;
                     ++step;
                     if (attract && world.roundOver()) {  // one round, no result screen
