@@ -30,9 +30,9 @@ Option `team_play`. [D]
 - Result screens: "DRAW GAME", a results screen after a won round, a victory screen in the winner's colour after the match (team pictures in team play). [observed for draw; pictures present in the data]
 - `win_by_kills`: the match goes to the single player with the most kills once that total reaches the target (kills add up over the rounds of the match); round wins then do not end the match, and a suicide does not cost a kill. Not used in team play. [S]
 
-## Not specified
+## Network games
 
-Network games.
+The original's network mode is not reproduced. The modern client-server mode is specified in `networking.md`.
 
 ## Roulette ("goldman" option, off by default)
 

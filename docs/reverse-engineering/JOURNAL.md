@@ -595,3 +595,9 @@ Confidence: HIGH (static). Modern: all implemented except Ctrl-R, Ctrl-D and Alt
 ### Intro movie decoded
 
 `intro/bmintro.exe` carries an Interplay MVE movie from offset 70656 to its end: 839 pictures of 480 × 280 at 15 per second with 22 050 Hz stereo DPCM sound. A decoder was written from the public descriptions of the format; every picture decodes cleanly (checked at pictures 1, 30, 120, 200, 300, 600, 830). The sound decodes to 56.0 s with 13 clipped samples out of 2.47 million; it has not been listened to. Details in `file-formats.md`. The game plays it before the logos.
+
+## 2026-10-05
+
+### Decision: network play becomes a new client-server mode
+
+Not a discovery about the original. The user asked for the original's network gameplay to be replaced by a client-server mode over TCP/UDP with lobby, chat and a dedicated server. The design is in `docs/specifications/networking.md`: the server runs the round and sends every step's inputs, the clients run the same deterministic core, a state hash detects divergence and a snapshot repairs it. `networking.md` in this folder (the original's IPX/serial message layer, static analysis only) is left as it stands and is not a compatibility target.
