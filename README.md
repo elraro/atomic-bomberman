@@ -10,7 +10,7 @@
 ![SDL3](https://img.shields.io/badge/SDL-3-1a5fb4)
 ![OpenGL 3.3](https://img.shields.io/badge/OpenGL-3.3-5586a4)
 ![platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows-444)
-![tests](https://img.shields.io/badge/unit%20tests-50%20%2F%20826%20checks-2ea44f)
+[![tests](https://img.shields.io/badge/unit%20tests-run%20on%20every%20push-2ea44f)](https://github.com/elraro/atomic-bomberman/actions/workflows/build.yml)
 
 <img src="docs/images/green.png" width="49%" alt="Green Acres: six players, bombs and flames"> <img src="docs/images/egypt.png" width="49%" alt="Ancient Egypt with arrow tiles">
 
@@ -37,7 +37,7 @@ The original is then run side by side (under Wine, driven by scripted key presse
 | 👥 **Up to 10 players** | Two on the keyboard, gamepads, the rest AI; free-for-all or team play |
 | ⏱️ **The endgame** | Round clock, "hurry", closing walls, draws, match victories |
 | 🎨 **Original look and sound** | Graphics, HUD fonts, sound effects and music loaded from your own copy of the game |
-| 🧪 **Tested** | 50 automated tests; 33 mechanics confirmed against the running original |
+| 🧪 **Tested** | Automated tests of the game rules run on every push (67 tests at the time of writing); 33 mechanics confirmed against the running original |
 
 ## 📸 Screenshots
 
