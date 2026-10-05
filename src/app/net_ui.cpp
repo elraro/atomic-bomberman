@@ -564,11 +564,11 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
     std::string watching;
     for (const net::ClientInfo& c : lobby.clients)
         if (c.seat < 0) watching += (watching.empty() ? "Watching: " : ", ") + c.name;
-    if (!watching.empty()) label(r, bank, wrap(r, bank, watching, 280).front(), 24, 268, 0.7f, 0.7f, 0.7f);
-    label(r, bank, "* administrator", 24, 290, 0.6f, 0.6f, 0.6f);
+    if (!watching.empty()) label(r, bank, wrap(r, bank, watching, 280).front(), 24, 260, 0.7f, 0.7f, 0.7f);
+    label(r, bank, "* administrator", 24, 278, 0.6f, 0.6f, 0.6f);
     if (!client_.serverIdentity().empty()) {
-        const std::string id = "id " + client_.serverIdentity();
-        label(r, bank, id, 304.0f - r.textWidth(bank, id), 290, 0.6f, 0.6f, 0.6f);
+        // On a line of its own: beside the note above the two ran into each other.
+        label(r, bank, "server id " + client_.serverIdentity(), 24, 296, 0.6f, 0.6f, 0.6f);
     }
 
     label(r, bank, wrap(r, bank, client_.serverName(), 284).front(), 332, 16, 1.0f, 0.95f, 0.3f);
@@ -602,8 +602,8 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
 
     const bool leaving = escapeAt_ != 0 && nowMs - escapeAt_ < 3000;
     const std::string hint = leaving ? "Press Esc again to leave the server"
-                             : admin ? "Type: chat  Arrows: settings  F2: start  F3/F4: team  F5/F6: players here  Esc"
-                                     : "Type: chat   F3/F4: team   F5/F6: players at this computer   Esc: leave";
+                             : admin ? "Arrows: settings  F2: start  F3/F4: team  F5/F6: players  Esc: leave"
+                                     : "F3/F4: team   F5/F6: players at this computer   Esc: leave";
     label(r, bank, hint, 24, 458, 0.4f, 1.0f, 1.0f);
 }
 
