@@ -313,8 +313,8 @@ const char* controlName(Control c) {
     }
 }
 
-constexpr int kOptionRows = 12;
-enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor };
+constexpr int kOptionRows = 14;
+enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor, AudioAdjust };
 
 // Level names, original messages 150-160.
 const char* const kLevelName[11] = {"Green Acres",   "Classic Green Acres", "The Hockey Rink",  "Ancient Egypt",
@@ -487,6 +487,7 @@ int main(int argc, char** argv) {
         };
         ab::Audio audio;
         const bool sound = !opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir, cfg.smallMemory);
+        audio.setVolumes(cfg.musicVolume, cfg.soundVolume);
         // Up to four gamepads, opened once at start.
         std::array<SDL_Gamepad*, 4> pads{};
         int padCount = 0;
@@ -498,6 +499,12 @@ int main(int argc, char** argv) {
             padCount = 0;
         }
         if (padCount > 0) std::fprintf(stderr, "INFO  Gamepads found count=%d\n", padCount);
+        if (cfg.smallMemory) {
+            // The normal (small) memory model of the original (0x41244B): one death animation
+            // and one trapped animation instead of all of them; one sound per voice series.
+            values.set(105, 1);
+            values.set(330, 1);
+        }
         ab::World world(values, opt.seed);
         std::vector<ab::AiPlayer> ai;
         for (int i = 0; i < ab::kMaxPlayers; ++i)
@@ -528,6 +535,7 @@ int main(int argc, char** argv) {
         int menuItem = 0;
         int optionRow = 0;
         int keyRow = 0;
+        int audioRow = 0;
         bool keyCapture = false;  // waiting for the new key of the selected action
         // Sample arena on the level screen (original 0x406AA3): 5 x 5 cells at (400,100)
         // (value 730). Each cell holds the level a tile is taken from, or -1 for none;
@@ -555,6 +563,7 @@ int main(int argc, char** argv) {
         if (opt.menuShot == 3) screen = Screen::LevelSetup;
         if (opt.menuShot == 4) screen = Screen::Options;
         if (opt.menuShot == 7) screen = Screen::Keys;
+        if (opt.menuShot == 9) screen = Screen::AudioAdjust;
         if (opt.menuShot == 8) {  // the editor on a new scheme
             editor.open();
             editor.key(SDLK_2, false);
@@ -1065,6 +1074,21 @@ int main(int argc, char** argv) {
                     if (key == SDLK_DOWN && n > 0) helpRow = (helpRow + 1) % n;
                     if (key == SDLK_RETURN && n > 0) openHelp(helpFiles[static_cast<std::size_t>(helpRow)], Screen::HelpList);
                     if (key == SDLK_ESCAPE) screen = helpListReturn;
+                } else if (screen == Screen::AudioAdjust) {
+                    // The original's "Adjust Audio" was never made (message 320 is its placeholder
+                    // text); these two volumes are this implementation's.
+                    const int d = key == SDLK_RIGHT ? 10 : key == SDLK_LEFT ? -10 : 0;
+                    if (key == SDLK_UP || key == SDLK_DOWN) audioRow = 1 - audioRow;
+                    if (d != 0) {
+                        int& v = audioRow == 0 ? cfg.musicVolume : cfg.soundVolume;
+                        v = std::clamp(v + d, 0, 100);
+                        audio.setVolumes(cfg.musicVolume, cfg.soundVolume);
+                        if (sound && audioRow == 1) audio.playSeries(100);  // hear the new level
+                    }
+                    if (key == SDLK_ESCAPE || key == SDLK_RETURN) {
+                        saveSettings();
+                        screen = Screen::Options;
+                    }
                 } else if (screen == Screen::Keys) {
                     // "Keyboard definitions" (messages 1100-1140): pick an action, press its new key.
                     constexpr int kRows = 13;
@@ -1109,11 +1133,32 @@ int main(int argc, char** argv) {
                             case 8: cfg.diseasesDestroyable = !cfg.diseasesDestroyable; break;
                             case 9: cfg.disableGameMusic = !cfg.disableGameMusic; break;
                             case 10: cfg.assignKeyboards = !cfg.assignKeyboards; break;
-                            default:
+                            case 11:
                                 if (key != SDLK_LEFT) {
                                     screen = Screen::Keys;
                                     keyRow = 0;
                                     keyCapture = false;
+                                }
+                                break;
+                            case 12:
+                                // The memory model takes effect at the next start, so the original
+                                // asks and then exits (messages 1320-1326).
+                                askQuestion(cfg.smallMemory
+                                                ? std::vector<std::string>{"NOTE!  To change to enhanced memory model you will need to",
+                                                                           "exit and restart Bomberman. Do you want to do this?"}
+                                                : std::vector<std::string>{"NOTE!  To change to normal memory model you will need to",
+                                                                           "exit and restart Bomberman. Do you want to do this?"},
+                                            [&]() {
+                                                cfg.smallMemory = !cfg.smallMemory;
+                                                saveSettings();
+                                                showMessage({"Memory Model Changed!", "Now exiting."}, [&]() { running = false; });
+                                            },
+                                            [&]() { screen = Screen::Options; });
+                                break;
+                            default:
+                                if (key != SDLK_LEFT) {
+                                    screen = Screen::AudioAdjust;
+                                    audioRow = 0;
                                 }
                                 break;
                         }
@@ -1480,6 +1525,20 @@ int main(int argc, char** argv) {
                 renderer.begin(w, h);
                 editor.draw(renderer, *spritesPtr, level, frame);
                 renderer.end();
+            } else if (screen == Screen::AudioAdjust) {
+                renderer.begin(w, h);
+                renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
+                renderer.quad(40, 60, 420, 110, 0.0f, 0.0f, 0.10f, 0.82f);
+                renderer.text(*spritesPtr, "Adjust Audio", 55, 68, 1, 1, 1);
+                const std::string rows[2] = {"Music volume: " + std::to_string(cfg.musicVolume) + "%",
+                                             "Sound volume: " + std::to_string(cfg.soundVolume) + "%"};
+                for (int r = 0; r < 2; ++r) {
+                    const bool on = r == audioRow;
+                    renderer.text(*spritesPtr, rows[r], 80, 100.0f + 24.0f * static_cast<float>(r), on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
+                }
+                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, 115.0f + 24.0f * static_cast<float>(audioRow));
+                renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 440, 0.4f, 1.0f, 1.0f);
+                renderer.end();
             } else if (screen == Screen::Keys) {
                 static const char* const kAction[6] = {"Move Up", "Move Right", "Move Down", "Move Left", "Action 1", "Action 2"};  // 1120-1125
                 renderer.begin(w, h);
@@ -1522,7 +1581,9 @@ int main(int argc, char** argv) {
                     std::string("Diseases Can Be Destroyed: ") + kYesNo[cfg.diseasesDestroyable],
                     std::string("Disable music during gameplay: ") + kYesNo[cfg.disableGameMusic],
                     std::string("Assign Keyboard Player: ") + kYesNo[cfg.assignKeyboards],
-                    "Define keyboard layouts"};
+                    "Define keyboard layouts",
+                    std::string("Use Enhanced Memory Model: ") + kYesNo[!cfg.smallMemory],  // message 267
+                    "Adjust Audio"};                                                         // message 268
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
                 for (int r = 0; r < kOptionRows; ++r) {

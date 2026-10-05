@@ -62,7 +62,11 @@ The original keeps these in `options.ini` and edits them on the Options screen (
 | Level (`levelno`) | 0-10 or Random Each Game (-1) | 0 | Random picks among levels enabled by values 1150-1160 |
 
 Defaults are those of the tuning values and of an options file written by the original; the original's built-in defaults for a missing file were not all read. [M]
-Not carried over: node name, modem and protocol settings, keyboard layout editor, "enhanced memory model", and "Adjust Audio" (a placeholder in the original: message 320).
+- **Use Enhanced Memory Model** (`smallmemory`, inverted): changing it asks for confirmation, saves and exits, since it applies from the next start (messages 1320-1326). In the normal (small) model the original keeps one sound of each voice series instead of several, one death animation (value 105 forced to 1) and one trapped animation (value 330 forced to 1), and flushes its sound cache every value 9 (100) seconds instead of value 7 (1800). [S]
+- **Adjust Audio**: a placeholder in the original (message 320, "Audio Adjustment screen will be here..."). This implementation offers a music and a sound volume there, stored as `music_volume` and `sound_volume`. [M]
+- **Assign Keyboard Player** and **Define keyboard layouts**: see below.
+
+Not carried over: node name, modem and protocol settings.
 
 ## Campaign mode
 
