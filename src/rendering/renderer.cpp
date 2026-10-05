@@ -1,6 +1,7 @@
 #include "rendering/renderer.hpp"
 
 #include "rendering/gl.hpp"
+#include "rendering/glyphs.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -156,7 +157,8 @@ void Renderer::text(const SpriteBank& bank, const std::string& s, float x, float
     if (f.texture == 0) return;
     setTexture(f.texture);
     const auto aw = static_cast<float>(f.atlasWidth);
-    for (unsigned char ch : s) {
+    for (const int slot : glyphsOf(s)) {
+        const auto ch = static_cast<std::size_t>(slot);
         if (ch >= f.width.size()) continue;
         const auto w = static_cast<float>(f.width[ch]);
         const auto h = static_cast<float>(f.height);
@@ -256,8 +258,8 @@ void Renderer::deleteTexture(unsigned texture) {
 float Renderer::textWidth(const SpriteBank& bank, const std::string& s) const {
     const SpriteBank::Font& f = bank.font();
     float width = 0;
-    for (unsigned char ch : s)
-        if (ch < f.width.size()) width += static_cast<float>(f.width[ch] + f.spacing);
+    for (const int slot : glyphsOf(s))
+        if (static_cast<std::size_t>(slot) < f.width.size()) width += static_cast<float>(f.width[static_cast<std::size_t>(slot)] + f.spacing);
     return width;
 }
 

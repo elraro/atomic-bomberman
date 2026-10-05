@@ -20,6 +20,7 @@
 #include "resources/help_file.hpp"
 #include "resources/mve_file.hpp"
 #include "resources/settings.hpp"
+#include "rendering/glyphs.hpp"
 #include "resources/ani_file.hpp"
 #include "resources/scheme_file.hpp"
 
@@ -1956,7 +1957,7 @@ void testFreeAssets() {
     CHECK(!makeFreePicture("iplogo"));
     CHECK(!makeFreePicture("field11"));
     const FreeFont font = makeFreeFont();
-    CHECK(font.height > 8 && font.width.size() == 128 && font.alpha.size() == static_cast<std::size_t>(font.atlasWidth * font.height));
+    CHECK(font.height > 8 && font.width.size() == 256 && font.alpha.size() == static_cast<std::size_t>(font.atlasWidth * font.height));
     int blank = 0;
     for (int ch = 33; ch < 127; ++ch) {
         int lit = 0;
@@ -2248,6 +2249,48 @@ void testConveyorIsQuiet() {
     CHECK_EQ(bounces, 0);
 }
 
+// Typed text: letters the font has are taken (also beyond ASCII), others are not; the
+// backspace key removes a whole character.
+void testTypedText() {
+    CHECK_EQ(glyphFor(U'a'), 'a');
+    CHECK_EQ(glyphFor(0xF1), 164);   // n with tilde: where the original's font has it
+    CHECK_EQ(glyphFor(0xD1), 165);
+    CHECK_EQ(glyphFor(0xBF), 168);   // the inverted question mark
+    CHECK_EQ(glyphFor(0xC1), 'A');   // no accented capital A in the font: shown plain
+    CHECK_EQ(glyphFor(0x20AC), -1);  // no euro sign
+    std::string name;
+    appendTyped(name, "Pe\xC3\xB1" "a", 16);
+    CHECK(name == "Pe\xC3\xB1" "a");
+    CHECK_EQ(glyphsOf(name).size(), 4u);
+    CHECK_EQ(glyphsOf(name)[2], 164);
+    appendTyped(name, "\xE2\x82\xAC!", 16);  // a euro sign is dropped, the rest is kept
+    CHECK(name == "Pe\xC3\xB1" "a!");
+    removeLastChar(name);
+    removeLastChar(name);
+    removeLastChar(name);  // the two bytes of the n with tilde go together
+    CHECK(name == "Pe");
+    std::string full = "123456789012345";
+    appendTyped(full, "\xC3\xB1", 16);  // two bytes do not fit into the one byte left
+    CHECK(full == "123456789012345");
+    std::string port;
+    appendTyped(port, "2\xC3\xB1" "7a4", 5, true);
+    CHECK(port == "274");
+    // The original's own text files use the font's slots directly, not UTF-8: left as they are.
+    CHECK_EQ(glyphsOf("\xA4")[0], 164);
+    // The free font has every one of those letters.
+    const FreeFont font = makeFreeFont();
+    CHECK_EQ(font.width.size(), 256u);
+    int missing = 0;
+    for (char32_t c : {0xF1, 0xD1, 0xE1, 0xE9, 0xED, 0xF3, 0xFA, 0xFC, 0xBF, 0xA1, 0xE7, 0xC7}) {
+        const auto slot = static_cast<std::size_t>(glyphFor(c));
+        int lit = 0;
+        for (int y = 0; y < font.height; ++y)
+            for (int x = 0; x < font.width[slot]; ++x) lit += font.alpha[static_cast<std::size_t>(y * font.atlasWidth + font.x[slot] + x)] > 128 ? 1 : 0;
+        if (font.width[slot] == 0 || lit == 0) ++missing;
+    }
+    CHECK_EQ(missing, 0);
+}
+
 }  // namespace
 
 int main() {
@@ -2325,6 +2368,7 @@ int main() {
         {"secrets stay on the server", testSecretsStayOnTheServer},
         {"guesses about chance are not shown", testGuessesAboutChanceAreNotShown},
         {"free assets", testFreeAssets},
+        {"typed text", testTypedText},
     };
     for (const auto& [name, fn] : tests) {
         const int before = g_failures;

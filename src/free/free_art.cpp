@@ -187,6 +187,46 @@ bool glyphDot(char ch, int col, int row) {
     return (kGlyphs[u - 32][col] >> row) & 1;
 }
 
+// The accented letters of the font, in the slots the original's font uses (DOS code page
+// 437). Each is built from a plain letter and a mark: 'a' acute, 'g' grave, 'c' circumflex,
+// 'd' two dots, 't' tilde, 'f' upside down, '-' none.
+struct Accented {
+    int slot;
+    char base;
+    char mark;
+};
+const Accented kAccented[] = {{128, 'C', '-'}, {129, 'u', 'd'}, {130, 'e', 'a'}, {131, 'a', 'c'}, {132, 'a', 'd'}, {133, 'a', 'g'}, {135, 'c', '-'},
+                              {136, 'e', 'c'}, {138, 'e', 'g'}, {140, 'i', 'c'}, {142, 'A', 'd'}, {147, 'o', 'c'}, {148, 'o', 'd'}, {150, 'u', 'c'},
+                              {151, 'u', 'g'}, {152, 'y', 'd'}, {153, 'O', 'd'}, {154, 'U', 'd'}, {160, 'a', 'a'}, {161, 'i', 'a'}, {162, 'o', 'a'},
+                              {163, 'u', 'a'}, {164, 'n', 't'}, {165, 'N', 't'}, {168, '?', 'f'}, {173, '!', 'f'}};
+
+// A dot of font slot `slot` (ASCII, or one of the accented letters above).
+bool slotDot(int slot, int col, int row) {
+    if (slot < 128) return glyphDot(static_cast<char>(slot), col, row);
+    for (const Accented& a : kAccented) {
+        if (a.slot != slot) continue;
+        if (a.mark == '-') return glyphDot(a.base, col, row);
+        if (a.mark == 'f') return glyphDot(a.base, col, 6 - row);
+        const bool capital = a.base >= 'A' && a.base <= 'Z';
+        if (row == 0 || (row == 1 && !capital)) {
+            // The mark, in the two rows above a small letter (one row above a squeezed capital).
+            switch (a.mark) {
+                case 'a': return capital ? col == 3 : (row == 0 ? col == 3 : col == 2);
+                case 'g': return capital ? col == 1 : (row == 0 ? col == 1 : col == 2);
+                case 'c': return capital ? col == 2 : (row == 0 ? col == 2 : col == 1 || col == 3);
+                case 'd': return row == 0 && (col == 1 || col == 3);
+                case 't': return row == 0 && col >= 1 && col <= 3;  // a bar, clear of the letter: at this size a wavy line joins up with it
+                default: return false;
+            }
+        }
+        // The letter below: a small one as it is (its own dot, if it has one, gives way to
+        // the mark); a capital with one row taken out to make room.
+        if (capital) return glyphDot(a.base, col, row == 1 ? 0 : row >= 3 ? row : 1);
+        return glyphDot(a.base, col, row);
+    }
+    return false;
+}
+
 // Block lettering for the pictures: each dot a square of `scale` pixels, 6 columns per character.
 void drawText(Canvas& c, const std::string& s, float x, float y, int scale, Col col) {
     for (std::size_t i = 0; i < s.size(); ++i)
@@ -962,18 +1002,21 @@ FreeFont makeFreeFont() {
     FreeFont f;
     f.height = kH + kTop + 2;
     f.spacing = 1;
-    f.x.assign(128, 0);
-    f.width.assign(128, 0);
+    f.x.assign(256, 0);
+    f.width.assign(256, 0);
     int total = 0;
-    for (int ch = 32; ch < 127; ++ch) {
+    std::vector<int> slots;
+    for (int ch = 32; ch < 127; ++ch) slots.push_back(ch);
+    for (const Accented& a : kAccented) slots.push_back(a.slot);
+    for (const int ch : slots) {
         f.x[static_cast<std::size_t>(ch)] = total;
         f.width[static_cast<std::size_t>(ch)] = ch == ' ' ? 5 : kW;
         total += kW + 1;
     }
     f.atlasWidth = total;
     f.alpha.assign(static_cast<std::size_t>(total * f.height), 0);
-    for (int ch = 33; ch < 127; ++ch)
-        for (int y = 0; y < kH; ++y)
+    for (const int ch : slots)
+        for (int y = 0; ch != ' ' && y < kH; ++y)
             for (int x = 0; x < kW; ++x) {
                 // Coverage of this pixel by the lit dots, 4 x 4 samples.
                 int lit = 0;
@@ -981,7 +1024,7 @@ FreeFont makeFreeFont() {
                     for (int sx = 0; sx < 4; ++sx) {
                         const float u = (static_cast<float>(x) + (static_cast<float>(sx) + 0.5f) / 4.0f) * 5.0f / static_cast<float>(kW);
                         const float v = (static_cast<float>(y) + (static_cast<float>(sy) + 0.5f) / 4.0f) * 7.0f / static_cast<float>(kH);
-                        lit += glyphDot(static_cast<char>(ch), static_cast<int>(u), static_cast<int>(v)) ? 1 : 0;
+                        lit += slotDot(ch, static_cast<int>(u), static_cast<int>(v)) ? 1 : 0;
                     }
                 const float a = std::min(1.0f, static_cast<float>(lit) / 16.0f * 1.5f);
                 f.alpha[static_cast<std::size_t>((y + kTop) * total + f.x[static_cast<std::size_t>(ch)] + x)] = static_cast<std::uint8_t>(a * 255.0f);

@@ -8,6 +8,7 @@
 #include <cstdlib>
 
 #include "app/names.hpp"
+#include "rendering/glyphs.hpp"
 
 namespace ab {
 
@@ -230,13 +231,9 @@ void NetUi::text(const char* utf8) {
         digits = false;
     }
     if (target == nullptr) return;
-    for (const char* p = utf8; *p != '\0'; ++p) {
-        const auto ch = static_cast<unsigned char>(*p);
-        // The game's font has the printable ASCII characters only.
-        if (ch < 32 || ch > 126 || target->size() >= limit) continue;
-        if (digits && (ch < '0' || ch > '9')) continue;
-        target->push_back(static_cast<char>(ch));
-    }
+    // Whatever the font can show: ASCII and the accented letters it has (n with tilde,
+    // the acute vowels, the inverted marks...).
+    appendTyped(*target, utf8, limit, digits);
 }
 
 void NetUi::key(unsigned key, bool ctrl) {
@@ -267,7 +264,7 @@ void NetUi::key(unsigned key, bool ctrl) {
     }
     if (mode_ == Mode::Join || mode_ == Mode::Host) {
         if (editing_ != nullptr) {
-            if (key == SDLK_BACKSPACE && !editing_->empty()) editing_->pop_back();
+            if (key == SDLK_BACKSPACE) removeLastChar(*editing_);
             if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_ESCAPE) {
                 const bool wasAddress = editing_ == &cfg_.netAddress;
                 editing_ = nullptr;
@@ -309,7 +306,7 @@ void NetUi::key(unsigned key, bool ctrl) {
     const State state = client_.state();
     if (state == State::Lobby) {
         const bool admin = client_.isAdmin() && client_.lobby().phase == net::Phase::Lobby;
-        if (key == SDLK_BACKSPACE && !chatText_.empty()) chatText_.pop_back();
+        if (key == SDLK_BACKSPACE) removeLastChar(chatText_);
         if (key == SDLK_UP) lobbyRow_ = (lobbyRow_ + kLobbyRows - 1) % kLobbyRows, sound(20);
         if (key == SDLK_DOWN) lobbyRow_ = (lobbyRow_ + 1) % kLobbyRows, sound(20);
         if ((key == SDLK_LEFT || key == SDLK_RIGHT) && lobbyRow_ >= 1) {
@@ -341,7 +338,7 @@ void NetUi::key(unsigned key, bool ctrl) {
     }
     // In a match or on its result screen.
     if (chatOpen_) {
-        if (key == SDLK_BACKSPACE && !chatText_.empty()) chatText_.pop_back();
+        if (key == SDLK_BACKSPACE) removeLastChar(chatText_);
         if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
             submitChat();
             chatOpen_ = false;
