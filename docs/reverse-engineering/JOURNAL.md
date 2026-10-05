@@ -625,3 +625,12 @@ Disassembly: `0x423752`-`0x42379F` (the stop branch of the sliding-bomb update).
 Confidence: HIGH (read directly). Found from a play-test report: the modern game played the stop sound on every step for a bomb the belt pressed against a block.
 
 Modern implication: stop and bounce events are no longer emitted for a bomb that is only carried; a sliding jelly bomb's bounce has its own event and plays 135.
+
+### Correction: sample arena on the level screen, and pictures in the help viewer
+
+Decompiled again after play-test reports: `0x406AA3` (sample arena) and `0x41302D` (help viewer).
+
+- Sample arena: the field picture's piece is copied to (x − 20, y − 18) with size (5 × 40 + 20) × (5 × 36 + 18), and each tile is copied with its **top left corner** at (x + 40 col, y + 36 row), where (x, y) is value 730/731 = (400, 100). The modern game had passed those coordinates to its sprite call, which places a sprite by its reference point (bottom centre of the cell), so the tiles sat 20 px left and 35 px above the field.
+- Help viewer: a picture is centred on its text line and **clipped** to the text area: rows above y 34 or below 34 + 344 are not copied, columns beyond the 532 px text width neither. The modern viewer had left a picture out altogether unless it fitted whole, so photos vanished and reappeared while scrolling.
+
+Confidence: HIGH (read directly).

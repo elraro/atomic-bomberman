@@ -1692,10 +1692,15 @@ int main(int argc, char** argv) {
                         }
                         int pw = 0, ph = 0;
                         if (!spritesPtr->pictureSize(seg.text, &pw, &ph)) continue;
-                        // Centred on its line; kept inside the panel.
-                        const float py = y + static_cast<float>(lineH - ph) / 2.0f;
-                        if (py >= 24.0f && py + static_cast<float>(ph) <= 424.0f && x + static_cast<float>(pw) <= 620.0f)
-                            renderer.picture(spritesPtr->picture(seg.text), x, py, static_cast<float>(pw), static_cast<float>(ph));
+                        // Centred on its line, and cut off at the edges of the text area rather than
+                        // left out when it does not fit whole (original 0x41302D: rows above y 34 and
+                        // below 34 + 344 are not copied, nor columns beyond the 532 px text width).
+                        int top = static_cast<int>(y) - (ph - lineH) / 2, skip = 0, rows = ph;
+                        if (top < 34) skip = 34 - top, rows -= skip, top = 34;
+                        rows = std::min(rows, 34 + 344 - top);
+                        const int columns = std::min(pw, 34 + 532 - static_cast<int>(x));
+                        if (rows > 0 && columns > 0)
+                            renderer.pictureRegion(spritesPtr->picture(seg.text), pw, ph, 0, skip, columns, rows, x, static_cast<float>(top));
                         x += static_cast<float>(pw);
                     }
                 }
@@ -1817,8 +1822,11 @@ int main(int argc, char** argv) {
                             if (cell < 0) continue;
                             const int lv = cell % 100;
                             spritesPtr->ensureTiles(lv);
+                            // The original puts each tile's top left corner at (400 + 40 x, 100 + 36 y)
+                            // (0x406AA3: a plain copy, not the in-game sprite call). Sprites are placed
+                            // by their reference point, the cell's bottom centre, hence the 20 and 35.
                             renderer.sprite(*spritesPtr, "tile " + std::to_string(lv) + (cell >= 100 ? " solid" : " brick"), 0, -1,
-                                            400.0f + 40.0f * static_cast<float>(px), 100.0f + 36.0f * static_cast<float>(py));
+                                            400.0f + 20.0f + 40.0f * static_cast<float>(px), 100.0f + 35.0f + 36.0f * static_cast<float>(py));
                         }
                 }
                 const std::string lines[4] = {
