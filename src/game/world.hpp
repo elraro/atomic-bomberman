@@ -421,6 +421,12 @@ public:
     // A copy made to guess ahead: its own random numbers again (the guesses about chance
     // are wrong until the server's step arrives).
     void ownRandom(std::uint32_t seed);
+    // For such a copy, after it has been run ahead of `confirmed`: whatever in it was decided
+    // by chance is taken back to what is confirmed, so that a guess about chance is never
+    // shown and then corrected. Powerups and bricks that only the guess has are removed; a
+    // player who died only in the guess is shown as confirmed (which death animation plays
+    // is chance); campaign enemies, who turn by chance, stay where they are confirmed.
+    void keepToConfirmed(const World& confirmed);
 
 private:
     template <class A>

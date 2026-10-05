@@ -512,6 +512,7 @@ void Client::predict(const EventSink& events) {
         for (const Event& e : happened) heard_.push_back({e.kind, e.player, now_});
         if (events && !happened.empty()) events(*predicted_, happened);
     }
+    predicted_->keepToConfirmed(*world_);  // nothing decided by chance is shown before the server has decided it
     predictedValid_ = true;
 }
 

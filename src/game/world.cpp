@@ -1516,6 +1516,19 @@ void World::ownRandom(std::uint32_t seed) {
     rng_.setState(seed);
 }
 
+void World::keepToConfirmed(const World& confirmed) {
+    for (std::size_t i = 0; i < powerups_.size(); ++i) {
+        const Powerup& real = confirmed.powerups_[i];
+        Powerup& guess = powerups_[i];
+        if (guess.state == PowerupState::Revealed && !(real.state == PowerupState::Revealed && real.type == guess.type)) guess = {};
+        // A brick that grew back only in the guess (the haunted house).
+        if (tiles_[i] == Tile::Brick && confirmed.tiles_[i] == Tile::Blank) tiles_[i] = Tile::Blank;
+    }
+    for (std::size_t i = 0; i < players_.size(); ++i)
+        if (players_[i].present && !players_[i].alive && confirmed.players_[i].alive) players_[i] = confirmed.players_[i];
+    aliens_ = confirmed.aliens_;
+}
+
 // --- state transfer ---------------------------------------------------------
 // One description of the state (World::archive) serves saving, loading and
 // hashing. Every number goes through value() as a 64-bit integer.

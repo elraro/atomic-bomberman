@@ -2156,6 +2156,53 @@ void testSecretsStayOnTheServer() {
     CHECK(!wrong.secretsInStep());
 }
 
+// A copy run ahead to guess (network prediction) must not show what chance decides: here
+// the powerups a dead player's inventory is scattered to, and which death animation plays.
+void testGuessesAboutChanceAreNotShown() {
+    const Values values = Values::defaults();
+    Scheme scheme = Scheme::pillars();
+    for (auto& row : scheme.tiles)
+        for (Tile& t : row)
+            if (t == Tile::Blank) t = Tile::Brick;
+    scheme.brickDensity = 80;
+    World confirmed{values, 31337};
+    confirmed.startRound(scheme, true);
+    std::vector<AiPlayer> ai;
+    for (int i = 0; i < 6; ++i) confirmed.addPlayer(i), ai.emplace_back(static_cast<std::uint32_t>(80 + i));
+    auto extraPowerups = [&](const World& guess) {
+        int n = 0;
+        for (int y = 0; y < kGridH; ++y)
+            for (int x = 0; x < kGridW; ++x) {
+                const Powerup g = guess.powerup({x, y}), c = confirmed.powerup({x, y});
+                if (g.state == PowerupState::Revealed && !(c.state == PowerupState::Revealed && c.type == g.type)) ++n;
+            }
+        return n;
+    };
+    int scatterGuessed = 0, deathsGuessed = 0, leftOver = 0, deathsShown = 0;
+    for (int t = 0; t < 8000 && !confirmed.roundOver(); ++t) {
+        Inputs in{};
+        for (int i = 0; i < 6; ++i) in[static_cast<std::size_t>(i)] = ai[static_cast<std::size_t>(i)].decide(confirmed, i, 50);
+        confirmed.tick(50, in);
+        confirmed.takeEvents();
+        if (t % 5 != 0) continue;
+        // The guess: ten steps ahead with numbers of its own, everybody doing what they did last.
+        World guess = confirmed;
+        guess.ownRandom(static_cast<std::uint32_t>(t) * 7919u + 3u);
+        for (int n = 0; n < 10; ++n) guess.tick(50, in);
+        bool died = false;
+        for (int i = 0; i < 6; ++i) died = died || (!guess.player(i).alive && confirmed.player(i).alive);
+        scatterGuessed += extraPowerups(guess) > 0 ? 1 : 0;
+        deathsGuessed += died ? 1 : 0;
+        guess.keepToConfirmed(confirmed);
+        leftOver += extraPowerups(guess);
+        for (int i = 0; i < 6; ++i) deathsShown += !guess.player(i).alive && confirmed.player(i).alive ? 1 : 0;
+    }
+    CHECK(scatterGuessed > 0);  // the situation of the bug report did come up,
+    CHECK(deathsGuessed > 0);
+    CHECK_EQ(leftOver, 0);      // and none of it would have been drawn
+    CHECK_EQ(deathsShown, 0);
+}
+
 }  // namespace
 
 int main() {
@@ -2230,6 +2277,7 @@ int main() {
         {"ai attack and start cell", testAiAttackKeepsAwayFromStart},
         {"state transfer", testStateTransfer},
         {"secrets stay on the server", testSecretsStayOnTheServer},
+        {"guesses about chance are not shown", testGuessesAboutChanceAreNotShown},
         {"free assets", testFreeAssets},
     };
     for (const auto& [name, fn] : tests) {
