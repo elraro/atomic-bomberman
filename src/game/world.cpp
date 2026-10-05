@@ -837,7 +837,13 @@ void World::pickUp(int playerIndex, int type) {
         rng_.below(std::max(1, values_.get(vid::kDiseaseCureChance))) == 0)
         cureDiseases(p);
 
-    if (type == kPowRandom) type = rng_.below(12);  // scheme "forbidden" flags are not modelled yet
+    if (type == kPowRandom) {
+        // Re-rolled until it lands on a type the scheme does not forbid (original 0x41E480).
+        for (int tries = 0; tries < 1000; ++tries) {
+            type = rng_.below(12);
+            if (!forbiddenRandom_[static_cast<std::size_t>(type)]) break;
+        }
+    }
     if (type == kPowDisease) {
         giveDisease(playerIndex);
         return;

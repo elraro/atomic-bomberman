@@ -1,5 +1,6 @@
 #include "resources/scheme_file.hpp"
 
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -54,10 +55,64 @@ std::optional<SchemeFile> parseSchemeText(const std::string& text) {
             if (p < 0 || p >= kMaxPlayers) continue;
             out.scheme.start[static_cast<std::size_t>(p)] = {std::atoi(f[2].c_str()), std::atoi(f[3].c_str())};
             if (f.size() >= 5) out.team[static_cast<std::size_t>(p)] = std::atoi(f[4].c_str());
+        } else if (kind == 'P' && f.size() >= 5) {
+            const int t = std::atoi(f[1].c_str());
+            if (t < 0 || t >= static_cast<int>(out.powers.size())) continue;
+            SchemePower& pw = out.powers[static_cast<std::size_t>(t)];
+            pw.bornWith = std::atoi(f[2].c_str());
+            pw.hasOverride = std::atoi(f[3].c_str()) != 0;
+            pw.overrideValue = std::atoi(f[4].c_str());
+            pw.forbidden = f.size() >= 6 && std::atoi(f[5].c_str()) != 0;
         }
     }
     if (rows != kGridH) return std::nullopt;
     return out;
+}
+
+std::string serializeScheme(const SchemeFile& file) {
+    // Layout and comments as in the files written by the original (scheme.c).
+    static const char* const kPowerText[13] = {
+        "an extra bomb", "longer flame length", "a disease", "the ability to kick bombs", "extra speed",
+        "the ability to punch bombs", "the ability to grab bombs", "the spooger", "goldflame", "a trigger mechanism",
+        "jelly (bouncy) bombs", "super bad disease", "random"};
+    std::ostringstream out;
+    char buffer[128];
+    out << "\r\n; NOTE! This is an Atomic Bomberman Scheme File.\r\n"
+           "; Modify at your own risk.  It is machine-generated and updated.\r\n\r\n\r\n"
+           "; this is an internal version control number\r\n-V,2\r\n\r\n"
+           "; this is the textual name of the scheme\r\n-N," << file.name << "\r\n\r\n"
+           "; scheme brick density (0-100 percent)\r\n-B," << file.scheme.brickDensity << "\r\n\r\n"
+           "; actual array data (# is solid, : is brick, . is blank)\r\n;               11111\r\n;     012345678901234\r\n";
+    for (int y = 0; y < kGridH; ++y) {
+        std::snprintf(buffer, sizeof buffer, "-R,%2d,", y);
+        out << buffer;
+        for (int x = 0; x < kGridW; ++x) {
+            const Tile t = file.scheme.tiles[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)];
+            out << (t == Tile::Solid ? '#' : t == Tile::Brick ? ':' : '.');
+        }
+        out << "\r\n";
+    }
+    out << "\r\n; player starting locations (playerno,X,Y)\r\n";
+    for (int p = 0; p < kMaxPlayers; ++p)
+        out << "-S," << p << "," << file.scheme.start[static_cast<std::size_t>(p)].x << "," << file.scheme.start[static_cast<std::size_t>(p)].y
+            << "," << file.team[static_cast<std::size_t>(p)] << "\r\n";
+    out << "\r\n; powerup information; the fields are:\r\n"
+           ";   powerup #, bornwith, has_override, override_value, forbidden\r\n"
+           ";   (note the last text field has no effect; it is only a comment)\r\n";
+    for (std::size_t t = 0; t < file.powers.size(); ++t) {
+        const SchemePower& pw = file.powers[t];
+        std::snprintf(buffer, sizeof buffer, "-P,%2d,%2d,%d,%2d,%2d,%s\r\n", static_cast<int>(t), pw.bornWith, pw.hasOverride ? 1 : 0,
+                      pw.overrideValue, pw.forbidden ? 1 : 0, kPowerText[t]);
+        out << buffer;
+    }
+    return out.str();
+}
+
+bool saveSchemeFile(const std::string& path, const SchemeFile& file) {
+    std::ofstream out(path, std::ios::binary);
+    if (!out) return false;
+    out << serializeScheme(file);
+    return static_cast<bool>(out);
 }
 
 namespace {

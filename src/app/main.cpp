@@ -434,9 +434,10 @@ int main(int argc, char** argv) {
         int setupRow = 0;
         bool teamPlay = cfg.teamPlay;
         std::array<int, ab::kMaxPlayers> teams{};
+        std::array<ab::SchemePower, 13> schemePowers{};  // the scheme's -P lines
         int teamsFromScheme = -1;
         if (!opt.gameDir.empty())
-            if (auto sf = ab::loadSchemeFile(opt.gameDir + "/data/schemes/" + opt.scheme + ".sch")) teams = sf->team;
+            if (auto sf = ab::loadSchemeFile(opt.gameDir + "/data/schemes/" + opt.scheme + ".sch")) teams = sf->team, schemePowers = sf->powers;
         teamsFromScheme = schemeIndex;
 
         auto spritesPtr = std::make_unique<ab::SpriteBank>();
@@ -452,6 +453,7 @@ int main(int argc, char** argv) {
             if (!schemes.empty())
                 if (auto sf = ab::loadSchemeFile(opt.gameDir + "/data/schemes/" + schemes[static_cast<std::size_t>(schemeIndex)].file + ".sch")) {
                     scheme = sf->scheme;
+                    schemePowers = sf->powers;
                     // The scheme gives the teams; choices made with T on the player list stay
                     // until another scheme is chosen.
                     if (teamsFromScheme != schemeIndex) teams = sf->team;
@@ -597,6 +599,17 @@ int main(int argc, char** argv) {
             world.setValue(ab::vid::kDiseasesDestroyable, cfg.diseasesDestroyable ? 1 : 0);
             world.setValue(ab::vid::kRoundSeconds, cfg.playTime);
             world.setWinByKills(cfg.winByKills);
+            // Scheme powerup rules (original 0x404630): a born-with above zero replaces the
+            // starting amount, an override replaces the level's count, and forbidden types
+            // are kept out of the random powerup. Other types keep the game's own values.
+            std::array<bool, 13> forbidden{};
+            for (int t = 0; t < 13; ++t) {
+                const ab::SchemePower& pw = schemePowers[static_cast<std::size_t>(t)];
+                world.setValue(ab::vid::kStartInventory + t, pw.bornWith > 0 ? pw.bornWith : values.get(ab::vid::kStartInventory + t));
+                world.setValue(ab::vid::kLevelCount + t, pw.hasOverride ? pw.overrideValue : values.get(ab::vid::kLevelCount + t));
+                forbidden[static_cast<std::size_t>(t)] = pw.forbidden;
+            }
+            world.setForbiddenRandom(forbidden);
             ab::Scheme placed = scheme;
             placed.start = startCells;
             world.setCampaign(campaignMode);

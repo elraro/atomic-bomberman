@@ -317,6 +317,8 @@ public:
     void setValue(int id, int value) { values_.set(id, value); }
     // "Win matches by kill total": a suicide no longer costs a kill.
     void setWinByKills(bool on) { winByKills_ = on; }
+    // Scheme rule: powerup types the "random" powerup must not turn into.
+    void setForbiddenRandom(const std::array<bool, 13>& forbidden) { forbiddenRandom_ = forbidden; }
     bool hurry() const;                  // the "hurry" warning is showing
     bool timeUp() const { return secondsLeft() == 0; }
     // The round ends when at most one contender is left, or when the clock reads 0:00 (a draw).
@@ -386,6 +388,7 @@ private:
     int roundLimitMs_ = -1;
     int enclosementDepth_ = 0;
     bool winByKills_ = false;
+    std::array<bool, 13> forbiddenRandom_{};
     bool campaign_ = false;
     int campaignResult_ = 0;
     bool campaignRetry_ = false;

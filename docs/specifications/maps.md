@@ -62,3 +62,7 @@ Enabled by the enclosement depth option (0-3, default V(27) [1]). [D]
   - a bomb in it detonates if the "stomped bombs detonate" option is on (default V(46) [1]), otherwise it is removed;
   - a flame in it is removed.
 - The spiral covers `2 × depth` rings and then stops. [S]
+
+## Scheme powerup settings
+
+Each scheme carries, for powerup types 0-12, a born-with amount, an optional override of the level's count, and a forbidden flag (`-P` lines). When the scheme is applied: a born-with above zero replaces the starting amount of that powerup; an override replaces the number generated under bricks (same meaning of negative numbers); a forbidden type is never chosen by the random powerup, which is re-rolled until it lands on an allowed type. [S, D for born-with and override]

@@ -10,14 +10,28 @@
 
 namespace ab {
 
+// Per-powerup settings of a scheme (-P lines), for types 0-12.
+struct SchemePower {
+    int bornWith = 0;          // > 0: every player starts with this many
+    bool hasOverride = false;  // replace the level's count of this powerup
+    int overrideValue = 0;     // n >= 0: that many; n < 0: |n| tries at 1 in 10
+    bool forbidden = false;    // never produced by the "random" powerup
+};
+
 struct SchemeFile {
     Scheme scheme;
     std::string name;
     std::array<int, kMaxPlayers> team{};
+    std::array<SchemePower, 13> powers{};
 };
+
+// The text of a scheme file as the original's editor writes it.
+std::string serializeScheme(const SchemeFile& file);
+bool saveSchemeFile(const std::string& path, const SchemeFile& file);
 
 // Parses the text of a .sch file. Lines: -N,name  -B,density
 // -R,row,15 cells ('#' solid, ':' brick, '.' blank)  -S,player,x,y,team
+// -P,powerup,bornwith,has_override,override_value,forbidden,comment
 std::optional<SchemeFile> parseSchemeText(const std::string& text);
 std::optional<SchemeFile> loadSchemeFile(const std::string& path);
 

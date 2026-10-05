@@ -1006,6 +1006,55 @@ void testCampaignFile() {
     CHECK_EQ(stages[1].computerPlayers, 2);
 }
 
+void testSchemePowers() {
+    const std::string text =
+        "-N,Test (2)\r\n-B,50\r\n"
+        "-R, 0,...............\r\n-R, 1,.#.#.#.#.#.#.#.\r\n-R, 2,..::...........\r\n-R, 3,.#.#.#.#.#.#.#.\r\n"
+        "-R, 4,...............\r\n-R, 5,.#.#.#.#.#.#.#.\r\n-R, 6,...............\r\n-R, 7,.#.#.#.#.#.#.#.\r\n"
+        "-R, 8,...............\r\n-R, 9,.#.#.#.#.#.#.#.\r\n-R,10,...............\r\n"
+        "-S,0,0,0,0\r\n-S,1,14,10,1\r\n"
+        "-P, 0, 3,0, 0, 0,an extra bomb\r\n-P, 4, 0,1, 5, 0,extra speed\r\n-P, 2, 0,0, 0, 1,a disease\r\n";
+    const auto sf = parseSchemeText(text);
+    CHECK(sf.has_value());
+    if (!sf) return;
+    CHECK_EQ(sf->powers[0].bornWith, 3);
+    CHECK(sf->powers[4].hasOverride);
+    CHECK_EQ(sf->powers[4].overrideValue, 5);
+    CHECK(sf->powers[2].forbidden);
+    CHECK(!sf->powers[1].hasOverride);
+    // What the editor writes reads back the same.
+    const auto again = parseSchemeText(serializeScheme(*sf));
+    CHECK(again.has_value());
+    if (!again) return;
+    CHECK(again->name == "Test (2)");
+    CHECK_EQ(again->scheme.brickDensity, 50);
+    CHECK(again->scheme.tiles[2][2] == Tile::Brick);
+    CHECK(again->scheme.tiles[1][1] == Tile::Solid);
+    CHECK(again->scheme.start[1] == (Cell{14, 10}));
+    CHECK_EQ(again->team[1], 1);
+    CHECK_EQ(again->powers[0].bornWith, 3);
+    CHECK_EQ(again->powers[4].overrideValue, 5);
+    CHECK(again->powers[2].forbidden);
+
+    // The random powerup never becomes a forbidden type.
+    Fixture f;
+    std::array<bool, 13> forbid{};
+    forbid.fill(true);
+    forbid[kPowSkate] = false;
+    f.w.setForbiddenRandom(forbid);
+    f.place(0, {0, 0});
+    f.place(1, {14, 10});
+    for (int n = 0; n < 5; ++n) {
+        f.w.placePowerup({1, 0}, kPowRandom, PowerupState::Revealed);
+        f.hold(0, 1);
+        f.run(30);
+        f.hold(0, 3);
+        f.run(30);
+    }
+    CHECK(f.w.player(0).inventory[kPowSkate] >= 4);    // (capped at 4)
+    CHECK_EQ(f.w.player(0).inventory[kPowBomb], 1);
+}
+
 void testSettings() {
     Settings s;
     s.parse("levelno=4\nnum_to_win_match=3\nenclosement_depth=9\nconveyor_speed=2\nteam_play=1\nrandom_start=1\n"
@@ -1534,6 +1583,7 @@ int main() {
         {"trapped animation", testTrappedAnimation},
         {"roulette", testRoulette},
         {"settings", testSettings},
+        {"scheme powers", testSchemePowers},
         {"campaign file", testCampaignFile},
         {"campaign enemies", testCampaignEnemies},
         {"campaign stage clear", testCampaignStageClear},
