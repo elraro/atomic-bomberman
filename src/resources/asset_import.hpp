@@ -5,6 +5,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace ab {
 
@@ -13,6 +14,7 @@ struct ImportReport {
     int dataFiles = 0;     // palettes, fonts, pictures, schemes, animations, lists
     int sounds = 0;        // converted to .wav
     int missingSounds = 0; // listed in soundlst.res but absent in the source
+    std::vector<std::string> missing;  // their names as listed
     long long bytes = 0;
     std::string error;
 };

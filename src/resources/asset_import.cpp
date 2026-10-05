@@ -42,8 +42,17 @@ fs::path findPath(fs::path dir, std::initializer_list<const char*> parts) {
 bool copyFile(const fs::path& from, const fs::path& to, ImportReport& report) {
     std::error_code ec;
     fs::create_directories(to.parent_path(), ec);
+    // Files copied from a CD arrive read-only, and a read-only file cannot be written over:
+    // without this a second import copied nothing (and said "1 data files").
+    if (fs::exists(to, ec)) {
+        fs::permissions(to, fs::perms::owner_write, fs::perm_options::add, ec);
+        fs::remove(to, ec);
+    }
+    ec.clear();
     fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
     if (ec) return false;
+    std::error_code ignored;
+    fs::permissions(to, fs::perms::owner_write, fs::perm_options::add, ignored);
     ++report.dataFiles;
     report.bytes += static_cast<long long>(fs::file_size(to, ec));
     return true;
@@ -156,7 +165,10 @@ ImportReport importAssets(const std::string& source, const std::string& destinat
         if (name.empty() || std::find(done.begin(), done.end(), name) != done.end()) continue;
         done.push_back(name);
         const fs::path rss = findEntry(soundDir, name + ".rss");
-        if (rss.empty() || !convertRssToWav(rss, dst / "data" / "sound" / (name + ".wav"), report)) ++report.missingSounds;
+        if (rss.empty() || !convertRssToWav(rss, dst / "data" / "sound" / (name + ".wav"), report)) {
+            ++report.missingSounds;
+            report.missing.push_back(name);
+        }
     }
 
     std::ofstream note(dst / "ABOUT-THESE-FILES.txt");

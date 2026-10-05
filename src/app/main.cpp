@@ -357,6 +357,14 @@ int main(int argc, char** argv) {
         }
         std::printf("Done: %d data files, %d sounds converted to .wav (%d listed sounds not found), %.1f MB.\n", r.dataFiles,
                     r.sounds, r.missingSounds, static_cast<double>(r.bytes) / 1.0e6);
+        if (!r.missing.empty()) {
+            // The original's own list names a few sounds its disc does not have (two are
+            // marked there as dummies); nothing is wrong with the copy.
+            std::printf("Listed in the game's sound list but not on the disc:");
+            for (std::size_t i = 0; i < r.missing.size() && i < 10; ++i) std::printf(" %s", r.missing[i].c_str());
+            if (r.missing.size() > 10) std::printf(" and %zu more (is the DATA\\SOUND folder complete?)", r.missing.size() - 10);
+            std::printf("\n");
+        }
         std::printf("Start the game without arguments to play.\n");
         return 0;
     }
