@@ -145,7 +145,14 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        # Failed checks are also shown as annotations on the run's page, which can be
+        # read without signing in (the full log cannot).
+        run: |
+          set -o pipefail
+          if ! ctest --test-dir build --output-on-failure | tee test.log; then
+            grep -E "FAIL|\*\*\*|Exception|Timeout" test.log | head -40 | while read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
 
       - name: Check that both processor types are in the programs
         run: |
