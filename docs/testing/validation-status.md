@@ -73,6 +73,6 @@ Levels as defined in AGENTS.md §53: 1 static (read from the original's code or 
 ## Not implemented
 
 - Network play (Start/Join Network Game, node name, modem and protocol settings): out of scope for now.
-- The "enhanced memory model" option (meaningless on current hardware) and "Adjust Audio" (a placeholder in the original).
+- The original's remaining debug keys: Ctrl-R (a colour remap tool for the artists), Ctrl-D (switches the debug log's output) and Alt-N (writes network statistics).
 
 Implemented from the original's code or its own help pages but never compared with the original running: intro, options, key definitions, help viewer, roulette, campaign mode, attract mode, scheme editor (its screen layout is this implementation's), team selection, exit question. Gamepad input has never been run with a controller.

@@ -581,3 +581,13 @@ Confidence: HIGH (static). All implemented in the application; in attract mode a
 - Ice delay and brick regeneration (documented in sessions 3-4) are now implemented; value 324 (extra random dud frames) has no reader in the executable.
 
 Confidence: HIGH (static).
+
+### Discovery: sound selection, memory model, debug keys, result screen keys
+
+- `0x427F1B(first, last, keep)`, called for eight groups of series after the sound list is read (`0x42858E`): closes up the defined ids of the range to its start, then removes random entries until `keep` are left. This corrects the earlier conclusion that sound 700 (taunt) can never play. Counts are in `docs/migration/audio.md`.
+- Small memory flag `0x464824` (option `smallmemory`; the settings screen shows it inverted as "Use Enhanced Memory Model"): keep = 1 for every series; `master.ali` lines `corner` > 0 and `xplode` > 1 are not loaded (`0x41D741`); values 105 and 330 are forced to 1, value 3 to 1, value 4 to 0 and value 7 takes value 9 (`0x41244B`); `Player_Kill` uses death animation 1 (`0x41DE38`). Changing it asks (1320-1323), then "Memory Model Changed! / Now exiting" (1325/1326).
+- "Adjust Audio" (message 268) leads only to message 320, "Audio Adjustment screen will be here...".
+- Debug mode: `0x460260` = atoi(getenv("KWD")) at start (`0x412817`; the lead programmer's initials). In a match: F10 → campaign stage result 1; Ctrl-A (`0x42A325`) → list of animation sequences (message 20) and file `anims.lst`; Ctrl-R (`0x4165D2`) → colour remap tool ("change which remap...", "Reload Default Color"); Alt-D (`0x413D45`) → information window (messages 400-420); Ctrl-D (`0x413BB0`) → debug log output mode; Alt-N (`0x40C678`) → network statistics file. Alt-W (not behind the debug flag) sets `0x4646B4`.
+- Result screens (`0x42A779`, `0x42AE28`): Enter, Space or a mouse click continue, Esc leaves the match; they continue by themselves after 6000 ms only when no player is human (`0x42247A`) or `0x4646B4` is set.
+
+Confidence: HIGH (static). Modern: all implemented except Ctrl-R, Ctrl-D and Alt-N; the Adjust Audio screen (two volumes) is this implementation's own.

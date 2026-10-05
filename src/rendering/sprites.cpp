@@ -1,5 +1,7 @@
 #include "rendering/sprites.hpp"
 
+#include <algorithm>
+
 #include "rendering/gl.hpp"
 
 #include <cstdio>
@@ -8,7 +10,10 @@ namespace ab {
 
 namespace {
 
+std::size_t gTextureBytes = 0;  // pixels uploaded so far, for the debug window
+
 unsigned uploadRgba(int w, int h, const std::vector<std::uint8_t>& rgba) {
+    gTextureBytes += rgba.size();
     unsigned tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
@@ -51,6 +56,15 @@ bool SpriteBank::pictureSize(const std::string& name, int* width, int* height) {
     *height = it->second.second;
     return true;
 }
+
+std::vector<std::string> SpriteBank::sequenceNames() const {
+    std::vector<std::string> names;
+    for (const auto& [name, ref] : sequences_) names.push_back(name);
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+std::size_t SpriteBank::textureBytes() { return gTextureBytes; }
 
 void SpriteBank::ensureTiles(int level) {
     if (level < 0 || level > 10 || level == level_ || tilesLoaded_[static_cast<std::size_t>(level)]) return;

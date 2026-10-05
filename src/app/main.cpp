@@ -55,6 +55,7 @@ struct Options {
     std::string campaign;     // --campaign NAME: start that campaign file (data/res/NAME.cam) at once
     int introShot = 0;        // automated: start on intro screen N (1-3)
     int attractSeconds = -1;  // --attract-seconds N: idle time on the menu before the demo (default: value 92)
+    bool debug = false;       // --debug: the original's debug keys (it used the KWD environment variable)
     bool noIntro = false;     // --no-intro: go straight to the main menu
     bool playersSet = false;  // --players or --humans given
     bool levelSet = false;    // --level, --wins, --scheme given: they win over the saved settings
@@ -83,6 +84,7 @@ Options parseArgs(int argc, char** argv) {
                       "  --wins N             round wins needed for the match\n"
                       "  --campaign NAME      play a campaign file of the game data (simple, ghosts, crouton)\n"
                       "  --attract-seconds N  idle seconds on the menu before a demo round starts (default 30)\n"
+                      "  --debug              debug keys in a match: Ctrl-A animation list, Alt-D information, F10 clears a campaign stage\n"
                       "  --no-intro           skip the logo and title screens\n"
                       "  --roulette           the round winner spins for a prize before the next round\n"
                       "  --seed N             random seed\n"
@@ -124,6 +126,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--native") o.native = true;
         else if (a == "--roulette") o.roulette = true;
         else if (a == "--no-intro") o.noIntro = true;
+        else if (a == "--debug") o.debug = true;
         else if (a == "--attract-seconds") o.attractSeconds = std::atoi(next().c_str());
         else if (a == "--intro-shot") o.introShot = std::atoi(next().c_str());
         else if (a == "--campaign") o.campaign = next();
@@ -575,6 +578,11 @@ int main(int argc, char** argv) {
         ab::RenderSnapshot previous;
         std::array<int, ab::kMaxPlayers> wins{};  // round wins in the current match
         int roundOverSteps = 0;
+        bool resultKey = false;    // a key was pressed on the result screen
+        bool autoResults = false;  // Alt-W: result screens go on by themselves
+        // Debug keys are on with --debug or, as in the original (0x412817), a non-zero KWD environment variable.
+        const char* kwd = std::getenv("KWD");
+        const bool debugKeys = opt.debug || (kwd != nullptr && std::atoi(kwd) != 0);
         bool matchOver = false;
         // The roulette between rounds, and what it gave the last round's winner.
         bool& goldman = cfg.goldman;
@@ -685,6 +693,7 @@ int main(int argc, char** argv) {
                 if (world.player(i).present && (teamPlay ? world.player(i).team : i) == prizeWinner) world.grantPrize(i, prizeType);
             previous.capture(world);
             roundOverSteps = 0;
+            resultKey = false;
             std::fprintf(stderr, "INFO  Round started players=%d\n", n);
         };
         // After the roulette the match setup goes on: the player list, or straight into the match.
@@ -1201,7 +1210,34 @@ int main(int argc, char** argv) {
                             running = false;
                         }
                     }
-                    if (key == SDLK_R) beginMatch();
+                    if ((key == SDLK_RETURN || key == SDLK_SPACE) && world.roundOver() && roundOverSteps > 20) resultKey = true;
+                    const bool alt = (e.key.mod & SDL_KMOD_ALT) != 0, ctrl = (e.key.mod & SDL_KMOD_CTRL) != 0;
+                    if (key == SDLK_W && alt) autoResults = true;  // original Alt-W (0x42A5ED)
+                    if (debugKeys && key == SDLK_F10) world.debugClearStage();  // original 0x42A5AC
+                    if (debugKeys && key == SDLK_A && ctrl) {
+                        // Original Ctrl-A (0x42A325): the list of animation sequences, also written to anims.lst.
+                        const std::vector<std::string> names = spritesPtr->sequenceNames();
+                        helpLines.clear();
+                        helpLines.push_back({{false, "Animation sequences available (" + std::to_string(names.size()) + " total):"}});  // message 20
+                        for (const std::string& n : names) helpLines.push_back({{false, n}});
+                        if (!settingsPath.empty()) {
+                            std::ofstream list(std::filesystem::path(settingsPath).parent_path() / "anims.lst");
+                            for (const std::string& n : names) list << n << "\n";
+                        }
+                        helpTop = 0;
+                        helpReturn = Screen::Match;
+                        screen = Screen::Help;
+                    }
+                    if (debugKeys && key == SDLK_D && alt) {
+                        // Original Alt-D (0x413D45): messages 400-420. The network lines have nothing to show.
+                        showMessage({"Internal debugging information window",
+                                     "Total mem: " + std::to_string(ab::SpriteBank::textureBytes() + audio.cachedBytes()) +
+                                         ", Audio mem: " + std::to_string(audio.cachedBytes()),
+                                     "Our local net id: 0", "Critical retrans rate: 0.000",
+                                     "Audio cache hits: " + std::to_string(audio.cacheHitPercent()) + "%"},
+                                    [&]() { screen = Screen::Match; });
+                    }
+                    if (key == SDLK_R && !ctrl) beginMatch();
                     if (key == SDLK_P) paused = !paused;
                     if (key == SDLK_N) singleStep = true;  // advance one step while paused
                 }
@@ -1292,7 +1328,12 @@ int main(int argc, char** argv) {
                         if (world.teamPlay() ? world.winningTeam() < 0 : world.winner() < 0) audio.playRange(1700, 1999);
                         else if (matchOver) audio.playRange(2000, 2299);
                     }
-                    if (world.roundOver() && ++roundOverSteps > 100) {
+                    // The result screen waits for Enter or Space; with no human player, or after
+                    // Alt-W, it goes on by itself after six seconds (original 0x42A779).
+                    bool anyHuman = false;
+                    for (Control c : control) anyHuman = anyHuman || (c != Control::Off && c != Control::Ai);
+                    if (world.roundOver()) ++roundOverSteps;
+                    if (world.roundOver() && roundOverSteps > 20 && (resultKey || ((!anyHuman || autoResults || opt.frames > 0) && roundOverSteps > 140))) {
                         if (matchOver) {
                             // The match winner is remembered for the roulette (0x42AC58).
                             prizeWinner = goldman ? matchWinner : -1;

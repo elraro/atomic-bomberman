@@ -318,6 +318,8 @@ public:
     int campaignResult() const { return campaignResult_; }
     // After a failure: true if the same stage is to be played again (no human was left).
     bool campaignRetry() const { return campaignRetry_; }
+    // The original's debug key F10: the stage counts as cleared.
+    void debugClearStage() { if (campaign_ && campaignResult_ == 0) campaignResult_ = 1; }
 
     // --- round clock and result ---
     // Seconds left on the round clock (whole seconds, as displayed); -1 when unlimited.

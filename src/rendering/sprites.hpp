@@ -36,6 +36,9 @@ public:
     int level() const { return level_; }
     // Makes the tiles of another level theme available too ("tile N solid", "tile N brick").
     void ensureTiles(int level);
+    // For the debug keys: every animation sequence loaded, and the texture bytes uploaded so far.
+    std::vector<std::string> sequenceNames() const;
+    static std::size_t textureBytes();
 
     unsigned background() const { return background_; }
     // A full-screen picture from data/res (e.g. "mainmenu", "glue0", "results"); 0 if missing.
