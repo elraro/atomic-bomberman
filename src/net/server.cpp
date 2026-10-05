@@ -39,6 +39,7 @@ struct Server::Peer {
     bool joined = false;
     bool gone = false;
     std::string name;
+    std::string host;              // the address bans and limits go by (the real one also for a player who came through a relay)
     std::uint32_t token = 0;       // session number: names the connection in its datagrams (not a secret)
     bool keyed = false;            // the key exchange is done
     SessionKeys keys;
@@ -171,6 +172,11 @@ void Server::stop() {
     }
     peers_.clear();
     mapper_.stop();
+    relayControl_.close();
+    adopting_.clear();
+    relayCode_.clear();
+    relayNotice_.clear();
+    relayResolved_ = false;
     listener_.close();
     udp_.close();
     discovery_.close();
@@ -265,7 +271,7 @@ bool Server::unban(const std::string& address) {
 
 // Sends a player away. Kicked: the address may come back in five minutes. Banned: not until unbanned.
 void Server::remove(Peer& p, bool ban, const std::string& by) {
-    const std::string host = hostOf(p.socket.peer());
+    const std::string host = p.host;
     block(host, ban ? kForever : now_ + kKickBlockMs);
     if (ban) saveBans();
     log(std::string("INFO  ") + (ban ? "Banned" : "Kicked") + " name=\"" + p.name + "\" address=" + host + " by " + by);
@@ -283,7 +289,7 @@ bool Server::kick(const std::string& name, bool ban) {
 }
 
 void Server::passwordFailed(Peer& p) {
-    const std::string host = hostOf(p.socket.peer());
+    const std::string host = p.host;
     std::deque<std::uint64_t>& tries = passwordFails_[host];
     tries.push_back(now_);
     while (!tries.empty() && now_ - tries.front() > 60000) tries.pop_front();
@@ -496,6 +502,7 @@ void Server::handleHello(Peer& p, const std::vector<std::uint8_t>& payload) {
     }
     lobbyDirty_ = true;
     if (!routerNotice_.empty()) tell(p, routerNotice_);
+    if (!relayNotice_.empty() && &p == admin()) tell(p, relayNotice_);
     say(p.name + " has joined" + (!p.seated() && phase_ != Phase::Lobby ? " (watching until the match ends)" : ""));
 }
 
@@ -514,7 +521,7 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
     // Far more messages than a game client ever sends: not a game client.
     if (now_ - p.frameWindowAt >= 1000) p.frameWindowAt = now_, p.frames = 0;
     if (++p.frames > kFramesPerSecond) {
-        const std::string host = hostOf(p.socket.peer());
+        const std::string host = p.host;
         log("WARN  Flood of messages from " + host + ": dropped and blocked for a minute");
         block(host, now_ + 60000);
         p.gone = true;
@@ -606,7 +613,7 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
             const std::uint8_t id = r.u8();
             Peer* target = r.ok() ? peerById(id) : nullptr;
             if (&p != admin() || target == nullptr || target == &p) break;
-            tell(p, target->name + "'s address is " + hostOf(target->socket.peer()) + " (to lift the ban: /unban " + hostOf(target->socket.peer()) + ")");
+            tell(p, target->name + "'s address is " + target->host + " (to lift the ban: /unban " + target->host + ")");
             remove(*target, true, "the administrator");
             break;
         }
@@ -713,6 +720,92 @@ void Server::handleDatagram(const Address& from, const std::vector<std::uint8_t>
     info.phase = phase_;
     info.password = !config_.password.empty();
     (viaDiscovery ? discovery_ : udp_).sendTo(from, datagram(UdpMsg::Info, info));
+}
+
+// The relay, for players who cannot reach this machine directly.
+void Server::pumpRelay() {
+    if (config_.relay.empty()) return;
+    if (!relayResolved_) {
+        if (now_ < relayRetryAt_) return;
+        relayRetryAt_ = now_ + 30000;
+        const auto at = resolveHostPort(config_.relay, kRelayPort);  // a name lookup: may take a moment
+        if (!at) {
+            log("WARN  Cannot find the relay " + config_.relay);
+            return;
+        }
+        relayAddress_ = *at;
+        relayResolved_ = true;
+        relayRetryAt_ = 0;
+    }
+    if (!relayControl_.open()) {
+        if (now_ < relayRetryAt_) return;
+        relayRetryAt_ = now_ + 10000;
+        relayHelloSent_ = false;
+        relayCode_.clear();
+        relayControl_.connect(relayAddress_);
+        return;
+    }
+    const bool alive = relayControl_.pump();
+    if (relayControl_.connected() && !relayHelloSent_) {
+        ByteWriter w;
+        w.u32(kRelayMagic);
+        relayControl_.send(static_cast<std::uint8_t>(RelayMsg::Host), w.data());
+        relayHelloSent_ = true;
+        relayPingAt_ = now_;
+    }
+    if (relayHelloSent_ && now_ - relayPingAt_ >= 15000) {
+        relayPingAt_ = now_;
+        relayControl_.send(static_cast<std::uint8_t>(RelayMsg::Ping), {});
+    }
+    std::uint8_t type = 0;
+    std::vector<std::uint8_t> payload;
+    while (relayControl_.receive(type, payload)) {
+        ByteReader r(payload);
+        if (static_cast<RelayMsg>(type) == RelayMsg::Hosted) {
+            relayCode_ = cleanText(r.text(16), 16);
+            relayNotice_ = "Players who cannot reach you directly join with the address " + relayCode_ + "@" + config_.relay;
+            log("INFO  Relay " + config_.relay + " code=" + relayCode_);
+            if (Peer* a = admin()) tell(*a, relayNotice_);
+        } else if (static_cast<RelayMsg>(type) == RelayMsg::Incoming) {
+            Adopting a;
+            a.ticket = r.u32();
+            a.host = cleanText(r.text(64), 64);
+            a.since = now_;
+            if (!r.ok() || blocked(a.host) || adopting_.size() >= 16 || peers_.size() >= kMaxConnections) continue;
+            if (a.socket.connect(relayAddress_)) adopting_.push_back(std::move(a));
+        } else if (static_cast<RelayMsg>(type) == RelayMsg::Refuse) {
+            log("WARN  Relay: " + cleanText(r.text(256), 200));
+        }
+    }
+    if (!alive) {
+        if (!relayCode_.empty()) log("WARN  The connection to the relay was lost; trying again");
+        relayControl_.close();
+        relayCode_.clear();
+        relayNotice_.clear();
+    }
+    // A connection out to the relay for each announced player: once it is linked it is a
+    // player's connection like any other (the player's key exchange comes through it next).
+    for (std::size_t i = 0; i < adopting_.size();) {
+        Adopting& a = adopting_[i];
+        const bool up = a.socket.pump();
+        if (up && a.socket.connected()) {
+            ByteWriter w;
+            w.u32(kRelayMagic);
+            w.u32(a.ticket);
+            a.socket.send(static_cast<std::uint8_t>(RelayMsg::Accept), w.data());
+            a.socket.pump();
+            auto p = std::make_unique<Peer>();
+            p->host = a.host;
+            p->socket = std::move(a.socket);
+            p->connectedAt = p->lastHeard = now_;
+            peers_.push_back(std::move(p));
+            adopting_.erase(adopting_.begin() + static_cast<std::ptrdiff_t>(i));
+        } else if (!up || now_ - a.since > 5000) {
+            adopting_.erase(adopting_.begin() + static_cast<std::ptrdiff_t>(i));
+        } else {
+            ++i;
+        }
+    }
 }
 
 std::string Server::startMatch() {
@@ -1016,9 +1109,10 @@ void Server::update(std::uint64_t nowMs) {
             continue;
         }
         int same = 0;
-        for (const auto& q : peers_) same += !q->gone && hostOf(q->socket.peer()) == host ? 1 : 0;
+        for (const auto& q : peers_) same += !q->gone && q->host == host ? 1 : 0;
         if (same >= config_.maxPerAddress) continue;
         auto p = std::make_unique<Peer>();
+        p->host = host;
         p->socket = std::move(*socket);
         p->connectedAt = p->lastHeard = now_;
         peers_.push_back(std::move(p));
@@ -1038,6 +1132,7 @@ void Server::update(std::uint64_t nowMs) {
             reject(p, "Connection timed out");
         }
     }
+    pumpRelay();
     if (udp_.isOpen()) {
         Address from;
         std::vector<std::uint8_t> data;

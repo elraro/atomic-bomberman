@@ -16,7 +16,7 @@ namespace {
 using State = net::Client::State;
 
 constexpr int kJoinFields = 3;   // name, address, password; then the servers found
-constexpr int kHostRows = 5;     // name, server name, port, password, start
+constexpr int kHostRows = 6;     // name, server name, port, password, relay, start
 constexpr int kLobbyRows = 15;   // start, then the fourteen settings
 constexpr std::uint64_t kChatShownMs = 8000;
 
@@ -170,6 +170,7 @@ void NetUi::startHost() {
     config.settings.diseasesDestroyable = cfg_.diseasesDestroyable;
     config.settings.computers = 1;
     config.upnp = true;
+    config.relay = net::cleanText(cfg_.netRelay, 64);
     if (!userSchemesDir_.empty()) config.banFile = userSchemesDir_ + "/../bans.txt";  // beside the settings file
     if (!userSchemesDir_.empty()) config.identityFile = userSchemesDir_ + "/../server.key";  // a hosted game tries to open the router's port; the lobby says how it went
     config.log = [](const std::string& line) { std::fprintf(stderr, "%s\n", line.c_str()); };
@@ -297,6 +298,7 @@ void NetUi::key(unsigned key, bool ctrl) {
                 else if (row_ == 1) edit(&cfg_.netServerName, 32, false);
                 else if (row_ == 2) edit(&portText_, 5, true);
                 else if (row_ == 3) edit(&password_, 32, false);
+                else if (row_ == 4) edit(&cfg_.netRelay, 64, false);
                 else startHost();
             }
         }
@@ -492,7 +494,7 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
     };
     if (join) {
         fieldRow(0, "Your name:", &cfg_.netName, false, "Player");
-        fieldRow(1, "Address:", &cfg_.netAddress, false, "(host or host:port)");
+        fieldRow(1, "Address:", &cfg_.netAddress, false, "(host, host:port or CODE@relay)");
         fieldRow(2, "Password:", &password_, true, "(none)");
         label(r, bank, "Games on the local network:", 80, 172, 1, 1, 1);
         const auto& servers = browser_.servers();
@@ -514,14 +516,16 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
         fieldRow(1, "Game name:", &cfg_.netServerName, false, "");
         fieldRow(2, "Port:", &portText_, false, "");
         fieldRow(3, "Password:", &password_, true, "(none)");
-        const float y = 86.0f + 24.0f * 4.0f + 12.0f;
-        const bool on = row_ == 4;
+        fieldRow(4, "Relay:", &cfg_.netRelay, false, "(none)");
+        const float y = 86.0f + 24.0f * 5.0f + 12.0f;
+        const bool on = row_ == 5;
         label(r, bank, "Start the server", 80, y, on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
         if (on) r.sprite(bank, "cursor1", frame / 8, -1, 62.0f, y + 15.0f);
         const std::vector<std::string> notes = {"Others join with your address and this port (TCP and UDP).",
                                                 "On the same network they find the game by themselves.",
+                                                "If your router lets nothing in: name a relay, and give out the code it shows.",
                                                 "For a server without a window run atomic_server."};
-        for (std::size_t i = 0; i < notes.size(); ++i) label(r, bank, notes[i], 60, 250.0f + 22.0f * static_cast<float>(i), 0.75f, 0.75f, 0.75f);
+        for (std::size_t i = 0; i < notes.size(); ++i) label(r, bank, notes[i], 60, 262.0f + 22.0f * static_cast<float>(i), 0.75f, 0.75f, 0.75f);
         label(r, bank, editing_ != nullptr ? "Type, then Enter" : "Up/Down: select   Enter: change / start   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
     }
 }

@@ -18,6 +18,7 @@
 #include "net/client.hpp"
 #include "net/crypto.hpp"
 #include "net/protocol.hpp"
+#include "net/relay.hpp"
 #include "net/server.hpp"
 #include "net/upnp.hpp"
 #include "resources/settings.hpp"
@@ -1204,6 +1205,74 @@ void testServerIdentity() {
     std::filesystem::remove(knownFile);
 }
 
+// A host nobody can reach and a player: joined through a relay, by a code.
+void testRelay() {
+    std::string code, relayAddress;
+    CHECK(splitRelayAddress("ab12cd@relay.example:9", &code, &relayAddress) && code == "AB12CD" && relayAddress == "relay.example:9");
+    CHECK(!splitRelayAddress("127.0.0.1:27410", &code, &relayAddress));
+    CHECK(!splitRelayAddress("@relay", &code, &relayAddress) && !splitRelayAddress("CODE@", &code, &relayAddress));
+
+    Relay relay;
+    std::vector<std::string> relayLog;
+    CHECK(relay.start(0, [&](const std::string& line) { relayLog.push_back(line); }));
+    Harness h;
+    ServerConfig config;
+    config.port = 0;
+    config.seed = 99;
+    config.discoverable = false;
+    config.password = "relayed";
+    config.relay = "127.0.0.1:" + std::to_string(relay.port());
+    config.settings.computers = 1;
+    config.log = [&h](const std::string& line) { h.log.push_back(line); };
+    CHECK(h.server.start(config));
+    auto spin = [&](const std::function<bool()>& done, int maxMs = 20000) {
+        for (int waited = 0; waited < maxMs && !done(); waited += 5) {
+            relay.update(h.now);
+            h.turn();
+        }
+        return done();
+    };
+    CHECK(spin([&] { return !h.server.relayCode().empty(); }));
+    CHECK_EQ(h.server.relayCode().size(), 6u);
+    CHECK_EQ(relay.hosts(), 1);
+    const std::string through = h.server.relayCode() + "@127.0.0.1:" + std::to_string(relay.port());
+
+    // A wrong code is refused by the relay, with words.
+    Client& lost = h.join("Lost");
+    lost.connect("ZZZZZZ@127.0.0.1:" + std::to_string(relay.port()), "Lost", "relayed", h.now);
+    CHECK(spin([&] { return lost.state() == Client::State::Failed; }));
+    CHECK(lost.error() == "No game with that code on this relay");
+
+    // The right code: the usual key exchange, password and lobby, all through the relay.
+    h.clients.push_back(std::make_unique<Client>());
+    Client& ann = *h.clients.back();
+    ann.connect(through, "Ann", "relayed", h.now);
+    CHECK(spin([&] { return ann.state() == Client::State::Lobby && !ann.lobby().clients.empty(); }));
+    CHECK(ann.viaRelay() && ann.encrypted() && !ann.udpActive());
+    CHECK(ann.serverIdentity() == h.server.identity());  // the relay could not put itself in between
+    CHECK_EQ(relay.links(), 1);
+    // A second player the same way, with the wrong password: the server's own refusal arrives.
+    h.clients.push_back(std::make_unique<Client>());
+    Client& eve = *h.clients.back();
+    eve.connect(through, "Eve", "guess", h.now);
+    CHECK(spin([&] { return eve.state() == Client::State::Failed; }));
+    CHECK(eve.error() == "Wrong password");
+    // A round over the relay stays in step.
+    ann.sendChat("through the relay");
+    ann.sendStart();
+    CHECK(spin([&] { return ann.state() == Client::State::Round && ann.stepsApplied() > 80; }));
+    CHECK(spin([&] { return ann.stepsApplied() == h.server.steps() && ann.world()->stateHash(true) == h.server.world()->stateHash(true); }, 3000));
+    CHECK_EQ(ann.snapshotsLoaded(), 0);
+    bool chatSeen = false;
+    for (const std::string& line : h.log) chatSeen = chatSeen || line.find("through the relay") != std::string::npos;
+    CHECK(chatSeen);
+    // The player leaves: the link goes. The host stops: the relay forgets it.
+    ann.disconnect();
+    CHECK(spin([&] { return relay.links() == 0; }));
+    h.server.stop();
+    CHECK(spin([&] { return relay.hosts() == 0; }));
+}
+
 // The network keys of the settings file.
 void testNetSettings() {
     Settings s;
@@ -1274,6 +1343,7 @@ int main() {
         {"encryption on the wire", testEncryptionOnTheWire},
         {"bans and limits", testBansAndLimits},
         {"server identity", testServerIdentity},
+        {"relay", testRelay},
         {"round over udp", [] { testRound(true); }},
         {"round over tcp only", [] { testRound(false); }},
         {"leave during round", testLeaveDuringRound},

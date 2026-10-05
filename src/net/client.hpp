@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "net/protocol.hpp"
+#include "net/relay.hpp"
 #include "net/socket.hpp"
 
 namespace ab::net {
@@ -72,6 +73,7 @@ public:
     const LobbyState& lobby() const { return lobby_; }
     const std::deque<ChatLine>& chat() const { return chat_; }
     bool udpActive() const { return udpOn_; }
+    bool viaRelay() const { return viaRelay_; }
     bool encrypted() const { return keyed_ && socket_.encrypted(); }
 
     void setInput(const PlayerInput& in) { input_[0] = packInput(in); }
@@ -141,6 +143,8 @@ private:
     Address server_{};
     std::string name_;
     std::string address_;      // as given to connect()
+    bool viaRelay_ = false;    // "CODE@relay": the connection goes to a relay, which links it to the host
+    std::string relayCode_;
     std::string knownFile_;
     std::string identity_;
     bool identityKnown_ = false;

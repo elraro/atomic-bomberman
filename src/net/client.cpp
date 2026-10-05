@@ -68,9 +68,12 @@ void Client::connect(const std::string& address, const std::string& name, const 
     welcomed_ = false;
     probes_ = 0;
     probeAt_ = 0;
-    const auto to = resolveHostPort(address, kDefaultPort);
+    // "CODE@relay": the game is reached through a relay, by the code its host was given.
+    std::string relay;
+    viaRelay_ = splitRelayAddress(address, &relayCode_, &relay);
+    const auto to = viaRelay_ ? resolveHostPort(relay, kRelayPort) : resolveHostPort(address, kDefaultPort);
     if (!to) {
-        fail("Cannot find \"" + address + "\"");
+        fail("Cannot find \"" + (viaRelay_ ? relay : address) + "\"");
         return;
     }
     server_ = *to;
@@ -211,6 +214,7 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
     ByteReader r(payload);
     // Until the keys are agreed only the server's key (or a refusal) is listened to; after
     // that, a second key message means nothing.
+    if (!keyed_ && viaRelay_ && static_cast<RelayMsg>(type) == RelayMsg::Refuse) return fail(cleanText(r.text(256), 200));
     if (!keyed_ && static_cast<ServerMsg>(type) != ServerMsg::KeyExchange && static_cast<ServerMsg>(type) != ServerMsg::Reject) return fail("Bad answer from the server");
     switch (static_cast<ServerMsg>(type)) {
         case ServerMsg::KeyExchange: {
@@ -223,7 +227,8 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             // machine is not asked.) Whoever answers must also own the identity it shows:
             // without that key it cannot arrive at the connection's keys.
             identity_ = fingerprint(identity);
-            if (!knownFile_.empty() && (!server_.loopback() || identityOnLoopback_)) {
+            // (Not through a relay either: its codes are new each time, so there is nothing to remember by.)
+            if (!knownFile_.empty() && !viaRelay_ && (!server_.loopback() || identityOnLoopback_)) {
                 std::map<std::string, std::string> known = readKnown(knownFile_);
                 const auto it = known.find(server_.text());
                 if (it != known.end() && it->second != identity_) {
@@ -256,7 +261,7 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             serverName_ = m.serverName;
             welcomed_ = true;
             state_ = State::Lobby;
-            if (udpAllowed_) udp_.open(0, false, false, server_.v6);
+            if (udpAllowed_ && !viaRelay_) udp_.open(0, false, false, server_.v6);  // a relay carries TCP only
             break;
         }
         case ServerMsg::Reject: fail(r.text(256)); break;
@@ -347,6 +352,13 @@ void Client::update(std::uint64_t nowMs) {
     if (socket_.connected() && !helloSent_) {
         // The only thing sent in the clear: a fresh public key. Everything after the
         // server's answer is encrypted with keys both sides derive from the exchange.
+        if (viaRelay_) {
+            // First a word to the relay; everything after it is passed on to the host.
+            ByteWriter join;
+            join.u32(kRelayMagic);
+            join.text(relayCode_);
+            socket_.send(static_cast<std::uint8_t>(RelayMsg::Join), join.data());
+        }
         randomBytes(secret_.data(), secret_.size());
         public_ = x25519Base(secret_);
         ByteWriter w;
