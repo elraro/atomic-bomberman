@@ -32,7 +32,7 @@ What a player sees is not the confirmed state but a guess at the state a few ste
 - Once per 50 ms of its own clock the client copies the confirmed state and runs the copy forward to a target step: the last confirmed step plus the delay, where the delay is the measured round trip in steps plus one (1 to 10 steps). For those steps it uses its own inputs, remembering which input it assumed for which step, and assumes every other player goes on doing what they did in the last confirmed step.
 - The target advances by one per local step and is pulled back to "confirmed + delay" only when it has drifted by more than two, so the picture moves evenly even when the server's steps arrive unevenly.
 - The copy is thrown away and rebuilt every local step, so a wrong guess (another player turned, a bomb was dropped) lasts only until the server's steps say otherwise; the drawing interpolates over one step, which softens the correction.
-- No prediction for watchers, after the round is decided, or when switched off (`net_prediction=0` in the settings file).
+- No prediction for watchers, after the round is decided, or when switched off (Options, "Network: Show Own Moves At Once"; `net_prediction` in the settings file).
 
 Known effects: other players are drawn where they would be if they had not changed direction, so at high delay they visibly jump when they do; sounds follow the confirmed state, so the sound of one's own bomb comes after the picture of it by the round-trip time.
 

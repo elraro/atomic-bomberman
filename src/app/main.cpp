@@ -339,7 +339,7 @@ const char* controlName(Control c) {
     }
 }
 
-constexpr int kOptionRows = 14;
+constexpr int kOptionRows = 15;
 enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor, AudioAdjust, Movie, Net };
 
 using ab::SchemeEntry;
@@ -1270,14 +1270,15 @@ int main(int argc, char** argv) {
                             case 8: cfg.diseasesDestroyable = !cfg.diseasesDestroyable; break;
                             case 9: cfg.disableGameMusic = !cfg.disableGameMusic; break;
                             case 10: cfg.assignKeyboards = !cfg.assignKeyboards; break;
-                            case 11:
+                            case 11: cfg.netPrediction = !cfg.netPrediction; break;  // this implementation's network mode
+                            case 12:
                                 if (key != SDLK_LEFT) {
                                     screen = Screen::Keys;
                                     keyRow = 0;
                                     keyCapture = false;
                                 }
                                 break;
-                            case 12:
+                            case 13:
                                 // The memory model takes effect at the next start, so the original
                                 // asks and then exits (messages 1320-1326).
                                 askQuestion(cfg.smallMemory
@@ -1766,6 +1767,7 @@ int main(int argc, char** argv) {
                     std::string("Diseases Can Be Destroyed: ") + kYesNo[cfg.diseasesDestroyable],
                     std::string("Disable music during gameplay: ") + kYesNo[cfg.disableGameMusic],
                     std::string("Assign Keyboard Player: ") + kYesNo[cfg.assignKeyboards],
+                    std::string("Network: Show Own Moves At Once: ") + kYesNo[cfg.netPrediction],
                     "Define keyboard layouts",
                     std::string("Use Enhanced Memory Model: ") + kYesNo[!cfg.smallMemory],  // message 267
                     "Adjust Audio"};                                                         // message 268

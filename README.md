@@ -130,7 +130,7 @@ It reads schemes, tuning values and level extras from the same game data as the 
 
 **Reaching a server.** The host's port must be reachable for **TCP and UDP** (open it in the firewall; behind a home router, forward it). If only TCP gets through the game still works, a little less smoothly. Players need the same version of the program; they do not need the same schemes, because the server sends the arena.
 
-**What to expect.** Your own moves are shown at once (client-side prediction) and confirmed by the server a moment later; other players are drawn where they would be if they kept going, so on a slow link they can jump a little when they turn, and sounds arrive with the link's delay. `net_prediction=0` in the settings file switches prediction off. This mode has been tested on one machine at a time only: automated tests over the loopback interface on Linux and Windows, including with 40 % packet loss, and matches against a dedicated server with scripted clients on Linux. It has not yet been played between two real computers.
+**What to expect.** Your own moves are shown at once (client-side prediction) and confirmed by the server a moment later; other players are drawn where they would be if they kept going, so on a slow link they can jump a little when they turn, and sounds arrive with the link's delay. **Options → Network: Show Own Moves At Once** switches prediction on and off (it applies to the next game you join). This mode has been tested on one machine at a time only: automated tests over the loopback interface on Linux and Windows, including with 40 % packet loss, and matches against a dedicated server with scripted clients on Linux. It has not yet been played between two real computers.
 
 ## 🔬 How it was made
 
