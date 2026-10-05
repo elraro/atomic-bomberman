@@ -19,6 +19,11 @@ struct RenderSnapshot {
     };
     std::array<Pos, kMaxPlayers> players{};
     std::array<Pos, kMaxBombs> bombs{};
+    // Which bomb was in each slot (its creation step, -1 for none): a bomb laid since the
+    // snapshot has no earlier position to be drawn moving from.
+    std::array<int, kMaxBombs> bombBorn{};
+    // Where bomb `index` is to be drawn, `alpha` of the way from the snapshot to its present place.
+    Pos from(const Bomb& bomb, std::size_t index) const;
     void capture(const World& w);
 };
 

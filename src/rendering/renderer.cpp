@@ -77,7 +77,17 @@ float lerpBomb(int a, int b, float t) { return std::abs(b - a) > 100 ? static_ca
 void RenderSnapshot::capture(const World& w) {
     for (int i = 0; i < kMaxPlayers; ++i)
         players[static_cast<std::size_t>(i)] = {w.player(i).x, w.player(i).y};
-    for (std::size_t i = 0; i < w.bombs().size() && i < bombs.size(); ++i) bombs[i] = {w.bombs()[i].x, w.bombs()[i].y};
+    for (std::size_t i = 0; i < w.bombs().size() && i < bombs.size(); ++i) {
+        bombs[i] = {w.bombs()[i].x, w.bombs()[i].y};
+        bombBorn[i] = w.bombs()[i].active ? w.bombs()[i].createdTick : -1;
+    }
+}
+
+// The slots of the bomb list are used again and again: without this check a new bomb was
+// drawn sliding in from where the slot's last bomb had been.
+RenderSnapshot::Pos RenderSnapshot::from(const Bomb& bomb, std::size_t index) const {
+    if (index < bombs.size() && bombBorn[index] == bomb.createdTick) return bombs[index];
+    return {bomb.x, bomb.y};
 }
 
 Renderer::Renderer() {
@@ -364,6 +374,20 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
     const std::string lv = std::to_string(bank.level());
     const int frame = world.tickCount();  // one animation frame per 50 ms step
 
+    // Level extras lie on the ground, visible once their cell is open. They are drawn first:
+    // powerups, flames and everything else in a cell go on top of them.
+    for (const Extra& e : world.extras()) {
+        if (world.tile(e.cell) != Tile::Blank) continue;
+        const auto rx = static_cast<float>(cellToPixelX(e.cell.x));
+        const auto ry = static_cast<float>(cellToPixelY(e.cell.y));
+        switch (e.type) {
+            case ExtraType::Arrow: sprite(bank, std::string("extra arrow ") + kDirName[e.dir & 3], 0, -1, rx, ry); break;
+            case ExtraType::Conveyor: sprite(bank, std::string("extra conveyor ") + kDirName[e.dir & 3], frame / 3, -1, rx, ry); break;
+            case ExtraType::Warp: sprite(bank, "extra warp 1", frame, -1, rx, ry); break;
+            case ExtraType::Trampoline: sprite(bank, "extra trampoline", e.animFrame, -1, rx, ry); break;
+        }
+    }
+
     for (int y = 0; y < kGridH; ++y)
         for (int x = 0; x < kGridW; ++x) {
             const auto rx = static_cast<float>(cellToPixelX(x));
@@ -395,25 +419,13 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
             }
         }
 
-    // Level extras lie on the ground, visible once their cell is open.
-    for (const Extra& e : world.extras()) {
-        if (world.tile(e.cell) != Tile::Blank) continue;
-        const auto rx = static_cast<float>(cellToPixelX(e.cell.x));
-        const auto ry = static_cast<float>(cellToPixelY(e.cell.y));
-        switch (e.type) {
-            case ExtraType::Arrow: sprite(bank, std::string("extra arrow ") + kDirName[e.dir & 3], 0, -1, rx, ry); break;
-            case ExtraType::Conveyor: sprite(bank, std::string("extra conveyor ") + kDirName[e.dir & 3], frame / 3, -1, rx, ry); break;
-            case ExtraType::Warp: sprite(bank, "extra warp 1", frame, -1, rx, ry); break;
-            case ExtraType::Trampoline: sprite(bank, "extra trampoline", e.animFrame, -1, rx, ry); break;
-        }
-    }
-
     std::size_t bi = 0;
     for (const Bomb& b : world.bombs()) {
         const std::size_t idx = bi++;
         if (!b.active) continue;
-        const float bx = lerpBomb(prev.bombs[idx].x, b.x, alpha);
-        const float by = lerpBomb(prev.bombs[idx].y, b.y, alpha) - bombLift(b);
+        const RenderSnapshot::Pos was = prev.from(b, idx);
+        const float bx = lerpBomb(was.x, b.x, alpha);
+        const float by = lerpBomb(was.y, b.y, alpha) - bombLift(b);
         const char* seq = b.dud                        ? "bomb regular green dud"
                         : b.type == BombType::Trigger ? "bomb trigger green"
                         : b.type == BombType::Jelly   ? "bomb jelly green"
@@ -559,8 +571,9 @@ void Renderer::drawShapes(const World& world, const RenderSnapshot& prev, float 
     for (const Bomb& b : world.bombs()) {
         const std::size_t idx = bi++;
         if (!b.active) continue;
-        const float bx = lerp(prev.bombs[idx].x, b.x, alpha);
-        const float by = lerp(prev.bombs[idx].y, b.y, alpha);
+        const RenderSnapshot::Pos was = prev.from(b, idx);
+        const float bx = lerpBomb(was.x, b.x, alpha);
+        const float by = lerpBomb(was.y, b.y, alpha);
         const float pulse = 1.0f + 0.12f * static_cast<float>((b.elapsedMs / 100) % 2);
         const float s = 13.0f * pulse;
         const float cy = by - 17.0f;
