@@ -85,3 +85,7 @@ A hidden, visibly unfinished mode of the original, recovered from `campaign.c` a
 - T on the player list moves the selected player to the other team (refused with a "can't do that" sound for a seat that is off); 0 switches the seat off. [S]
 - Starting is refused with a "Problem!!" notice when two players share an input device (message 45), when fewer than two players are selected (46, not in campaign mode), or, in team play, when a team is empty (48). [S]
 - Teams first come from the scheme file. In this implementation a choice made with T stays until another scheme is selected. [M]
+
+## Keyboard definitions
+
+Two keyboard sets of six keys: up, right, down, left, action 1, action 2. Defaults: the arrow keys, Space, Enter; and R, G, F, D, S, A (the last one is Q on a keyboard layout where that key sits there). Stored in `options.ini` as `keydef=set,index,code` with DirectInput key codes. [S] The "Define keyboard layouts" screen lists the twelve keys and "Return to default keys"; choosing a key asks "Press key for '…'". [S for the texts, M for the layout]

@@ -85,12 +85,14 @@ Needs CMake 3.20+ and a C++20 compiler. `-DAB_FETCH_SDL3=ON` downloads SDL3 and 
 
 The program needs the original game's data for the menu, graphics and sound. It looks in: `--game-dir PATH`, the `ATOMIC_GAME_DIR` environment variable, an imported `assets` folder (next to the executable, in the current folder, or in the per-user data folder), or a `game` folder with a copy of the original. The terminal prints `INFO  Game files: …` when it is found; if it is not, the window title says so and the program falls back to placeholder shapes with no menu.
 
-With game files the program opens on the main menu. Choose **Start Game**, set up the player list (Up/Down select a slot, Right cycles AI → KEY 0 → KEY 1 → OFF, Left switches a slot off), press Enter, then choose level, scheme and wins (Left/Right) and press Enter to play. By default player 1 uses the first key set and player 2 is a computer player, as in the original. The other menu items are not implemented.
+With game files the program opens on the main menu. Choose **Start Game**, set up the player list (Up/Down select a slot, Right cycles AI → KEY 0 → KEY 1 → OFF, Left switches a slot off), press Enter, then choose level, scheme and wins (Left/Right) and press Enter to play. By default player 1 uses the first key set and player 2 is a computer player, as in the original. Options, About Bomberman, Online Manual and Exit work as well; the two network items do nothing. F1 opens the help pages from any screen.
 
 | | Move | Bomb | Action |
 |---|---|---|---|
-| KEY 0 | arrow keys | Space or Right Ctrl | Enter or Right Shift |
-| KEY 1 | W A S D | Tab or Left Ctrl | Q or Left Shift |
+| KEY 0 | arrow keys | Space | Enter |
+| KEY 1 | R (up) D (left) F (down) G (right) | S | A |
+
+These are the original's default keys. Change them under **Options → Define keyboard layouts**.
 
 Connected gamepads appear in the player list as `JOY n` (left stick or d-pad to move, A / cross to bomb, B or X / circle or square for the action). Gamepad support is untested: no controller was available.
 

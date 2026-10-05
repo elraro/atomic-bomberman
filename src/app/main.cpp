@@ -133,17 +133,53 @@ Options parseArgs(int argc, char** argv) {
     return o;
 }
 
-ab::PlayerInput keyboardInput(const bool* keys, int player) {
+// DirectInput key codes (PC scan codes), as stored in the original's key definitions,
+// and the SDL scancodes they correspond to.
+struct KeyPair {
+    int dik;
+    SDL_Scancode sdl;
+};
+constexpr KeyPair kKeyTable[] = {
+    {0x01, SDL_SCANCODE_ESCAPE}, {0x02, SDL_SCANCODE_1}, {0x03, SDL_SCANCODE_2}, {0x04, SDL_SCANCODE_3}, {0x05, SDL_SCANCODE_4},
+    {0x06, SDL_SCANCODE_5}, {0x07, SDL_SCANCODE_6}, {0x08, SDL_SCANCODE_7}, {0x09, SDL_SCANCODE_8}, {0x0A, SDL_SCANCODE_9},
+    {0x0B, SDL_SCANCODE_0}, {0x0C, SDL_SCANCODE_MINUS}, {0x0D, SDL_SCANCODE_EQUALS}, {0x0E, SDL_SCANCODE_BACKSPACE},
+    {0x0F, SDL_SCANCODE_TAB}, {0x10, SDL_SCANCODE_Q}, {0x11, SDL_SCANCODE_W}, {0x12, SDL_SCANCODE_E}, {0x13, SDL_SCANCODE_R},
+    {0x14, SDL_SCANCODE_T}, {0x15, SDL_SCANCODE_Y}, {0x16, SDL_SCANCODE_U}, {0x17, SDL_SCANCODE_I}, {0x18, SDL_SCANCODE_O},
+    {0x19, SDL_SCANCODE_P}, {0x1A, SDL_SCANCODE_LEFTBRACKET}, {0x1B, SDL_SCANCODE_RIGHTBRACKET}, {0x1C, SDL_SCANCODE_RETURN},
+    {0x1D, SDL_SCANCODE_LCTRL}, {0x1E, SDL_SCANCODE_A}, {0x1F, SDL_SCANCODE_S}, {0x20, SDL_SCANCODE_D}, {0x21, SDL_SCANCODE_F},
+    {0x22, SDL_SCANCODE_G}, {0x23, SDL_SCANCODE_H}, {0x24, SDL_SCANCODE_J}, {0x25, SDL_SCANCODE_K}, {0x26, SDL_SCANCODE_L},
+    {0x27, SDL_SCANCODE_SEMICOLON}, {0x28, SDL_SCANCODE_APOSTROPHE}, {0x29, SDL_SCANCODE_GRAVE}, {0x2A, SDL_SCANCODE_LSHIFT},
+    {0x2B, SDL_SCANCODE_BACKSLASH}, {0x2C, SDL_SCANCODE_Z}, {0x2D, SDL_SCANCODE_X}, {0x2E, SDL_SCANCODE_C}, {0x2F, SDL_SCANCODE_V},
+    {0x30, SDL_SCANCODE_B}, {0x31, SDL_SCANCODE_N}, {0x32, SDL_SCANCODE_M}, {0x33, SDL_SCANCODE_COMMA}, {0x34, SDL_SCANCODE_PERIOD},
+    {0x35, SDL_SCANCODE_SLASH}, {0x36, SDL_SCANCODE_RSHIFT}, {0x37, SDL_SCANCODE_KP_MULTIPLY}, {0x38, SDL_SCANCODE_LALT},
+    {0x39, SDL_SCANCODE_SPACE}, {0x3A, SDL_SCANCODE_CAPSLOCK}, {0x47, SDL_SCANCODE_KP_7}, {0x48, SDL_SCANCODE_KP_8},
+    {0x49, SDL_SCANCODE_KP_9}, {0x4A, SDL_SCANCODE_KP_MINUS}, {0x4B, SDL_SCANCODE_KP_4}, {0x4C, SDL_SCANCODE_KP_5},
+    {0x4D, SDL_SCANCODE_KP_6}, {0x4E, SDL_SCANCODE_KP_PLUS}, {0x4F, SDL_SCANCODE_KP_1}, {0x50, SDL_SCANCODE_KP_2},
+    {0x51, SDL_SCANCODE_KP_3}, {0x52, SDL_SCANCODE_KP_0}, {0x53, SDL_SCANCODE_KP_PERIOD}, {0x9C, SDL_SCANCODE_KP_ENTER},
+    {0x9D, SDL_SCANCODE_RCTRL}, {0xB5, SDL_SCANCODE_KP_DIVIDE}, {0xB8, SDL_SCANCODE_RALT}, {0xC7, SDL_SCANCODE_HOME},
+    {0xC8, SDL_SCANCODE_UP}, {0xC9, SDL_SCANCODE_PAGEUP}, {0xCB, SDL_SCANCODE_LEFT}, {0xCD, SDL_SCANCODE_RIGHT},
+    {0xCF, SDL_SCANCODE_END}, {0xD0, SDL_SCANCODE_DOWN}, {0xD1, SDL_SCANCODE_PAGEDOWN}, {0xD2, SDL_SCANCODE_INSERT},
+    {0xD3, SDL_SCANCODE_DELETE}};
+
+SDL_Scancode scancodeOfDik(int dik) {
+    for (const KeyPair& k : kKeyTable)
+        if (k.dik == dik) return k.sdl;
+    return SDL_SCANCODE_UNKNOWN;
+}
+
+int dikOfScancode(SDL_Scancode sc) {
+    for (const KeyPair& k : kKeyTable)
+        if (k.sdl == sc) return k.dik;
+    return 0;
+}
+
+// One of the two keyboard key sets: up, right, down, left, action 1, action 2.
+ab::PlayerInput keyboardInput(const bool* keys, const std::array<int, 6>& set) {
     ab::PlayerInput in;
-    if (player == 0) {
-        in.dir = {keys[SDL_SCANCODE_UP], keys[SDL_SCANCODE_RIGHT], keys[SDL_SCANCODE_DOWN], keys[SDL_SCANCODE_LEFT]};
-        in.button1 = keys[SDL_SCANCODE_SPACE] || keys[SDL_SCANCODE_RCTRL];
-        in.button2 = keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_RSHIFT];
-    } else if (player == 1) {
-        in.dir = {keys[SDL_SCANCODE_W], keys[SDL_SCANCODE_D], keys[SDL_SCANCODE_S], keys[SDL_SCANCODE_A]};
-        in.button1 = keys[SDL_SCANCODE_TAB] || keys[SDL_SCANCODE_LCTRL];
-        in.button2 = keys[SDL_SCANCODE_Q] || keys[SDL_SCANCODE_LSHIFT];
-    }
+    auto down = [&](int slot) { return keys[scancodeOfDik(set[static_cast<std::size_t>(slot)])]; };
+    in.dir = {down(0), down(1), down(2), down(3)};
+    in.button1 = down(4);
+    in.button2 = down(5);
     return in;
 }
 
@@ -250,8 +286,8 @@ const char* controlName(Control c) {
     }
 }
 
-constexpr int kOptionRows = 10;
-enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro };
+constexpr int kOptionRows = 11;
+enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys };
 
 // Level names, original messages 150-160.
 const char* const kLevelName[11] = {"Green Acres",   "Classic Green Acres", "The Hockey Rink",  "Ancient Egypt",
@@ -459,6 +495,8 @@ int main(int argc, char** argv) {
         Screen screen = haveMenu ? Screen::MainMenu : Screen::Match;
         int menuItem = 0;
         int optionRow = 0;
+        int keyRow = 0;
+        bool keyCapture = false;  // waiting for the new key of the selected action
         // Sample arena on the level screen (original 0x406AA3): 5 x 5 cells at (400,100)
         // (value 730). Each cell holds the level a tile is taken from, or -1 for none;
         // rebuilt whenever the level choice changes.
@@ -484,6 +522,7 @@ int main(int argc, char** argv) {
         if (opt.menuShot == 2) screen = Screen::PlayerList;
         if (opt.menuShot == 3) screen = Screen::LevelSetup;
         if (opt.menuShot == 4) screen = Screen::Options;
+        if (opt.menuShot == 7) screen = Screen::Keys;
         if (opt.menuShot == 5) openHelp("credits.bm", Screen::MainMenu);
         if (opt.menuShot == 6) openHelp("manual.bm", Screen::MainMenu);
 
@@ -916,6 +955,30 @@ int main(int argc, char** argv) {
                     if (key == SDLK_DOWN && n > 0) helpRow = (helpRow + 1) % n;
                     if (key == SDLK_RETURN && n > 0) openHelp(helpFiles[static_cast<std::size_t>(helpRow)], Screen::HelpList);
                     if (key == SDLK_ESCAPE) screen = helpListReturn;
+                } else if (screen == Screen::Keys) {
+                    // "Keyboard definitions" (messages 1100-1140): pick an action, press its new key.
+                    constexpr int kRows = 13;
+                    if (keyCapture) {
+                        keyCapture = false;
+                        const int dik = dikOfScancode(e.key.scancode);
+                        if (key != SDLK_ESCAPE && dik != 0) cfg.keys[static_cast<std::size_t>(keyRow / 6)][static_cast<std::size_t>(keyRow % 6)] = dik;
+                        else if (key != SDLK_ESCAPE && sound) audio.playRange(40, 49);
+                    } else {
+                        if (key == SDLK_UP) keyRow = (keyRow + kRows - 1) % kRows;
+                        if (key == SDLK_DOWN) keyRow = (keyRow + 1) % kRows;
+                        if (key == SDLK_RETURN || key == SDLK_SPACE) {
+                            if (keyRow < 12) {
+                                keyCapture = true;
+                            } else {
+                                cfg.resetKeys();
+                                showMessage({"NOTE!", "Default key controls restored"}, [&]() { screen = Screen::Keys; });  // message 1131
+                            }
+                        }
+                        if (key == SDLK_ESCAPE) {
+                            saveSettings();
+                            screen = Screen::Options;
+                        }
+                    }
                 } else if (screen == Screen::Options) {
                     // The original's settings screen (0x4080DC), without its network, keyboard-layout,
                     // memory and audio-adjustment rows.
@@ -934,7 +997,14 @@ int main(int argc, char** argv) {
                             case 6: cfg.enclosementDepth = (cfg.enclosementDepth + d + 4) % 4; break;
                             case 7: cfg.playTime = ab::Settings::nextPlayTime(cfg.playTime, d); break;
                             case 8: cfg.diseasesDestroyable = !cfg.diseasesDestroyable; break;
-                            default: cfg.disableGameMusic = !cfg.disableGameMusic; break;
+                            case 9: cfg.disableGameMusic = !cfg.disableGameMusic; break;
+                            default:
+                                if (key != SDLK_LEFT) {
+                                    screen = Screen::Keys;
+                                    keyRow = 0;
+                                    keyCapture = false;
+                                }
+                                break;
                         }
                     }
                     if (key == SDLK_ESCAPE) {
@@ -998,8 +1068,8 @@ int main(int argc, char** argv) {
                     for (int i = 0; i < ab::kMaxPlayers; ++i) {
                         const Control c = control[static_cast<std::size_t>(i)];
                         if (c == Control::Ai) input[static_cast<std::size_t>(i)] = ai[static_cast<std::size_t>(i)].decide(world, i, kStepMs);
-                        if (c == Control::Key0) input[static_cast<std::size_t>(i)] = keyboardInput(keys, 0);
-                        if (c == Control::Key1) input[static_cast<std::size_t>(i)] = keyboardInput(keys, 1);
+                        if (c == Control::Key0) input[static_cast<std::size_t>(i)] = keyboardInput(keys, cfg.keys[0]);
+                        if (c == Control::Key1) input[static_cast<std::size_t>(i)] = keyboardInput(keys, cfg.keys[1]);
                         if (c >= Control::Pad0)
                             input[static_cast<std::size_t>(i)] = gamepadInput(pads[static_cast<std::size_t>(static_cast<int>(c) - static_cast<int>(Control::Pad0))]);
                     }
@@ -1261,6 +1331,31 @@ int main(int argc, char** argv) {
                 renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, 107.0f + 22.0f * static_cast<float>(helpRow));
                 renderer.text(*spritesPtr, "Up/Down: select   Enter: read   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
+            } else if (screen == Screen::Keys) {
+                static const char* const kAction[6] = {"Move Up", "Move Right", "Move Down", "Move Left", "Action 1", "Action 2"};  // 1120-1125
+                renderer.begin(w, h);
+                renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
+                renderer.quad(40, 30, 560, 380, 0.0f, 0.0f, 0.10f, 0.82f);
+                renderer.text(*spritesPtr, "Keyboard definitions", 55, 40, 1, 1, 1);  // message 1100
+                for (int r = 0; r < 13; ++r) {
+                    std::string line = "Return to default keys";  // message 1130
+                    if (r < 12) {
+                        const int dik = cfg.keys[static_cast<std::size_t>(r / 6)][static_cast<std::size_t>(r % 6)];
+                        const char* name = SDL_GetScancodeName(scancodeOfDik(dik));
+                        line = "Key " + std::to_string(r / 6) + ", " + kAction[r % 6] + "    Key: '" + (name != nullptr ? name : "?") + "'";  // 1110, 1140
+                    }
+                    const bool on = r == keyRow;
+                    const float y = 70.0f + 22.0f * static_cast<float>(r) + (r >= 6 ? 12.0f : 0.0f) + (r >= 12 ? 12.0f : 0.0f);
+                    renderer.text(*spritesPtr, line, 80, y, on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
+                    if (on) renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, y + 15.0f);
+                }
+                if (keyCapture) {
+                    const std::string ask = std::string("Press key for '") + kAction[keyRow % 6] + "'";  // message 1105
+                    renderer.quad(140, 200, 360, 50, 0.1f, 0.1f, 0.3f, 0.95f);
+                    renderer.text(*spritesPtr, ask, 320.0f - renderer.textWidth(*spritesPtr, ask) / 2.0f, 216, 1.0f, 0.95f, 0.3f);
+                }
+                renderer.text(*spritesPtr, "Up/Down: select   Enter: change   Esc: done", 60, 440, 0.4f, 1.0f, 1.0f);
+                renderer.end();
             } else if (screen == Screen::Options) {
                 // Messages 250-263 with the original's value texts; rows from (55,40) every 22 px (value 745).
                 static const char* const kYesNo[2] = {"No", "Yes"};
@@ -1276,7 +1371,8 @@ int main(int argc, char** argv) {
                     std::string("Enclosement Depth: ") + kDepth[cfg.enclosementDepth],
                     "Play Time: " + ab::Settings::playTimeText(cfg.playTime),
                     std::string("Diseases Can Be Destroyed: ") + kYesNo[cfg.diseasesDestroyable],
-                    std::string("Disable music during gameplay: ") + kYesNo[cfg.disableGameMusic]};
+                    std::string("Disable music during gameplay: ") + kYesNo[cfg.disableGameMusic],
+                    "Define keyboard layouts"};
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
                 for (int r = 0; r < kOptionRows; ++r) {
