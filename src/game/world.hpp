@@ -185,6 +185,7 @@ struct Player {
     int score = 0;       // campaign points
     bool gold = false;   // won the roulette before this round (twinkles at the start)
     bool dying = false;  // death animation running
+    bool scattered = false;  // its powerups went back onto the field when the animation ended
     int dyingFrames = 0;
     int dyingAcc = 0;
 };

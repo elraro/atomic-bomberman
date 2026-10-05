@@ -1156,6 +1156,40 @@ void testBrickRegeneration() {
             if (f.w.tile({x, y}) == Tile::Brick) CHECK(x + y > 4 && (x - 1) + y > 4);
 }
 
+void testDeathScatter() {
+    Fixture f;                                          // pillars: an open field
+    f.place(0, {0, 0});
+    f.place(1, {14, 10});
+    Player& p = f.w.player(0);
+    p.inventory[kPowBomb] = 4;                          // 3 above the starting 1
+    p.inventory[kPowFlame] = 3;                         // 1 above the starting 2
+    p.inventory[kPowPunch] = 1;
+    p.inventory[kPowSkate] = 2;
+    f.w.setTile({0, 1}, Tile::Solid);
+    f.w.setTile({1, 0}, Tile::Solid);
+    f.press1(0);
+    f.run(45);
+    CHECK(!p.alive);
+    auto onField = [&](int type) {
+        int n = 0;
+        for (int y = 0; y < kGridH; ++y)
+            for (int x = 0; x < kGridW; ++x) {
+                const Powerup& pu = f.w.powerup({x, y});
+                n += pu.state == PowerupState::Revealed && pu.type == type ? 1 : 0;
+            }
+        return n;
+    };
+    CHECK_EQ(onField(kPowBomb), 0);                     // not before the animation has run
+    f.run(100);
+    CHECK_EQ(onField(kPowBomb), 3);
+    CHECK_EQ(onField(kPowFlame), 1);
+    CHECK_EQ(onField(kPowPunch), 1);
+    CHECK_EQ(onField(kPowSkate), 2);
+    CHECK_EQ(p.inventory[kPowBomb], 1);
+    f.run(50);
+    CHECK_EQ(onField(kPowBomb), 3);                     // once only
+}
+
 void testSettings() {
     Settings s;
     s.parse("levelno=4\nnum_to_win_match=3\nenclosement_depth=9\nconveyor_speed=2\nteam_play=1\nrandom_start=1\n"
@@ -1684,6 +1718,7 @@ int main() {
         {"trapped animation", testTrappedAnimation},
         {"roulette", testRoulette},
         {"settings", testSettings},
+        {"death scatter", testDeathScatter},
         {"ice delay", testIceDelay},
         {"brick regeneration", testBrickRegeneration},
         {"sound events", testSoundEvents},

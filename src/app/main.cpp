@@ -225,7 +225,12 @@ void playEvents(ab::World& world, ab::Audio& audio) {
             case ab::EventKind::BombExploded: audio.playSeries(200); break;
             case ab::EventKind::WallBlock: audio.playRange(140, 142); break;  // one of three, fixed in the original
             case ab::EventKind::Hurry: audio.playSeries(2700); break;
-            case ab::EventKind::PlayerDied: audio.playSeries(300); break;
+            case ab::EventKind::PlayerDied:
+                audio.playSeries(300);
+                // Plus the sound that belongs to the death animation chosen (340 + its number,
+                // original 0x41DDD9); the shipped list defines only 341.
+                if (e.player >= 0) audio.playRange(340 + world.player(e.player).deathAnim, 340 + world.player(e.player).deathAnim);
+                break;
             case ab::EventKind::HeadHit: audio.playSeries(360); break;
             case ab::EventKind::Pickup: audio.playSeries(400); break;
             case ab::EventKind::PickupJelly: audio.playSeries(135); break;

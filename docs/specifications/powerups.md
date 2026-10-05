@@ -66,3 +66,7 @@ Chosen uniformly from 9. Each lasts V(130+i) [300] frames = 15 s; a player's dis
 | 8 | Reversed directions |
 
 Effects [S]; the mapping of numbers to the names used in the game's text is not established. [?]
+
+## A dead player's powerups
+
+When a player's death animation has finished, everything the player held beyond the starting amounts is put back on the field as collectable powerups on random blank cells free of bombs, powerups and players: one each of punch, grab, spooge, trigger and jelly if held, and one per extra item of every other kind (bombs, flames, skates, kicker, goldflame, clogs). [S] (`0x41DBFE`, called at `0x41F4B5`.)

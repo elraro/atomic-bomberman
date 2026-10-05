@@ -573,3 +573,11 @@ Confidence: HIGH (static). All implemented in the application; in attract mode a
 - `kface <dir>` is drawn above the player whose index is in `0x45BE3C`; that is set from a joystick button combination in the input code (`0x41E7D2`) and looks like a developers' joke (the picture is a programmer's face). Not implemented.
 - `teamring%u` is referenced only by the editor code (`0x402B77`).
 - Match keys (`0x42A48E`): Ctrl-Q leaves the match (winner -1, exit code 2); F1 help; Esc and Enter only end the attract demo; F10 and others are debug keys behind `0x413D01`; Alt-W sets `0x4646B4`, Alt-N calls `0x40C678`, Alt-D `0x413D45`, Ctrl-D `0x413BB0` (not read). Modern: Ctrl-Q added; Esc also leaves (kept); P/N/R are modern conveniences.
+
+### Discovery: powerups of a dead player, level rules, death sounds
+
+- `0x41DBFE` (end of the death animation, `0x41F4B5`): for types 0-14, inventory above value `50 + type` is scattered with `Powerup_RespawnOnRandomCell`; types 5, 6, 7, 9, 10 (`0x425C10`) give one powerup, the others one per extra item. Not done for network-controlled players. This rule was missing from the earlier notes and from the modern game until now.
+- Death (`0x41DDCF`): sound 300, then `0x4278F2(340 + death animation number)`; only id 341 exists in `soundlst.res`.
+- Ice delay and brick regeneration (documented in sessions 3-4) are now implemented; value 324 (extra random dud frames) has no reader in the executable.
+
+Confidence: HIGH (static).

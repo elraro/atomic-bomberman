@@ -902,6 +902,24 @@ void World::updatePlayers(int dt, const std::array<PlayerInput, kMaxPlayers>& in
                 ++p.dyingFrames;
                 p.dyingAcc -= frameMs_;
             }
+            // When the death animation has run, everything the player held beyond the
+            // starting amounts goes back onto the field as collectable powerups (original
+            // 0x41DBFE): one each of punch, grab, spooge, trigger and jelly, and one per
+            // extra item of the other kinds.
+            if (!p.scattered && p.dyingFrames >= kDeathFrames[static_cast<std::size_t>(std::clamp(p.deathAnim, 1, 24) - 1)]) {
+                p.scattered = true;
+                for (int type = 0; type < kPowTypeCount; ++type) {
+                    int& have = p.inventory[static_cast<std::size_t>(type)];
+                    const int start = values_.has(vid::kStartInventory + type) ? values_.get(vid::kStartInventory + type) : 0;
+                    const bool single = type == kPowPunch || type == kPowGrab || type == kPowSpooge || type == kPowTrigger || type == kPowJelly;
+                    if (single) {
+                        if (have > start) scatterPowerup(type);
+                        have = std::min(have, start);
+                    } else {
+                        for (; have > start; --have) scatterPowerup(type);
+                    }
+                }
+            }
         }
         // Campaign: a human whose death animation has run comes back at the start cell while
         // a life is left; a new life is granted as long as the clock is not in its last
@@ -911,6 +929,7 @@ void World::updatePlayers(int dt, const std::array<PlayerInput, kMaxPlayers>& in
             --p.lives;
             p.alive = true;
             p.dying = false;
+            p.scattered = false;
             p.dyingFrames = 0;
             p.dyingAcc = 0;
             p.special = Special::None;
