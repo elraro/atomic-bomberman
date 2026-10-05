@@ -150,10 +150,11 @@ jobs:
         run: |
           set -o pipefail
           if ! ctest --test-dir build --output-on-failure | tee test.log; then
-            grep -E "FAIL|\*\*\*|Exception|Timeout" test.log | head -40 | while read -r line; do echo "::error::$line"; done
-            # A crash leaves nothing in the log: run the test programs again in the debugger for the call stack.
+            grep -E "FAIL|\*\*\*|Exception|Timeout" test.log | head -6 | while read -r line; do echo "::error::$line"; done
+            # A crash leaves nothing in the log: run the test programs again in the debugger for the
+            # call stack (a step shows ten annotations at most, so only the innermost calls).
             for program in ab_tests ab_net_tests; do
-              lldb -b -o run -o "bt 25" -o "thread list" "build/$program" 2>&1 | grep -E "stop reason|frame #|^ok |^FAIL|thread #" | tail -45 | while read -r line; do echo "::error::$program: $line"; done
+              lldb -b -o run -o "bt 25" -o "thread list" "build/$program" 2>&1 | grep -E "stop reason|frame #" | head -9 | while read -r line; do echo "::error::$program: $line"; done
             done
             exit 1
           fi
