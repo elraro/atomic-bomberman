@@ -295,8 +295,9 @@ void Renderer::drawHud(const World& world, SpriteBank* bank, const std::array<in
             const Player& p = world.player(i);
             if (!p.present) continue;
             const float* c = kPlayerColor[world.displayColour(i)];  // team colour in team play
+            // In campaign mode message 39 "S:%u L:%u": points and lives.
             const std::string label = "S:" + std::to_string(wins != nullptr ? (*wins)[static_cast<std::size_t>(i)] : 0) +
-                                      " K:" + std::to_string(p.kills);
+                                      (world.campaign() ? " L:" + std::to_string(p.lives) : " K:" + std::to_string(p.kills));
             const float lx = 10.0f + static_cast<float>(i / 2) * 100.0f;
             const float ly = 6.0f + static_cast<float>(i & 1) * 20.0f;
             const bool dark = c[0] + c[1] + c[2] < 1.0f;

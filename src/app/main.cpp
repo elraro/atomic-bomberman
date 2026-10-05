@@ -1456,6 +1456,15 @@ int main(int argc, char** argv) {
                     renderer.text(*spritesPtr, line, 70, y, colour[i][0], colour[i][1], colour[i][2]);
                 }
                 renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 56.0f, 185.0f + 24.0f * static_cast<float>(listRow));
+                // Messages 40-42 at the original's positions (values 715, 720).
+                renderer.text(*spritesPtr, "Available Joysticks:", 301, 141, 0, 0, 0);
+                renderer.text(*spritesPtr, "Available Joysticks:", 300, 140, 1, 1, 1);
+                if (padCount == 0) renderer.text(*spritesPtr, "None Detected", 320, 170, 0.85f, 0.85f, 0.85f);
+                for (int j = 0; j < padCount; ++j) {
+                    const char* name = pads[static_cast<std::size_t>(j)] != nullptr ? SDL_GetGamepadName(pads[static_cast<std::size_t>(j)]) : nullptr;
+                    renderer.text(*spritesPtr, "Joy " + std::to_string(j) + " - " + (name != nullptr ? name : "?"), 320,
+                                  170.0f + 24.0f * static_cast<float>(j), 0.85f, 0.85f, 0.85f);
+                }
                 renderer.text(*spritesPtr, teamPlay ? "Up/Down: select   Left: off   Right: change   T: team   Enter: start" : "Up/Down: select   Left: off   Right: change   Enter: start", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             }
