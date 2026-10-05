@@ -358,7 +358,11 @@ void NetUi::key(unsigned key, bool ctrl) {
         client_.sendContinue();
         sound(10);
     }
-    if ((key == SDLK_ESCAPE || (key == SDLK_Q && ctrl)) && escape(now)) leave();
+    // Out of the match, not off the server: back to the lobby. (Esc twice there leaves the server.)
+    if ((key == SDLK_ESCAPE || (key == SDLK_Q && ctrl)) && escape(now)) {
+        escapeAt_ = 0;
+        client_.leaveMatch();
+    }
 }
 
 void NetUi::update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxLocalPlayers>& locals) {
@@ -574,7 +578,7 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
         std::string line;
         if (row == 0) {
             const net::ClientInfo* a = lobby.client(lobby.admin);
-            line = waiting ? "A match is being played" : admin ? "Start the match" : "Waiting for " + (a != nullptr ? a->name : std::string("the administrator"));
+            line = waiting ? (client_.sittingOut() ? "The match goes on without you" : "A match is being played") : admin ? "Start the match" : "Waiting for " + (a != nullptr ? a->name : std::string("the administrator"));
         } else {
             line = wrap(r, bank, optionText(lobby.settings, row - 1), 270).front();
         }
@@ -597,7 +601,7 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
     label(r, bank, typing + ((frame / 20) % 2 == 0 ? "_" : ""), 24, 430, 0.4f, 1.0f, 1.0f);
 
     const bool leaving = escapeAt_ != 0 && nowMs - escapeAt_ < 3000;
-    const std::string hint = leaving ? "Press Esc again to leave the game"
+    const std::string hint = leaving ? "Press Esc again to leave the server"
                              : admin ? "Type: chat  Arrows: settings  F2: start  F3/F4: team  F5/F6: players here  Esc"
                                      : "Type: chat   F3/F4: team   F5/F6: players at this computer   Esc: leave";
     label(r, bank, hint, 24, 458, 0.4f, 1.0f, 1.0f);
@@ -621,7 +625,7 @@ void NetUi::drawChat(Renderer& r, SpriteBank& bank, std::uint64_t nowMs) {
         while (r.textWidth(bank, typing) > 570 && typing.size() > 3) typing.erase(2, 1);
         label(r, bank, typing + "_", 28, bottom, 0.4f, 1.0f, 1.0f);
     }
-    if (escapeAt_ != 0 && nowMs - escapeAt_ < 3000) label(r, bank, "Press Esc again to leave the game", 180, 456, 1.0f, 0.95f, 0.3f);
+    if (escapeAt_ != 0 && nowMs - escapeAt_ < 3000) label(r, bank, "Press Esc again to go back to the lobby", 160, 456, 1.0f, 0.95f, 0.3f);
     else if (client_.seat() < 0 && client_.state() == State::Round) label(r, bank, "Watching - you play in the next match   T: chat", 150, 456, 0.8f, 0.8f, 0.8f);
 }
 

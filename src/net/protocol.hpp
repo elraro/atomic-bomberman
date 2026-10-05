@@ -29,7 +29,7 @@ inline constexpr std::uint8_t kServerSender = 255;
 inline constexpr int kMaxLocalPlayers = 4;  // players at one computer
 
 // Key is the one message sent unencrypted in each direction (and Reject, when the versions differ).
-enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, UdpState, NeedState, Continue, Pong, Locals, Ban, Unban, Admin, Login, KeyExchange = 100 };
+enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, UdpState, NeedState, Continue, Pong, Locals, Ban, Unban, Admin, Login, LeaveMatch, KeyExchange = 100 };
 enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Steps, RoundEnd, Snapshot, Ping, Roulette, KeyExchange = 100 };
 // A datagram of a connection: its contents are encrypted. Searches on the LAN stay in the clear.
 inline constexpr std::uint8_t kSealedDatagram = 0x80;

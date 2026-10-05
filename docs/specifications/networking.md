@@ -112,6 +112,7 @@ Client to server:
 | Ban | `u8` client id | Administrator. |
 | Admin | `u8` client id | Administrator: hand the role over. |
 | Login | text | The administrator password. |
+| LeaveMatch | | Back to the lobby for the rest of this match. |
 | Unban | address | Administrator. |
 | Chat | text | |
 | Option | `u8` option, `i8` direction | Administrator: change a match setting one step left or right. The server knows the choices (e.g. the scheme list). |
@@ -171,6 +172,7 @@ Phases: **Lobby** → **Round** → **Result** → (next round, or Lobby when th
 - Roulette ("gold bomberman" on): the winner of a match is remembered; when the next match starts the server spins the wheel and sends its seed, so that everybody sees the same wheel turn and stop (the key is "pressed" for the gold player after two seconds); it then announces the prize in the chat, and that player (every member of that team) starts each round of the match with one more of that powerup, as in the local game.
 - Campaign: with one of the server's campaign files chosen, Start plays its stages in order, everybody together against the stage's enemies. Each stage sets level, arena, enemies and its own number of computer players (the lobby's are left out); team play is off; one human is enough. A cleared stage leads to the next; a stage lost by the clock too; a stage lost because no human was left is played again. After the last stage, or when every human has left, the lobby returns.
 - A client that sends nothing for 15 s is dropped. Chat lines are cut to 120 characters, names to 16.
+- A player can go back to the lobby during a match without leaving the server (Esc twice): the computer plays that player's seats until the match ends, the result screens do not wait for that player's key, and the player is in the next match as usual. When nobody is left playing, the match is over.
 - If the last human leaves during a match, the server returns to the lobby.
 
 The dedicated server reads the game data (tuning values, schemes, level extras) from an imported asset folder or an original game folder, as the game does; without one it serves the built-in arena with the default values. Clients need the same folder only for graphics and sound: everything that affects the rules comes from the server.

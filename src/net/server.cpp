@@ -54,6 +54,8 @@ struct Server::Peer {
     std::array<int, kMaxLocalPlayers> seats{-1, -1, -1, -1};  // one per player at that computer
     int wanted = 1;                // players at that computer
     bool seated() const { return seats[0] >= 0 || seats[1] >= 0 || seats[2] >= 0 || seats[3] >= 0; }
+    bool out = false;              // went back to the lobby during this match: its seats are played by the computer until it ends
+    bool playing() const { return seated() && !out; }
     int pingMs = 0;
     bool udpKnown = false;
     Address udpAddress{};
@@ -404,7 +406,7 @@ void Server::leave(Peer& p) {
         // A computer player takes the seat over until the match ends. With no human
         // left in a seat the match is abandoned.
         bool anyone = false;
-        for (auto& q : peers_) anyone = anyone || (q->joined && !q->gone && q->seated());
+        for (auto& q : peers_) anyone = anyone || (q->joined && !q->gone && q->playing());
         if (!anyone) toLobby();
     }
     lobbyDirty_ = true;
@@ -615,6 +617,18 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
             if (&p != admin() || target == nullptr || target == &p) break;
             tell(p, target->name + "'s address is " + target->host + " (to lift the ban: /unban " + target->host + ")");
             remove(*target, true, "the administrator");
+            break;
+        }
+        case ClientMsg::LeaveMatch: {
+            // Back to the lobby without leaving the server: the match goes on for the others
+            // with the computer in this player's seats; with nobody left playing it is over.
+            if (phase_ == Phase::Lobby || p.out) break;
+            p.out = true;
+            if (p.seated()) say(p.name + " has gone back to the lobby");
+            bool anyone = false;
+            for (auto& q : peers_) anyone = anyone || (q->joined && !q->gone && q->playing());
+            if (!anyone) toLobby();
+            lobbyDirty_ = true;
             break;
         }
         case ClientMsg::Admin: {
@@ -967,7 +981,7 @@ void Server::startRound() {
     lobbyDirty_ = true;
     broadcast(ServerMsg::RoundStart, roundStart_);
     for (auto& p : peers_)
-        if (p->joined && !p->gone) sendSnapshot(*p);  // where the round begins, as far as a player may know
+        if (p->joined && !p->gone && !p->out) sendSnapshot(*p);  // where the round begins, as far as a player may know
     if (campaignMode_) say("Stage " + std::to_string(start.stage) + " of " + std::to_string(start.stages) + ": " + start.stageName);
     log("INFO  Round " + std::to_string(roundId_) + " started seed=" + std::to_string(seed) + (campaignMode_ ? " stage=\"" + start.stageName + "\"" : ""));
 }
@@ -988,6 +1002,7 @@ void Server::stepRound() {
             if (!world_->player(s).present) continue;
             int local = 0;
             const Peer* human = roundKind_[i] == SeatKind::Human ? peerAtSeat(s, &local) : nullptr;
+            if (human != nullptr && human->out) human = nullptr;  // back in the lobby: the computer plays the seat
             bytes[i] = human != nullptr ? human->input[static_cast<std::size_t>(local)] : packInput(ai_[i].decide(*world_, s, kStepMs));
             input[i] = unpackInput(bytes[i]);
         }
@@ -1007,7 +1022,7 @@ void Server::stepRound() {
     }
     if (ran > 0)
         for (auto& p : peers_)
-            if (p->joined && !p->gone) sendSteps(*p);
+            if (p->joined && !p->gone && !p->out) sendSteps(*p);
 }
 
 void Server::sendSteps(Peer& p) {
@@ -1083,6 +1098,7 @@ void Server::endRound() {
 
 void Server::toLobby() {
     phase_ = Phase::Lobby;
+    for (auto& p : peers_) p->out = false;
     campaignMode_ = false;
     world_.reset();
     history_.clear();
@@ -1166,11 +1182,11 @@ void Server::update(std::uint64_t nowMs) {
         if (now_ - resendAt_ >= 100) {
             resendAt_ = now_;
             for (auto& p : peers_)
-                if (p->joined && p->udpOn && p->ackRound == roundId_ && p->ackStep < history_.size()) sendSteps(*p);
+                if (p->joined && !p->out && p->udpOn && p->ackRound == roundId_ && p->ackStep < history_.size()) sendSteps(*p);
         }
         bool everyone = true, anyone = false;
         for (auto& p : peers_)
-            if (p->joined && p->seated()) {
+            if (p->joined && p->playing()) {
                 anyone = true;
                 everyone = everyone && p->wantsContinue;
             }

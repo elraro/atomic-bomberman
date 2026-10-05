@@ -123,7 +123,7 @@ This is a **new** network mode, not the original's (which used IPX and serial li
 
 **Lobby.** Seats and ping times on the left, the match settings on the right, the chat below. Just type to chat. The administrator (marked `*`, the player who has been there longest) changes the settings with the arrow keys and starts with `F2` or Enter on *Start the match*; `/kick NAME` or `/ban NAME` in the chat removes a player. `F3` changes your team. `F5` adds another player at your computer (the second uses the second key set; each can use a gamepad), `F6` removes one, `F4` changes the second one's team. The settings include the roulette ("Gold Bomberman": everybody watches the wheel before the match) and a **campaign** to play together against rovers and ghosts. `Esc` twice leaves.
 
-**In the match** you play with the first key set (arrows, Space, Enter by default) or the first gamepad. `T` opens the chat line, `Esc` twice (or `Ctrl-Q` twice) leaves; a computer player takes over the seat of someone who leaves. Whoever connects during a match watches it and gets a seat when it ends.
+**In the match** you play with the first key set (arrows, Space, Enter by default) or the first gamepad. `T` opens the chat line. `Esc` twice (or `Ctrl-Q` twice) takes you back to the lobby: you stay on the server, a computer player takes over your seat until the match ends, and you are in the next one; `Esc` twice in the lobby leaves the server. Whoever connects during a match watches it and gets a seat when it ends.
 
 **Dedicated server.** `atomic_server` is the same server without a window; it needs no graphics and no SDL:
 

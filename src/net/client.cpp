@@ -63,6 +63,7 @@ void Client::connect(const std::string& address, const std::string& name, const 
     password_ = password;
     connectAt_ = nowMs;
     helloSent_ = false;
+    satOut_ = false;
     keyed_ = false;
     udpSent_ = udpReceived_ = 0;
     welcomed_ = false;
@@ -137,6 +138,18 @@ void Client::sendKick(std::uint8_t id) {
     ByteWriter w;
     w.u8(id);
     socket_.send(static_cast<std::uint8_t>(ClientMsg::Kick), w.data());
+}
+
+void Client::leaveMatch() {
+    if (state_ != State::Round && state_ != State::Result) return;
+    socket_.send(static_cast<std::uint8_t>(ClientMsg::LeaveMatch), {});
+    satOut_ = true;
+    world_.reset();
+    predicted_.reset();
+    predictedValid_ = false;
+    queue_.clear();
+    rouletteOn_ = false;
+    state_ = State::Lobby;
 }
 
 void Client::sendBan(std::uint8_t id) {
@@ -216,6 +229,11 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
     // that, a second key message means nothing.
     if (!keyed_ && viaRelay_ && static_cast<RelayMsg>(type) == RelayMsg::Refuse) return fail(cleanText(r.text(256), 200));
     if (!keyed_ && static_cast<ServerMsg>(type) != ServerMsg::KeyExchange && static_cast<ServerMsg>(type) != ServerMsg::Reject) return fail("Bad answer from the server");
+    // Having gone back to the lobby, the rest of the match is none of this client's business.
+    if (satOut_ && (static_cast<ServerMsg>(type) == ServerMsg::RoundStart || static_cast<ServerMsg>(type) == ServerMsg::Steps ||
+                    static_cast<ServerMsg>(type) == ServerMsg::Snapshot || static_cast<ServerMsg>(type) == ServerMsg::RoundEnd ||
+                    static_cast<ServerMsg>(type) == ServerMsg::Roulette))
+        return;
     switch (static_cast<ServerMsg>(type)) {
         case ServerMsg::KeyExchange: {
             if (keyed_) break;
@@ -269,7 +287,7 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             LobbyState m;
             if (!decode(r, m)) break;
             lobby_ = std::move(m);
-            if (lobby_.phase == Phase::Lobby) rouletteOn_ = false;
+            if (lobby_.phase == Phase::Lobby) rouletteOn_ = false, satOut_ = false;
             if (lobby_.phase == Phase::Lobby && (state_ == State::Round || state_ == State::Result)) {
                 world_.reset();
                 predicted_.reset();

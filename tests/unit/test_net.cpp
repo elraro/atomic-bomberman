@@ -655,6 +655,58 @@ void testUpnp() {
     CHECK(!nobody.ok && !nobody.message.empty());
 }
 
+// Out of a match but not off the server: back to the lobby, the computer plays the seat,
+// and the next match is joined as usual.
+void testBackToLobby() {
+    Harness h;
+    CHECK(h.start("", 1));
+    Client& ann = h.join("Ann");
+    Client& bob = h.join("Bob");
+    CHECK(h.until([&] { return ann.lobby().clients.size() == 2 && bob.state() == Client::State::Lobby; }));
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.stepsApplied() > 40 && bob.stepsApplied() > 40; }));
+    ann.leaveMatch();
+    CHECK(ann.state() == Client::State::Lobby && ann.sittingOut() && ann.world() == nullptr);
+    h.spin(500);
+    // Still connected, still in her seat for the next match; the match goes on.
+    CHECK_EQ(h.server.players(), 2);
+    CHECK(h.server.phase() == Phase::Round);
+    CHECK(ann.state() == Client::State::Lobby);
+    CHECK(ann.lobby().phase != Phase::Lobby && ann.seat() == 0);
+    bool said = false;
+    for (const ChatLine& line : bob.chat()) said = said || line.text == "Ann has gone back to the lobby";
+    CHECK(said);
+    // She can still talk.
+    ann.sendChat("good luck");
+    CHECK(h.until([&] {
+        for (const ChatLine& line : bob.chat())
+            if (line.name == "Ann" && line.text == "good luck") return true;
+        return false;
+    }));
+    // The others play the match to its end (rounds until somebody has won), Ann's seat in
+    // the computer's hands; she is not sent into the rounds in between.
+    for (int rounds = 0; rounds < 30 && bob.state() != Client::State::Lobby; ++rounds) {
+        CHECK(playToResult(h, {&bob}));
+        CHECK(ann.state() == Client::State::Lobby);
+        CHECK_EQ(bob.world()->stateHash(true), h.server.world()->stateHash(true));
+        const bool decided = bob.score().matchWinner >= 0;
+        const std::uint32_t round = bob.roundId();
+        bob.sendContinue();  // Ann's key is not waited for
+        if (decided) CHECK(h.until([&] { return bob.state() == Client::State::Lobby; }, 5000));
+        else CHECK(h.until([&] { return bob.state() == Client::State::Round && bob.roundId() == round + 1; }, 5000));
+    }
+    CHECK(h.until([&] { return h.server.phase() == Phase::Lobby && ann.lobby().phase == Phase::Lobby && !ann.sittingOut(); }));
+    // The next match has her in it again.
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round && ann.stepsApplied() > 20; }));
+    // When everybody goes back to the lobby the match is over.
+    ann.leaveMatch();
+    bob.leaveMatch();
+    CHECK(h.until([&] { return h.server.phase() == Phase::Lobby && ann.lobby().phase == Phase::Lobby && bob.lobby().phase == Phase::Lobby; }));
+    CHECK_EQ(h.server.players(), 2);
+    CHECK(!ann.sittingOut() && !bob.sittingOut());
+}
+
 // Two players at one computer: two seats, two inputs, both predicted.
 void testTwoPlayersOneComputer() {
     Harness h;
@@ -1356,6 +1408,7 @@ int main() {
         {"leave during round", testLeaveDuringRound},
         {"udp loss", testUdpLoss},
         {"prediction", testPrediction},
+        {"back to the lobby", testBackToLobby},
         {"two players at one computer", testTwoPlayersOneComputer},
         {"roulette prize", testNetRoulette},
         {"campaign", testNetCampaign},

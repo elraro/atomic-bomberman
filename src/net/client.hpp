@@ -89,6 +89,10 @@ public:
     void sendAdmin(std::uint8_t id);             // administrator: hand the role to that player
     void sendLogin(const std::string& password); // become administrator with the server's administrator password
     void sendContinue();
+    // Back to the lobby from a match, staying on the server. The match goes on for the
+    // others (the computer plays this player's seats); this client rejoins at the next one.
+    void leaveMatch();
+    bool sittingOut() const { return satOut_; }
 
     // Client-side prediction (on by default): the picture runs a few steps ahead of what the
     // server has confirmed, with this player's own keys applied at once, so moving does not
@@ -175,6 +179,7 @@ private:
     RouletteMsg roulette_;
     bool rouletteOn_ = false;
     std::uint64_t rouletteAt_ = 0;
+    bool satOut_ = false;            // went back to the lobby: the rest of this match is not followed
     bool ended_ = false;             // RoundEnd received for this round
     std::unique_ptr<World> world_;
     std::deque<Step> queue_;         // received, not yet applied
