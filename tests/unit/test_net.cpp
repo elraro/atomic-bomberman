@@ -169,6 +169,14 @@ void testCodec() {
     CHECK(resolveHostPort("127.0.0.1", 5)->port == 5);
     CHECK(resolveHostPort("127.0.0.1:1234", 5)->port == 1234);
     CHECK(resolveHostPort("127.0.0.1", 5)->ip == kLoopback);
+    // IPv6 literals, with and without brackets and port.
+    const auto six = resolveHostPort("[::1]:99", 5);
+    CHECK(six && six->v6 && six->port == 99 && six->loopback() && six->text() == "[::1]:99");
+    CHECK(resolveHostPort("::1", 5) && resolveHostPort("::1", 5)->v6 && resolveHostPort("::1", 5)->port == 5);
+    CHECK(resolveHostPort("[::1]", 7) && resolveHostPort("[::1]", 7)->port == 7);
+    CHECK(resolveHostPort("[::1", 7) == std::nullopt);
+    CHECK(resolveHostPort("[::1]x", 7) == std::nullopt);
+    CHECK(!resolveHostPort("127.0.0.1", 5)->v6 && resolveHostPort("127.0.0.1", 5)->loopback());
 }
 
 // A server and its clients on one simulated clock.
@@ -515,6 +523,28 @@ void testPrediction() {
     CHECK_EQ(ann.snapshotsLoaded(), 0);
 }
 
+// One server, a client over IPv6 and one over IPv4, in the same round.
+void testIpv6() {
+    Harness h;
+    CHECK(h.start("", 1));
+    h.clients.push_back(std::make_unique<Client>());
+    Client& six = *h.clients.back();
+    six.connect("[::1]:" + std::to_string(h.server.port()), "Six", "", h.now);
+    h.until([&] { return six.state() == Client::State::Lobby || six.state() == Client::State::Failed; });
+    if (six.state() == Client::State::Failed) {
+        // A machine without IPv6 (some build containers): nothing to test here.
+        std::printf("     skipped: no IPv6 on this machine (%s)\n", six.error().c_str());
+        return;
+    }
+    Client& four = h.join("Four");
+    CHECK(h.until([&] { return four.state() == Client::State::Lobby && six.lobby().clients.size() == 2 && six.udpActive() && four.udpActive(); }));
+    six.sendStart();
+    CHECK(h.until([&] { return six.stepsApplied() > 60 && four.stepsApplied() > 60; }));
+    CHECK(six.udpActive() && four.udpActive());
+    CHECK(h.until([&] { return six.stepsApplied() == h.server.steps() && four.stepsApplied() == h.server.steps(); }, 3000));
+    CHECK_EQ(six.snapshotsLoaded() + four.snapshotsLoaded(), 0);
+}
+
 // The network keys of the settings file.
 void testNetSettings() {
     Settings s;
@@ -586,6 +616,7 @@ int main() {
         {"leave during round", testLeaveDuringRound},
         {"udp loss", testUdpLoss},
         {"prediction", testPrediction},
+        {"ipv6 and ipv4 together", testIpv6},
         {"settings keys", testNetSettings},
         {"lan answer", testLanBrowser},
     };

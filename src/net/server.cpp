@@ -56,7 +56,7 @@ bool Server::start(const ServerConfig& config) {
         error_ = "Cannot listen on TCP port " + std::to_string(config.port);
         return false;
     }
-    if (!udp_.open(listener_.port())) {
+    if (!udp_.open(listener_.port(), false, false, true)) {
         // Not fatal: clients fall back to TCP; the server just cannot be found on the LAN.
         log("WARN  UDP port " + std::to_string(listener_.port()) + " is not available: TCP only, no LAN discovery");
     }

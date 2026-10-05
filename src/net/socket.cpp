@@ -61,25 +61,88 @@ void setOption(std::intptr_t h, int level, int name, int value) {
     setsockopt(native(h), level, name, reinterpret_cast<const char*>(&value), sizeof value);
 }
 
-sockaddr_in toSockaddr(const Address& a) {
-    sockaddr_in sa{};
-    sa.sin_family = AF_INET;
-    sa.sin_addr.s_addr = htonl(a.ip);
-    sa.sin_port = htons(a.port);
-    return sa;
+// An address as the socket layer wants it. On a socket for both families an IPv4
+// address is written in its IPv6 form (::ffff:a.b.c.d).
+struct Native {
+    sockaddr_storage storage{};
+    SockLen length = 0;
+    const sockaddr* get() const { return reinterpret_cast<const sockaddr*>(&storage); }
+};
+
+Native toNative(const Address& a, bool socketIsV6) {
+    Native n;
+    if (!a.v6 && !socketIsV6) {
+        auto* sa = reinterpret_cast<sockaddr_in*>(&n.storage);
+        sa->sin_family = AF_INET;
+        sa->sin_addr.s_addr = htonl(a.ip);
+        sa->sin_port = htons(a.port);
+        n.length = sizeof(sockaddr_in);
+        return n;
+    }
+    auto* sa = reinterpret_cast<sockaddr_in6*>(&n.storage);
+    sa->sin6_family = AF_INET6;
+    sa->sin6_port = htons(a.port);
+    if (a.v6) {
+        std::memcpy(&sa->sin6_addr, a.ip6.data(), 16);
+    } else {
+        std::uint8_t mapped[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, static_cast<std::uint8_t>(a.ip >> 24), static_cast<std::uint8_t>(a.ip >> 16),
+                                   static_cast<std::uint8_t>(a.ip >> 8), static_cast<std::uint8_t>(a.ip)};
+        std::memcpy(&sa->sin6_addr, mapped, 16);
+    }
+    n.length = sizeof(sockaddr_in6);
+    return n;
 }
 
-Address fromSockaddr(const sockaddr_in& sa) { return {ntohl(sa.sin_addr.s_addr), ntohs(sa.sin_port)}; }
+Address fromNative(const sockaddr_storage& storage) {
+    Address a;
+    if (storage.ss_family == AF_INET) {
+        const auto* sa = reinterpret_cast<const sockaddr_in*>(&storage);
+        a.ip = ntohl(sa->sin_addr.s_addr);
+        a.port = ntohs(sa->sin_port);
+        return a;
+    }
+    const auto* sa = reinterpret_cast<const sockaddr_in6*>(&storage);
+    a.port = ntohs(sa->sin6_port);
+    std::uint8_t bytes[16];
+    std::memcpy(bytes, &sa->sin6_addr, 16);
+    static const std::uint8_t kMapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF};
+    if (std::memcmp(bytes, kMapped, 12) == 0) {  // an IPv4 peer seen through a socket for both
+        a.ip = (static_cast<std::uint32_t>(bytes[12]) << 24) | (static_cast<std::uint32_t>(bytes[13]) << 16) |
+               (static_cast<std::uint32_t>(bytes[14]) << 8) | bytes[15];
+        return a;
+    }
+    a.v6 = true;
+    std::memcpy(a.ip6.data(), bytes, 16);
+    return a;
+}
 
 std::uint16_t boundPort(std::intptr_t h) {
-    sockaddr_in sa{};
+    sockaddr_storage sa{};
     SockLen len = sizeof sa;
     if (getsockname(native(h), reinterpret_cast<sockaddr*>(&sa), &len) != 0) return 0;
-    return ntohs(sa.sin_port);
+    return fromNative(sa).port;
 }
 
-std::intptr_t newSocket(int type) {
-    const NativeSocket s = ::socket(AF_INET, type, 0);
+std::intptr_t newSocket(int type, int family = AF_INET);
+
+// A socket bound to the port for IPv6 and IPv4 together; -1 if the system will not do that.
+std::intptr_t boundDual(int type, std::uint16_t port, bool reuse) {
+    const std::intptr_t h = newSocket(type, AF_INET6);
+    if (h == -1) return -1;
+    setOption(h, IPPROTO_IPV6, IPV6_V6ONLY, 0);
+    if (reuse) setOption(h, SOL_SOCKET, SO_REUSEADDR, 1);
+    sockaddr_in6 sa{};
+    sa.sin6_family = AF_INET6;
+    sa.sin6_port = htons(port);
+    if (::bind(native(h), reinterpret_cast<const sockaddr*>(&sa), sizeof sa) != 0) {
+        closeNative(h);
+        return -1;
+    }
+    return h;
+}
+
+std::intptr_t newSocket(int type, int family) {
+    const NativeSocket s = ::socket(family, type, 0);
 #ifdef _WIN32
     if (s == INVALID_SOCKET) return -1;
 #else
@@ -119,7 +182,19 @@ std::uint64_t clockMs() {
     return static_cast<std::uint64_t>(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
+bool Address::loopback() const {
+    static const std::uint8_t kOne[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+    return v6 ? std::memcmp(ip6.data(), kOne, 16) == 0 : (ip >> 24) == 127;
+}
+
 std::string Address::text() const {
+    if (v6) {
+        char buffer[64] = "";
+        in6_addr raw;
+        std::memcpy(&raw, ip6.data(), 16);
+        inet_ntop(AF_INET6, &raw, buffer, sizeof buffer);
+        return "[" + std::string(buffer) + "]:" + std::to_string(port);
+    }
     return std::to_string(ip >> 24) + "." + std::to_string((ip >> 16) & 255) + "." + std::to_string((ip >> 8) & 255) + "." +
            std::to_string(ip & 255) + ":" + std::to_string(port);
 }
@@ -127,11 +202,20 @@ std::string Address::text() const {
 std::optional<Address> resolve(const std::string& host, std::uint16_t port) {
     startup();
     addrinfo hints{};
-    hints.ai_family = AF_INET;
+    hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     addrinfo* list = nullptr;
     if (getaddrinfo(host.c_str(), nullptr, &hints, &list) != 0 || list == nullptr) return std::nullopt;
-    Address a = fromSockaddr(*reinterpret_cast<sockaddr_in*>(list->ai_addr));
+    const addrinfo* pick = nullptr;
+    for (const addrinfo* it = list; it != nullptr && pick == nullptr; it = it->ai_next)
+        if (it->ai_family == AF_INET || it->ai_family == AF_INET6) pick = it;
+    if (pick == nullptr) {
+        freeaddrinfo(list);
+        return std::nullopt;
+    }
+    sockaddr_storage storage{};
+    std::memcpy(&storage, pick->ai_addr, std::min<std::size_t>(sizeof storage, static_cast<std::size_t>(pick->ai_addrlen)));
+    Address a = fromNative(storage);
     a.port = port;
     freeaddrinfo(list);
     return a;
@@ -142,13 +226,28 @@ std::optional<Address> resolveHostPort(const std::string& text, std::uint16_t de
     std::uint16_t port = defaultPort;
     while (!host.empty() && (host.back() == ' ' || host.back() == '\t')) host.pop_back();
     while (!host.empty() && (host.front() == ' ' || host.front() == '\t')) host.erase(host.begin());
-    if (const auto colon = host.rfind(':'); colon != std::string::npos) {
-        const std::string digits = host.substr(colon + 1);
+    std::string portText;
+    bool havePort = false;
+    if (!host.empty() && host.front() == '[') {  // [IPv6 literal] or [IPv6 literal]:port
+        const auto close = host.find(']');
+        if (close == std::string::npos) return std::nullopt;
+        if (close + 1 < host.size()) {
+            if (host[close + 1] != ':') return std::nullopt;
+            portText = host.substr(close + 2);
+            havePort = true;
+        }
+        host = host.substr(1, close - 1);
+    } else if (const auto colon = host.rfind(':'); colon != std::string::npos && host.find(':') == colon) {  // one colon: host:port
+        portText = host.substr(colon + 1);
+        havePort = true;
+        host.resize(colon);
+    }
+    if (havePort) {
+        const std::string digits = portText;
         if (digits.empty() || digits.size() > 5 || digits.find_first_not_of("0123456789") != std::string::npos) return std::nullopt;
         const int value = std::stoi(digits);
         if (value < 1 || value > 65535) return std::nullopt;
         port = static_cast<std::uint16_t>(value);
-        host.resize(colon);
     }
     if (host.empty()) return std::nullopt;
     return resolve(host, port);
@@ -189,13 +288,13 @@ void TcpSocket::close() {
 bool TcpSocket::connect(const Address& to) {
     startup();
     close();
-    fd_ = newSocket(SOCK_STREAM);
+    fd_ = newSocket(SOCK_STREAM, to.v6 ? AF_INET6 : AF_INET);
     if (fd_ == kNone) return false;
     setNonBlocking(fd_);
     setOption(fd_, IPPROTO_TCP, TCP_NODELAY, 1);
     peer_ = to;
-    const sockaddr_in sa = toSockaddr(to);
-    if (::connect(native(fd_), reinterpret_cast<const sockaddr*>(&sa), sizeof sa) == 0) {
+    const Native sa = toNative(to, to.v6);
+    if (::connect(native(fd_), sa.get(), sa.length) == 0) {
         connected_ = true;
         return true;
     }
@@ -312,14 +411,24 @@ void TcpListener::close() {
 bool TcpListener::listen(std::uint16_t port) {
     startup();
     close();
-    fd_ = newSocket(SOCK_STREAM);
-    if (fd_ == -1) return false;
 #ifndef _WIN32
-    setOption(fd_, SOL_SOCKET, SO_REUSEADDR, 1);  // restart without waiting out old connections
+    const bool reuse = true;  // restart without waiting out old connections
+#else
+    const bool reuse = false;
 #endif
+    fd_ = boundDual(SOCK_STREAM, port, reuse);
+    if (fd_ == -1) {
+        fd_ = newSocket(SOCK_STREAM);
+        if (fd_ == -1) return false;
+        if (reuse) setOption(fd_, SOL_SOCKET, SO_REUSEADDR, 1);
+        const Native sa = toNative({0, port}, false);
+        if (::bind(native(fd_), sa.get(), sa.length) != 0) {
+            close();
+            return false;
+        }
+    }
     setNonBlocking(fd_);
-    const sockaddr_in sa = toSockaddr({0, port});
-    if (::bind(native(fd_), reinterpret_cast<const sockaddr*>(&sa), sizeof sa) != 0 || ::listen(native(fd_), 16) != 0) {
+    if (::listen(native(fd_), 16) != 0) {
         close();
         return false;
     }
@@ -329,7 +438,7 @@ bool TcpListener::listen(std::uint16_t port) {
 
 std::optional<TcpSocket> TcpListener::accept() {
     if (fd_ == -1) return std::nullopt;
-    sockaddr_in sa{};
+    sockaddr_storage sa{};
     SockLen len = sizeof sa;
     const NativeSocket s = ::accept(native(fd_), reinterpret_cast<sockaddr*>(&sa), &len);
 #ifdef _WIN32
@@ -340,7 +449,7 @@ std::optional<TcpSocket> TcpListener::accept() {
     TcpSocket socket;
     socket.fd_ = static_cast<std::intptr_t>(s);
     socket.connected_ = true;
-    socket.peer_ = fromSockaddr(sa);
+    socket.peer_ = fromNative(sa);
     setNonBlocking(socket.fd_);
     setOption(socket.fd_, IPPROTO_TCP, TCP_NODELAY, 1);
     return socket;
@@ -356,9 +465,19 @@ void UdpSocket::close() {
     port_ = 0;
 }
 
-bool UdpSocket::open(std::uint16_t port, bool broadcast, bool shared) {
+bool UdpSocket::open(std::uint16_t port, bool broadcast, bool shared, bool both) {
     startup();
     close();
+    v6_ = false;
+    if (both) {
+        fd_ = boundDual(SOCK_DGRAM, port, false);
+        if (fd_ != -1) {
+            v6_ = true;
+            setNonBlocking(fd_);
+            port_ = boundPort(fd_);
+            return true;
+        }
+    }
     fd_ = newSocket(SOCK_DGRAM);
     if (fd_ == -1) return false;
     setNonBlocking(fd_);
@@ -369,8 +488,8 @@ bool UdpSocket::open(std::uint16_t port, bool broadcast, bool shared) {
         setOption(fd_, SOL_SOCKET, SO_REUSEPORT, 1);
 #endif
     }
-    const sockaddr_in sa = toSockaddr({0, port});
-    if (::bind(native(fd_), reinterpret_cast<const sockaddr*>(&sa), sizeof sa) != 0) {
+    const Native sa = toNative({0, port}, false);
+    if (::bind(native(fd_), sa.get(), sa.length) != 0) {
         close();
         return false;
     }
@@ -384,25 +503,26 @@ bool UdpSocket::sendTo(const Address& to, const std::vector<std::uint8_t>& data)
         g_udpLossState = g_udpLossState * 1103515245u + 12345u;
         if (static_cast<int>((g_udpLossState >> 16) % 100u) < g_udpLossPercent) return true;  // "sent", and lost
     }
-    const sockaddr_in sa = toSockaddr(to);
+    if (to.v6 && !v6_) return false;  // an IPv6 address through an IPv4-only socket
+    const Native sa = toNative(to, v6_);
     const auto n = ::sendto(native(fd_), reinterpret_cast<const char*>(data.data()),
 #ifdef _WIN32
                             static_cast<int>(data.size()),
 #else
                             data.size(),
 #endif
-                            kSendFlags, reinterpret_cast<const sockaddr*>(&sa), sizeof sa);
+                            kSendFlags, sa.get(), sa.length);
     return static_cast<long long>(n) == static_cast<long long>(data.size());
 }
 
 bool UdpSocket::receiveFrom(Address& from, std::vector<std::uint8_t>& data) {
     if (fd_ == -1) return false;
     char buffer[2048];
-    sockaddr_in sa{};
+    sockaddr_storage sa{};
     SockLen len = sizeof sa;
     const auto n = ::recvfrom(native(fd_), buffer, sizeof buffer, 0, reinterpret_cast<sockaddr*>(&sa), &len);
     if (n < 0) return false;  // nothing waiting (or an ICMP error from an earlier send: ignored)
-    from = fromSockaddr(sa);
+    from = fromNative(sa);
     data.assign(buffer, buffer + n);
     return true;
 }

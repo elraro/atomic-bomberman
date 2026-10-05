@@ -1,7 +1,8 @@
-// Thin non-blocking TCP and UDP sockets (BSD sockets / Winsock), IPv4.
+// Thin non-blocking TCP and UDP sockets (BSD sockets / Winsock), IPv4 and IPv6.
 // Nothing here blocks except resolve(); everything is polled by its owner.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -19,18 +20,21 @@ void setTestUdpLoss(int percent);
 std::uint64_t clockMs();
 
 struct Address {
-    std::uint32_t ip = 0;    // host byte order
+    std::uint32_t ip = 0;    // IPv4, host byte order (unused for an IPv6 address)
     std::uint16_t port = 0;
+    bool v6 = false;
+    std::array<std::uint8_t, 16> ip6{};  // IPv6, network byte order
     friend bool operator==(const Address&, const Address&) = default;
-    std::string text() const;  // "a.b.c.d:port"
+    std::string text() const;  // "a.b.c.d:port" or "[x:x::x]:port"
+    bool loopback() const;
 };
 
 inline constexpr std::uint32_t kLoopback = 0x7F000001u;
 inline constexpr std::uint32_t kBroadcast = 0xFFFFFFFFu;
 
-// Name or dotted address to an IPv4 address. May block on a name lookup.
+// Name or literal address to an address (the first the system offers, IPv4 or IPv6). May block on a name lookup.
 std::optional<Address> resolve(const std::string& host, std::uint16_t port);
-// "host" or "host:port".
+// "host", "host:port", an IPv6 literal, or "[IPv6 literal]:port".
 std::optional<Address> resolveHostPort(const std::string& text, std::uint16_t defaultPort);
 
 // A TCP connection carrying frames: u32 length, u8 type, payload.
@@ -78,7 +82,9 @@ public:
     TcpListener(const TcpListener&) = delete;
     TcpListener& operator=(const TcpListener&) = delete;
 
-    bool listen(std::uint16_t port);  // 0: any free port
+    // 0: any free port. Listens for IPv6 and IPv4 together where the system allows it,
+    // for IPv4 alone otherwise.
+    bool listen(std::uint16_t port);
     void close();
     std::uint16_t port() const { return port_; }
     std::optional<TcpSocket> accept();
@@ -97,7 +103,8 @@ public:
 
     // 0: any free port. `shared`: several sockets on this machine may bind the port (each
     // gets a copy of a broadcast), used for the discovery port.
-    bool open(std::uint16_t port, bool broadcast = false, bool shared = false);
+    // `both`: one socket for IPv6 and IPv4 (falls back to IPv4 alone where that is not possible).
+    bool open(std::uint16_t port, bool broadcast = false, bool shared = false, bool both = false);
     void close();
     bool isOpen() const { return fd_ != -1; }
     std::uint16_t port() const { return port_; }
@@ -107,6 +114,7 @@ public:
 private:
     std::intptr_t fd_ = -1;
     std::uint16_t port_ = 0;
+    bool v6_ = false;
 };
 
 }  // namespace ab::net

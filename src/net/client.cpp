@@ -142,7 +142,7 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             serverName_ = m.serverName;
             welcomed_ = true;
             state_ = State::Lobby;
-            if (udpAllowed_) udp_.open(0);
+            if (udpAllowed_) udp_.open(0, false, false, server_.v6);
             break;
         }
         case ServerMsg::Reject: fail(r.text(256)); break;
@@ -447,16 +447,17 @@ void LanBrowser::update(std::uint64_t nowMs) {
         ServerInfo info;
         if (!decode(r, info)) continue;
         info.name = cleanText(info.name, 32);
-        const Address at{from.ip, info.port};
+        Address at = from;
+        at.port = info.port;
         // One machine may answer on several of its addresses: keep one line per server
         // name and port, preferring a non-loopback address.
         auto it = std::find_if(servers_.begin(), servers_.end(), [&](const Entry& e) {
-            return e.address == at || (e.info.name == info.name && e.info.port == info.port && ((e.address.ip >> 24) == 127 || (at.ip >> 24) == 127));
+            return e.address == at || (e.info.name == info.name && e.info.port == info.port && (e.address.loopback() || at.loopback()));
         });
         if (it == servers_.end()) {
             servers_.push_back({at, info, nowMs});
         } else {
-            if ((it->address.ip >> 24) == 127) it->address = at;
+            if (it->address.loopback()) it->address = at;
             it->info = info;
             it->seenAt = nowMs;
         }
