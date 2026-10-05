@@ -166,6 +166,7 @@ void NetUi::startHost() {
     config.settings.winByKills = cfg_.winByKills;
     config.settings.diseasesDestroyable = cfg_.diseasesDestroyable;
     config.settings.computers = 1;
+    config.upnp = true;  // a hosted game tries to open the router's port; the lobby says how it went
     config.log = [](const std::string& line) { std::fprintf(stderr, "%s\n", line.c_str()); };
     if (!server_.start(config)) {
         error_ = server_.error() + " (is a server already running on it?)";

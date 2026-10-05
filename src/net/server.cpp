@@ -88,6 +88,9 @@ bool Server::start(const ServerConfig& config) {
     rebuildSeats();
     refreshLobby();
     running_ = true;
+    mapperReported_ = false;
+    routerNotice_.clear();
+    if (config.upnp) mapper_.start(listener_.port(), "Atomic Bomberman");
     log("INFO  Server \"" + config.name + "\" listening port=" + std::to_string(listener_.port()) + " schemes=" +
         std::to_string(schemes_.size()) + (config.password.empty() ? "" : " password=yes"));
     return true;
@@ -99,6 +102,7 @@ void Server::stop() {
         if (p->joined) reject(*p, "The server has shut down");
     }
     peers_.clear();
+    mapper_.stop();
     listener_.close();
     udp_.close();
     discovery_.close();
@@ -307,6 +311,7 @@ void Server::handleHello(Peer& p, const std::vector<std::uint8_t>& payload) {
         if (phase_ == Phase::Result) p.socket.send(static_cast<std::uint8_t>(ServerMsg::RoundEnd), roundEnd_);
     }
     lobbyDirty_ = true;
+    if (!routerNotice_.empty()) tell(p, routerNotice_);
     say(p.name + " has joined" + (p.seat < 0 && phase_ != Phase::Lobby ? " (watching until the match ends)" : ""));
 }
 
@@ -693,6 +698,15 @@ void Server::update(std::uint64_t nowMs) {
         }
     }
 
+    if (mapper_.started() && mapper_.finished() && !mapperReported_) {
+        mapperReported_ = true;
+        const UpnpResult r = mapper_.result();
+        log(std::string(r.ok ? "INFO  " : "WARN  ") + "Router: " + r.message + (r.externalIp.empty() ? "" : "; public address " + r.externalIp));
+        routerNotice_ = r.ok ? "The router lets this game through" + (r.externalIp.empty() ? std::string() : ": others can join at " + r.externalIp + ":" + std::to_string(listener_.port()))
+                             : "The router did not open the port by itself (" + r.message + "). Players outside your network need port " +
+                                   std::to_string(listener_.port()) + " (TCP and UDP) forwarded by hand.";
+        say(routerNotice_);
+    }
     if (now_ - pingSentAt_ >= 1000) {
         pingSentAt_ = now_;
         ByteWriter w;

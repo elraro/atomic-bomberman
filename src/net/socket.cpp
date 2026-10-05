@@ -1,7 +1,9 @@
 #include "net/socket.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 
 #ifdef _WIN32
@@ -251,6 +253,108 @@ std::optional<Address> resolveHostPort(const std::string& text, std::uint16_t de
     }
     if (host.empty()) return std::nullopt;
     return resolve(host, port);
+}
+
+// --- blocking helpers (router conversation only) -------------------------------
+
+namespace {
+bool waitFor(std::intptr_t h, bool writing, std::uint64_t deadline) {
+    const std::uint64_t now = clockMs();
+    if (now >= deadline) return false;
+    fd_set set;
+    FD_ZERO(&set);
+    FD_SET(native(h), &set);
+    const std::uint64_t left = deadline - now;
+    timeval tv{static_cast<decltype(tv.tv_sec)>(left / 1000), static_cast<decltype(tv.tv_usec)>((left % 1000) * 1000)};
+    return select(static_cast<int>(native(h)) + 1, writing ? nullptr : &set, writing ? &set : nullptr, nullptr, &tv) > 0;
+}
+}  // namespace
+
+std::vector<std::string> multicastAsk(const std::string& group, std::uint16_t port, const std::string& message, int timeoutMs) {
+    std::vector<std::string> answers;
+    startup();
+    const auto to = resolve(group, port);
+    const std::intptr_t h = newSocket(SOCK_DGRAM);
+    if (!to || to->v6 || h == -1) {
+        if (h != -1) closeNative(h);
+        return answers;
+    }
+    const Native sa = toNative(*to, false);
+    ::sendto(native(h), message.data(),
+#ifdef _WIN32
+             static_cast<int>(message.size()),
+#else
+             message.size(),
+#endif
+             kSendFlags, sa.get(), sa.length);
+    const std::uint64_t deadline = clockMs() + static_cast<std::uint64_t>(timeoutMs);
+    while (waitFor(h, false, deadline)) {
+        char buffer[4096];
+        const auto n = ::recv(native(h), buffer, sizeof buffer, 0);
+        if (n <= 0) break;
+        answers.emplace_back(buffer, buffer + n);
+        if (answers.size() >= 16) break;
+    }
+    closeNative(h);
+    return answers;
+}
+
+std::optional<std::string> blockingExchange(const std::string& host, int port, const std::string& request, int timeoutMs, std::string* localIp) {
+    startup();
+    const auto to = resolve(host, static_cast<std::uint16_t>(port));
+    if (!to) return std::nullopt;
+    const std::intptr_t h = newSocket(SOCK_STREAM, to->v6 ? AF_INET6 : AF_INET);
+    if (h == -1) return std::nullopt;
+    setNonBlocking(h);
+    const std::uint64_t deadline = clockMs() + static_cast<std::uint64_t>(timeoutMs);
+    const Native sa = toNative(*to, to->v6);
+    bool ok = ::connect(native(h), sa.get(), sa.length) == 0 || (wouldBlock() && waitFor(h, true, deadline));
+    if (ok) {
+        int error = 0;
+        SockLen len = sizeof error;
+        getsockopt(native(h), SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &len);
+        ok = error == 0;
+    }
+    if (ok && localIp != nullptr) {
+        sockaddr_storage own{};
+        SockLen len = sizeof own;
+        if (getsockname(native(h), reinterpret_cast<sockaddr*>(&own), &len) == 0) {
+            const std::string text = fromNative(own).text();  // "a.b.c.d:port"
+            *localIp = text.substr(0, text.rfind(':'));
+        }
+    }
+    std::size_t sent = 0;
+    while (ok && sent < request.size()) {
+        const auto n = ::send(native(h), request.data() + sent,
+#ifdef _WIN32
+                              static_cast<int>(request.size() - sent),
+#else
+                              request.size() - sent,
+#endif
+                              kSendFlags);
+        if (n > 0) sent += static_cast<std::size_t>(n);
+        else if (!(wouldBlock() && waitFor(h, true, deadline))) ok = false;
+    }
+    std::string response;
+    while (ok && response.size() < (1u << 20)) {
+        char buffer[4096];
+        const auto n = ::recv(native(h), buffer, sizeof buffer, 0);
+        if (n > 0) {
+            response.append(buffer, buffer + n);
+            // A router that keeps the connection open: stop once the announced length is in.
+            if (const auto head = response.find("\r\n\r\n"); head != std::string::npos) {
+                std::string headers = response.substr(0, head);
+                for (char& ch : headers) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                if (const auto at = headers.find("content-length:"); at != std::string::npos &&
+                    response.size() - head - 4 >= static_cast<std::size_t>(std::atoll(headers.c_str() + at + 15)))
+                    break;
+            }
+        } else if (n == 0) break;
+        else if (!(wouldBlock() && waitFor(h, false, deadline))) break;
+    }
+    closeNative(h);
+    if (!ok || response.empty()) return std::nullopt;
+    return response;
 }
 
 // --- TCP ---------------------------------------------------------------------

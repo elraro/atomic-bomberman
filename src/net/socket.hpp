@@ -37,6 +37,14 @@ std::optional<Address> resolve(const std::string& host, std::uint16_t port);
 // "host", "host:port", an IPv6 literal, or "[IPv6 literal]:port".
 std::optional<Address> resolveHostPort(const std::string& text, std::uint16_t defaultPort);
 
+// Two blocking helpers for the conversation with a home router (upnp.hpp); not used by
+// the game protocol. Both give up after timeoutMs.
+// Sends a datagram to a multicast group and collects the answers that arrive in time.
+std::vector<std::string> multicastAsk(const std::string& group, std::uint16_t port, const std::string& message, int timeoutMs);
+// Connects, sends the request, reads until the other side closes. *localIp receives the
+// address this machine used for the connection.
+std::optional<std::string> blockingExchange(const std::string& host, int port, const std::string& request, int timeoutMs, std::string* localIp);
+
 // A TCP connection carrying frames: u32 length, u8 type, payload.
 class TcpSocket {
 public:

@@ -13,6 +13,7 @@
 #include "game/match.hpp"
 #include "net/protocol.hpp"
 #include "net/socket.hpp"
+#include "net/upnp.hpp"
 #include "resources/scheme_file.hpp"
 
 namespace ab::net {
@@ -27,6 +28,7 @@ struct ServerConfig {
     MatchSettings settings;             // what the lobby starts with
     std::uint32_t seed = 0;             // 0: taken from the clock
     bool discoverable = true;           // answer LAN queries
+    bool upnp = false;                  // ask the router to forward the port (UPnP)
     std::function<void(const std::string&)> log;  // one line per event; may be empty
 };
 
@@ -90,6 +92,9 @@ private:
     TcpListener listener_;
     UdpSocket udp_;
     UdpSocket discovery_;  // answers LAN searches on kDiscoveryPort
+    PortMapper mapper_;
+    bool mapperReported_ = false;
+    std::string routerNotice_;  // told to everyone who joins
     std::vector<std::unique_ptr<Peer>> peers_;
     std::uint64_t now_ = 0;
     std::uint64_t joinCounter_ = 0;

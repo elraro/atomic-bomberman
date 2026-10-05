@@ -13,6 +13,7 @@
 #include "net/client.hpp"
 #include "net/protocol.hpp"
 #include "net/server.hpp"
+#include "net/upnp.hpp"
 #include "resources/settings.hpp"
 
 using namespace ab;
@@ -545,6 +546,67 @@ void testIpv6() {
     CHECK_EQ(six.snapshotsLoaded() + four.snapshotsLoaded(), 0);
 }
 
+// Opening the port on the router: the whole conversation against a router made of strings.
+void testUpnp() {
+    CHECK(httpHeader("HTTP/1.1 200 OK\r\nCache-Control: max-age=120\r\nLOCATION: http://192.168.1.1:5000/rootDesc.xml\r\nST: x\r\n\r\n", "Location") ==
+          "http://192.168.1.1:5000/rootDesc.xml");
+    CHECK(httpHeader("HTTP/1.1 200 OK\r\n\r\nLocation: in the body", "location").empty());
+    std::string host, path;
+    int port = 0;
+    CHECK(splitUrl("http://192.168.1.1:5000/rootDesc.xml", &host, &port, &path) && host == "192.168.1.1" && port == 5000 && path == "/rootDesc.xml");
+    CHECK(splitUrl("HTTP://router.lan", &host, &port, &path) && host == "router.lan" && port == 80 && path == "/");
+    CHECK(!splitUrl("https://192.168.1.1/", &host, &port, &path));
+    const std::string description =
+        "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\n\r\n<?xml version=\"1.0\"?><root><device><serviceList><service>"
+        "<serviceType>urn:schemas-upnp-org:service:Layer3Forwarding:1</serviceType><controlURL>/ctl/L3F</controlURL></service></serviceList>"
+        "<deviceList><device><deviceList><device><serviceList><service><serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType>"
+        "<controlURL>/ctl/IPConn</controlURL><eventSubURL>/evt/IPConn</eventSubURL></service></serviceList></device></deviceList></device></deviceList></device></root>";
+    std::string control, service;
+    CHECK(findWanService(description, &control, &service) && control == "/ctl/IPConn" && service == "urn:schemas-upnp-org:service:WANIPConnection:1");
+    CHECK(!findWanService("<root><service><serviceType>urn:x:service:Other:1</serviceType><controlURL>/c</controlURL></service></root>", &control, &service));
+
+    // A router that works.
+    std::vector<std::string> requests;
+    bool refuseUdp = false;
+    UpnpTransport router;
+    router.search = [&](const std::string& message) {
+        requests.push_back("SEARCH " + message.substr(0, 8));
+        return std::vector<std::string>{"HTTP/1.1 200 OK\r\nLocation: http://192.168.1.1:5000/rootDesc.xml\r\n\r\n"};
+    };
+    router.http = [&](const std::string& toHost, int toPort, const std::string& request, std::string* localIp) -> std::optional<std::string> {
+        requests.push_back(toHost + ":" + std::to_string(toPort) + " " + request.substr(0, request.find("\r\n")));
+        if (localIp != nullptr) *localIp = "192.168.1.23";
+        if (request.rfind("GET /rootDesc.xml", 0) == 0) return description;
+        if (request.find("#AddPortMapping") != std::string::npos) {
+            if (request.find("<NewInternalClient>192.168.1.23</NewInternalClient>") == std::string::npos) return std::string("HTTP/1.1 500 Bad\r\n\r\n");
+            if (refuseUdp && request.find("<NewProtocol>UDP</NewProtocol>") != std::string::npos)
+                return std::string("HTTP/1.1 500 Internal Server Error\r\n\r\n<errorCode>718</errorCode><errorDescription>ConflictInMappingEntry</errorDescription>");
+            return std::string("HTTP/1.1 200 OK\r\n\r\n<u:AddPortMappingResponse/>");
+        }
+        if (request.find("#GetExternalIPAddress") != std::string::npos)
+            return std::string("HTTP/1.1 200 OK\r\n\r\n<NewExternalIPAddress>203.0.113.7</NewExternalIPAddress>");
+        if (request.find("#DeletePortMapping") != std::string::npos) return std::string("HTTP/1.1 200 OK\r\n\r\n");
+        return std::nullopt;
+    };
+    UpnpResult mapped = upnpMapPort(router, 27410, "Atomic Bomberman");
+    CHECK(mapped.ok);
+    CHECK(mapped.externalIp == "203.0.113.7");
+    CHECK(mapped.host == "192.168.1.1" && mapped.hostPort == 5000 && mapped.controlPath == "/ctl/IPConn");
+    int adds = 0;
+    for (const std::string& r : requests) adds += r == "192.168.1.1:5000 POST /ctl/IPConn HTTP/1.1" ? 1 : 0;
+    CHECK_EQ(adds, 3);  // TCP, UDP, and the question for the public address
+    requests.clear();
+    upnpUnmapPort(router, mapped, 27410);
+    CHECK_EQ(requests.size(), 2u);
+    // A router that refuses the second mapping, and no router at all: reported, not fatal.
+    refuseUdp = true;
+    const UpnpResult refused = upnpMapPort(router, 27410, "Atomic Bomberman");
+    CHECK(!refused.ok && refused.message.find("UDP") != std::string::npos && refused.message.find("ConflictInMappingEntry") != std::string::npos);
+    router.search = [](const std::string&) { return std::vector<std::string>{}; };
+    const UpnpResult nobody = upnpMapPort(router, 27410, "Atomic Bomberman");
+    CHECK(!nobody.ok && !nobody.message.empty());
+}
+
 // The network keys of the settings file.
 void testNetSettings() {
     Settings s;
@@ -616,6 +678,7 @@ int main() {
         {"leave during round", testLeaveDuringRound},
         {"udp loss", testUdpLoss},
         {"prediction", testPrediction},
+        {"router port mapping", testUpnp},
         {"ipv6 and ipv4 together", testIpv6},
         {"settings keys", testNetSettings},
         {"lan answer", testLanBrowser},

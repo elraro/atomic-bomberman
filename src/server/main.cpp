@@ -74,6 +74,7 @@ const char* const kUsage =
     "  --play-time N      seconds per round: 60 90 120 150 180 240 300 600, or 0 for no limit (default 150)\n"
     "  --team-play        two teams\n"
     "  --hidden           do not answer searches on the local network\n"
+    "  --upnp             ask the router to forward the port (UPnP), for a server behind a home router\n"
     "The first player to join is the administrator: changes the settings, starts the match.\n"
     "Commands on standard input: status, say TEXT, quit.\n";
 
@@ -110,6 +111,7 @@ int main(int argc, char** argv) {
             config.settings.playTime = seconds <= 0 ? ab::kInfinitePlayTime : std::clamp(seconds, 30, 1000);
         } else if (a == "--team-play") config.settings.teamPlay = true;
         else if (a == "--hidden") config.discoverable = false;
+        else if (a == "--upnp") config.upnp = true;
         else {
             std::fprintf(stderr, "ERROR unknown argument %s (see --help)\n", a.c_str());
             return 2;
