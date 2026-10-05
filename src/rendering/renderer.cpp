@@ -310,6 +310,8 @@ void Renderer::drawHud(const World& world, SpriteBank* bank, const std::array<in
             } else {
                 text(*bank, label, lx, ly, c[0], c[1], c[2]);
             }
+            // A player who is out is crossed off (original 0x421111: sequence "xxx" over the label).
+            if (!p.alive && !(p.dying && p.dyingFrames < 20)) sprite(*bank, "xxx", 0, -1, lx, ly);
         }
         return;
     }
