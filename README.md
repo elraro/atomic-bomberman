@@ -108,7 +108,7 @@ Options: `--scheme NAME` (file in `data/schemes`, default `basic`), `--level N` 
 
 ## 🌐 Network play
 
-This is a **new** network mode, not the original's (which used IPX and serial links). One server runs the game; everybody else connects to it. Up to ten players, one per computer; free seats can be filled with computer players. The design is in [`docs/specifications/networking.md`](docs/specifications/networking.md).
+This is a **new** network mode, not the original's (which used IPX and serial links). One server runs the game; everybody else connects to it. Up to ten players, up to four at one computer; free seats can be filled with computer players. The design is in [`docs/specifications/networking.md`](docs/specifications/networking.md).
 
 <div align="center"><img src="docs/images/lobby.png" width="60%" alt="Network lobby: seats, match settings and chat"></div>
 
@@ -116,7 +116,7 @@ This is a **new** network mode, not the original's (which used IPX and serial li
 
 **Join.** Main menu → **Join Network Game**: games on your local network are listed; for any other, type the host's address (`host` or `host:port`) and press Enter. Or start the game with `--connect ADDRESS`.
 
-**Lobby.** Seats and ping times on the left, the match settings on the right, the chat below. Just type to chat. The administrator (marked `*`, the player who has been there longest) changes the settings with the arrow keys and starts with `F2` or Enter on *Start the match*; `/kick NAME` in the chat removes a player. `F3` changes your team. `Esc` twice leaves.
+**Lobby.** Seats and ping times on the left, the match settings on the right, the chat below. Just type to chat. The administrator (marked `*`, the player who has been there longest) changes the settings with the arrow keys and starts with `F2` or Enter on *Start the match*; `/kick NAME` in the chat removes a player. `F3` changes your team. `F5` adds another player at your computer (the second uses the second key set; each can use a gamepad), `F6` removes one, `F4` changes the second one's team. The settings include the roulette ("Gold Bomberman") and a **campaign** to play together against rovers and ghosts. `Esc` twice leaves.
 
 **In the match** you play with the first key set (arrows, Space, Enter by default) or the first gamepad. `T` opens the chat line, `Esc` twice (or `Ctrl-Q` twice) leaves; a computer player takes over the seat of someone who leaves. Whoever connects during a match watches it and gets a seat when it ends.
 
@@ -128,9 +128,9 @@ This is a **new** network mode, not the original's (which used IPX and serial li
 
 It reads schemes, tuning values and level extras from the same game data as the game (`--game-dir`, `ATOMIC_GAME_DIR`, an `assets` folder, or the per-user folder), and logs joins, chat and results. Type `status`, `say TEXT` or `quit` on its console; `--help` lists the options (`--password`, `--level`, `--wins`, `--play-time`, `--team-play`, `--hidden`, ...). The first player to join is the administrator.
 
-**Reaching a server.** The host's port must be reachable for **TCP and UDP** (open it in the firewall; behind a home router, forward it). If only TCP gets through the game still works, a little less smoothly. Players need the same version of the program; they do not need the same schemes, because the server sends the arena.
+**Reaching a server.** The host's port must be reachable for **TCP and UDP**. A game hosted from the menu asks the router to open the port by itself (UPnP) and says in the lobby whether that worked and which address to give your friends; `atomic_server --upnp` does the same. If the router does not cooperate, forward the port by hand. Servers on your local network are found on any port. IPv6 addresses work too (`[address]:port`). If only TCP gets through the game still works, a little less smoothly. Players need the same version of the program; they do not need the same schemes, because the server sends the arena.
 
-**What to expect.** Your own moves are shown at once (client-side prediction) and confirmed by the server a moment later; other players are drawn where they would be if they kept going, so on a slow link they can jump a little when they turn. The sounds of your own actions are immediate too; explosions and other players are heard with the link's delay. **Options → Network: Show Own Moves At Once** switches prediction on and off (it applies to the next game you join). This mode has been tested on one machine at a time only: automated tests over the loopback interface on Linux and Windows, including with 40 % packet loss, and matches against a dedicated server with scripted clients on Linux. It has not yet been played between two real computers.
+**What to expect.** Your own moves are shown at once (client-side prediction) and confirmed by the server a moment later; other players are drawn where they would be if they kept going, so on a slow link they can jump a little when they turn. The sounds of your own actions are immediate too; explosions and other players are heard with the link's delay. **Options → Network: Show Own Moves At Once** switches prediction on and off (it applies to the next game you join). This mode has been tested on one machine at a time only: automated tests over the loopback interface on Linux and Windows, including with 40 % packet loss, and matches against a dedicated server with scripted clients on Linux. It has not yet been played between two real computers, and the router port opening was tested against a simulated router only.
 
 ## 🔬 How it was made
 

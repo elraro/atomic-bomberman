@@ -4,7 +4,7 @@ This is **not** the original's network mode. The original (`../reverse-engineeri
 
 ## Goals
 
-- Play over a LAN or the internet with TCP/IP: up to 10 players, one per machine, the rest computer players.
+- Play over a LAN or the internet with TCP/IP (IPv4 and IPv6): up to 10 players, up to four at one machine, the rest computer players.
 - One server decides everything. It can run inside the game ("Start Network Game") or alone as a dedicated program (`atomic_server`) with no window, no SDL and no graphics.
 - Lobby with player list, match settings and chat; chat during the match as well.
 - The gameplay rules are exactly those of the local game: the same core (`src/game`) runs the round.
@@ -51,7 +51,9 @@ UDP loss is handled without retransmission requests: every input message carries
 
 UDP is optional. After joining, the client sends UDP probes carrying the token it was given over TCP; when the server's answer arrives it reports "UDP works" over TCP. Until then, or if steps stop arriving by UDP for 2 s during a round, both directions use TCP for these messages too. So the game works through a TCP-only tunnel, only less smoothly.
 
-IPv4 only for now.
+IPv4 and IPv6: a server listens for both on one port where the system allows it (IPv4 alone otherwise); a client uses whichever the address it was given resolves to. An IPv6 literal with a port is written `[address]:port`. Link-local IPv6 addresses (which need a zone) are not supported.
+
+Protocol version 2 (version 1 had one player per client and no prizes or campaign stages).
 
 ### TCP framing
 
@@ -65,7 +67,8 @@ Client to server:
 | Chat | text | |
 | Option | `u8` option, `i8` direction | Administrator: change a match setting one step left or right. The server knows the choices (e.g. the scheme list). |
 | Start | | Administrator: start the match. |
-| Team | | Change own team. |
+| Team | `u8` local player | That player of this computer changes team. |
+| Locals | `u8` count | Players at this computer, 1-4 (in the lobby). |
 | Kick | `u8` client id | Administrator. |
 | Input | as the UDP message | When UDP is not in use. |
 | UdpState | `u8` on | "My UDP path works / stopped working". |
@@ -95,7 +98,7 @@ Server to client:
 |---|---|---|
 | Probe | C to S | token |
 | ProbeAck | S to C | |
-| Input | C to S | token, round id, last step held, input byte |
+| Input | C to S | token, round id, last step held, four input bytes (one per player at that computer) |
 | Steps | S to C | as the TCP message |
 | Query | broadcast to the discovery port **27409** | protocol version |
 | Info | S to C | protocol version, TCP port, server name, players, seats, phase, password needed |
@@ -107,12 +110,15 @@ An input byte: bits 0-3 north, east, south, west; bit 4 bomb; bit 5 action.
 Phases: **Lobby** → **Round** → **Result** → (next round, or Lobby when the match is decided).
 
 - Seats: ten, each empty, a client's or a computer player's. A joining client gets the lowest empty seat (a computer player's seat if none is empty; if all ten are humans it watches). Joining during a match: watches until the lobby returns.
+- Several players at one computer: a client may ask for up to four players; each gets a seat of its own while seats are free, its own input byte, and is named "Name (2)" and so on. The second uses the second key set, and each may use a gamepad.
+- Finding the port from outside: with `upnp` on (always for a game hosted from the menu, `--upnp` for the dedicated server) the server asks the home router, by UPnP, to pass its TCP and UDP port to this machine, and tells the lobby the outcome and, if the router says so, the public address. The mapping is removed when the server stops. Without a UPnP router the port must be forwarded by hand; there is no relay or hole punching.
 - Administrator: the client that has been connected longest. Changes settings, the number of computer players, starts the match, kicks. In a game hosted from the menu this is the host.
-- Settings: level (or random each match), scheme, wins needed, team play, play time, enclosement depth, computer players, random start, conveyor speed, stomped bombs detonate, win by kills, diseases destroyable. The meanings are those of the local game (`game-modes.md`).
+- Settings: level (or random each match), scheme, wins needed, team play, play time, enclosement depth, computer players, random start, conveyor speed, stomped bombs detonate, win by kills, diseases destroyable, gold bomberman (the roulette), campaign. The meanings are those of the local game (`game-modes.md`).
 - A match needs at least two occupied seats, and one player on each team in team play.
 - Round: starts 1 s after RoundStart was sent; one step every 50 ms of the server's clock (it catches up after a stall, at most 5 steps at once).
 - Result: scored as in the local game (`game-modes.md`, Match). The next round starts when every connected player has pressed a key, or after 10 s.
-- The roulette and campaign mode are not part of network play.
+- Roulette ("gold bomberman" on): the winner of a match is remembered; when the next match starts the server spins the wheel itself (nobody watches it), announces the prize in the chat, and that player (every member of that team) starts each round of the match with one more of that powerup, as in the local game.
+- Campaign: with one of the server's campaign files chosen, Start plays its stages in order, everybody together against the stage's enemies. Each stage sets level, arena, enemies and its own number of computer players (the lobby's are left out); team play is off; one human is enough. A cleared stage leads to the next; a stage lost by the clock too; a stage lost because no human was left is played again. After the last stage, or when every human has left, the lobby returns.
 - A client that sends nothing for 15 s is dropped. Chat lines are cut to 120 characters, names to 16.
 - If the last human leaves during a match, the server returns to the lobby.
 
@@ -134,8 +140,8 @@ The dedicated server reads the game data (tuning values, schemes, level extras) 
 ## Limits accepted for now
 
 - Prediction covers the picture and the sounds of one's own actions; everything else (explosions, other players) is heard with the round-trip delay, and other players' changes of direction appear as small corrections.
-- IPv4 only; no NAT traversal: the host's port must be reachable.
-- One player per client; no roulette, no campaign.
+- The roulette's wheel is not shown in network games; only its result is.
+- Port opening needs a router with UPnP switched on; it was tested against a simulated router only.
 - Clients trust the server's snapshots (see `../migration/networking.md`).
 - Different versions of the program must not be mixed: the protocol version is raised whenever the simulation changes.
 
