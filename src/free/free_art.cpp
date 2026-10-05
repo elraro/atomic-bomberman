@@ -781,10 +781,22 @@ void buildObjects(Builder& b, int flameFrames) {
     drawText(hurry, "HURRY!", 26, 10, 6, rgb(80, 0, 0));
     drawText(hurry, "HURRY!", 22, 8, 6, rgb(255, 70, 50));
     b.put("hurry", hurry.frame(130, 30));
-    for (int i = 0; i < 8; ++i) {
+    // The menu pointer: the robot's head, blinking (the original's is its character's head,
+    // five steps: eyes open, closing, shut, opening, open).
+    for (const float open : {1.0f, 0.55f, 0.12f, 0.55f, 1.0f}) {
         Canvas cursor(32, 32);
-        drawBomb(cursor, 16, 19, 8.0f + 0.8f * std::sin(static_cast<float>(i) / 8.0f * 2.0f * kPi), 0, static_cast<float>(i & 1));
-        b.put("cursor1", cursor.frame(16, 26));
+        const Col outline = rgb(16, 16, 24);
+        cursor.circle(4.5f, 17, 3.5f, outline);
+        cursor.circle(27.5f, 17, 3.5f, outline);
+        cursor.circle(4.5f, 17, 2.5f, grey(0.55f), true);
+        cursor.circle(27.5f, 17, 2.5f, grey(0.55f), true);
+        cursor.box(4, 4, 28, 29, 6, outline);
+        cursor.box(5, 5, 27, 28, 5, grey(1.0f), true);
+        cursor.box(8, 7, 24, 9, 1, grey(0.7f), true);
+        cursor.box(7.5f, 12, 24.5f, 23, 3, rgb(22, 26, 44));
+        cursor.ellipse(12.5f, 17.5f, 2.0f, 3.2f * open, rgb(120, 240, 255));
+        cursor.ellipse(19.5f, 17.5f, 2.0f, 3.2f * open, rgb(120, 240, 255));
+        b.put("cursor1", cursor.frame(16, 31));
     }
     Canvas ringPic(64, 64);
     ringPic.ring(32, 32, 26, 5, rgb(20, 20, 30));
