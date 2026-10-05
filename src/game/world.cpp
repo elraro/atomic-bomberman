@@ -1476,4 +1476,288 @@ void World::updatePlayer(int i, int dt, const PlayerInput& in) {
     handleButtons(i, effective);
 }
 
+// --- state transfer ---------------------------------------------------------
+// One description of the state (World::archive) serves saving, loading and
+// hashing. Every number goes through value() as a 64-bit integer.
+namespace {
+
+struct StateWriter {
+    std::vector<std::uint8_t> out;
+    void value(std::int64_t& v) {
+        // Zigzag, then 7 bits per byte.
+        auto u = (static_cast<std::uint64_t>(v) << 1) ^ static_cast<std::uint64_t>(v >> 63);
+        while (u >= 0x80) {
+            out.push_back(static_cast<std::uint8_t>(u | 0x80));
+            u >>= 7;
+        }
+        out.push_back(static_cast<std::uint8_t>(u));
+    }
+    std::size_t count(std::size_t n, std::size_t) {
+        auto v = static_cast<std::int64_t>(n);
+        value(v);
+        return n;
+    }
+};
+
+struct StateReader {
+    const std::vector<std::uint8_t>& in;
+    std::size_t pos = 0;
+    bool ok = true;
+    void value(std::int64_t& v) {
+        std::uint64_t u = 0;
+        for (int shift = 0; shift < 64; shift += 7) {
+            if (pos >= in.size()) {
+                ok = false;
+                v = 0;
+                return;
+            }
+            const std::uint8_t b = in[pos++];
+            u |= static_cast<std::uint64_t>(b & 0x7f) << shift;
+            if ((b & 0x80) == 0) break;
+        }
+        v = static_cast<std::int64_t>(u >> 1) ^ -static_cast<std::int64_t>(u & 1);
+    }
+    std::size_t count(std::size_t, std::size_t limit) {
+        std::int64_t v = 0;
+        value(v);
+        if (v < 0 || static_cast<std::uint64_t>(v) > limit) {
+            ok = false;
+            return 0;
+        }
+        return static_cast<std::size_t>(v);
+    }
+};
+
+struct StateHasher {
+    std::uint32_t h = 2166136261u;
+    void value(std::int64_t& v) {
+        const auto u = static_cast<std::uint64_t>(v);
+        h = (h ^ static_cast<std::uint32_t>(u)) * 16777619u;
+        h = (h ^ static_cast<std::uint32_t>(u >> 32)) * 16777619u;
+    }
+    std::size_t count(std::size_t n, std::size_t) {
+        auto v = static_cast<std::int64_t>(n);
+        value(v);
+        return n;
+    }
+};
+
+template <class A, class T>
+void field(A& a, T& v) {
+    auto x = static_cast<std::int64_t>(v);
+    a.value(x);
+    v = static_cast<T>(x);
+}
+template <class A>
+void field(A& a, bool& v) {
+    std::int64_t x = v ? 1 : 0;
+    a.value(x);
+    v = x != 0;
+}
+template <class A>
+void field(A& a, Cell& c) {
+    field(a, c.x);
+    field(a, c.y);
+}
+template <class A, class T, class U>
+void field(A& a, std::pair<T, U>& p) {
+    field(a, p.first);
+    field(a, p.second);
+}
+template <class A>
+void field(A& a, PlayerInput& in) {
+    for (bool& d : in.dir) field(a, d);
+    field(a, in.button1);
+    field(a, in.button2);
+}
+template <class A>
+void field(A& a, Extra& e) {
+    field(a, e.type);
+    field(a, e.cell);
+    field(a, e.dir);
+    field(a, e.id);
+    field(a, e.linkTo);
+    field(a, e.prepared);
+    field(a, e.animFrame);
+}
+template <class A>
+void field(A& a, Alien& e) {
+    field(a, e.active);
+    field(a, e.type);
+    field(a, e.x);
+    field(a, e.y);
+    field(a, e.dir);
+    field(a, e.speed);
+    field(a, e.moveAcc);
+    field(a, e.anim);
+    field(a, e.dead);
+    field(a, e.clearedStart);
+}
+template <class A>
+void field(A& a, Bomb& b) {
+    field(a, b.active);
+    field(a, b.owner);
+    field(a, b.type);
+    field(a, b.mode);
+    field(a, b.x);
+    field(a, b.y);
+    field(a, b.range);
+    field(a, b.fuseMs);
+    field(a, b.elapsedMs);
+    field(a, b.dir);
+    field(a, b.speed);
+    field(a, b.moveAcc);
+    field(a, b.arrivedFrom);
+    field(a, b.stopRequested);
+    field(a, b.createdTick);
+    field(a, b.hops);
+    field(a, b.flightPx);
+    field(a, b.holder);
+    field(a, b.dud);
+    field(a, b.dudFrames);
+    field(a, b.dudAcc);
+}
+template <class A>
+void field(A& a, Flame& f) {
+    field(a, f.active);
+    field(a, f.burningBrick);
+    field(a, f.owner);
+    field(a, f.ageMs);
+    field(a, f.dir);
+    field(a, f.tip);
+}
+template <class A>
+void field(A& a, Powerup& p) {
+    field(a, p.state);
+    field(a, p.type);
+}
+template <class A, class T, std::size_t N>
+void field(A& a, std::array<T, N>& items) {
+    for (T& item : items) field(a, item);
+}
+template <class A, class T>
+void field(A& a, std::vector<T>& items, std::size_t limit) {
+    const std::size_t n = a.count(items.size(), limit);
+    items.resize(n);
+    for (T& item : items) field(a, item);
+}
+template <class A>
+void field(A& a, Player& p) {
+    field(a, p.present);
+    field(a, p.alive);
+    field(a, p.x);
+    field(a, p.y);
+    field(a, p.facing);
+    field(a, p.baseSpeed);
+    field(a, p.fuseFrames);
+    field(a, p.inventory);
+    field(a, p.moveAcc);
+    field(a, p.animCounter);
+    field(a, p.moving);
+    field(a, p.triggerBombsLaid);
+    field(a, p.holding);
+    field(a, p.stunTicks);
+    field(a, p.disease);
+    field(a, p.diseaseMs);
+    field(a, p.diseaseDurationMs);
+    field(a, p.diseaseCooldown);
+    field(a, p.deathAnim);
+    field(a, p.action);
+    field(a, p.lastInput);
+    field(a, p.actionFrames);
+    field(a, p.actionAcc);
+    field(a, p.special);
+    field(a, p.specialFrames);
+    field(a, p.specialAcc);
+    field(a, p.warpX);
+    field(a, p.warpY);
+    field(a, p.prevButton1);
+    field(a, p.prevButton2);
+    field(a, p.team);
+    field(a, p.kills);
+    field(a, p.killedBy);
+    field(a, p.dirHistory);
+    field(a, p.goodPickups);
+    field(a, p.human);
+    field(a, p.lives);
+    field(a, p.score);
+    field(a, p.gold);
+    field(a, p.dying);
+    field(a, p.scattered);
+    field(a, p.dyingFrames);
+    field(a, p.dyingAcc);
+}
+
+}  // namespace
+
+template <class A>
+void World::archive(A& a) {
+    std::uint32_t rng = rng_.state();
+    field(a, rng);
+    rng_.setState(rng);
+    field(a, tickCount_);
+    field(a, roundMs_);
+    field(a, startFreezeMs_);
+    field(a, contenders_);
+    field(a, totalMs_);
+    field(a, nextDudMs_);
+    field(a, teamPlay_);
+    field(a, teams_);
+    field(a, roundLimitMs_);
+    field(a, enclosementDepth_);
+    field(a, winByKills_);
+    field(a, controlDelayMs_);
+    field(a, regenerationSeconds_);
+    field(a, regenerationMs_);
+    field(a, forbiddenRandom_);
+    field(a, campaign_);
+    field(a, campaignResult_);
+    field(a, campaignRetry_);
+    field(a, campaignClearMs_);
+    field(a, aliens_, 1000);
+    field(a, walls_.armed);
+    field(a, walls_.timerMs);
+    field(a, walls_.cursor);
+    field(a, walls_.dir);
+    field(a, walls_.ring);
+    field(a, wallsClosed_);
+    field(a, hurryAnnounced_);
+    field(a, extras_, 1000);
+    field(a, conveyorSpeed_);
+    field(a, tiles_);
+    field(a, flames_);
+    field(a, powerups_);
+    field(a, players_);
+    field(a, startCells_);
+    field(a, bombs_, kMaxBombs);
+    std::size_t n = a.count(pending_.size(), 1000);
+    pending_.resize(n);
+    for (Pending& p : pending_) {
+        field(a, p.bomb);
+        field(a, p.arrivedFrom);
+    }
+}
+
+std::vector<std::uint8_t> World::saveState() const {
+    StateWriter w;
+    const_cast<World*>(this)->archive(w);  // the writer changes nothing
+    return std::move(w.out);
+}
+
+std::uint32_t World::stateHash() const {
+    StateHasher h;
+    const_cast<World*>(this)->archive(h);  // nor does the hasher
+    return h.h;
+}
+
+bool World::loadState(const std::vector<std::uint8_t>& bytes) {
+    World loaded = *this;
+    StateReader r{bytes};
+    loaded.archive(r);
+    if (!r.ok || r.pos != bytes.size() || loaded.bombs_.size() != static_cast<std::size_t>(kMaxBombs)) return false;
+    loaded.events_.clear();
+    *this = std::move(loaded);
+    return true;
+}
+
 }  // namespace ab

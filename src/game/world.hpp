@@ -65,6 +65,8 @@ public:
         return static_cast<int>((state_ >> 16) & 0x7fff);
     }
     int below(int n) { return n > 0 ? next() % n : 0; }
+    std::uint32_t state() const { return state_; }
+    void setState(std::uint32_t s) { state_ = s; }
 
 private:
     std::uint32_t state_;
@@ -353,7 +355,18 @@ public:
     int winner() const;                  // index of the surviving player, or -1 for a draw
     int closedCells() const { return wallsClosed_; }
 
+    // --- state transfer (network play, docs/specifications/networking.md) ---
+    // Everything a round's future depends on, except the tuning values (both sides get
+    // those with the round setup) and the event list. A World built from the same
+    // values that loads this state continues exactly as the one that saved it.
+    std::vector<std::uint8_t> saveState() const;
+    bool loadState(const std::vector<std::uint8_t>& bytes);  // false: malformed, state unchanged
+    // Hash over the same fields; equal on two machines as long as they are in step.
+    std::uint32_t stateHash() const;
+
 private:
+    template <class A>
+    void archive(A& a);
     static std::size_t index(Cell c) { return static_cast<std::size_t>(c.y * kGridW + c.x); }
 
     bool playerPassable(Cell c) const;

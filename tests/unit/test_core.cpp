@@ -1799,6 +1799,66 @@ void testDeterminism() {
     CHECK_EQ(runOnce(), runOnce());
 }
 
+// Network play rests on this: a saved state loaded into another World goes on
+// exactly like the original, and the hash tells two states apart.
+void testStateTransfer() {
+    const Values values = Values::defaults();
+    World a{values, 777};
+    a.startRound(Scheme::fromRows({"...:::::::::...", ".#:#:#:#:#:#:#.", "..:::::::::::..", ":#:#:#:#:#:#:#:", ":::::::::::::::",
+                                   ":#:#:#:#:#:#:#:", ":::::::::::::::", ":#:#:#:#:#:#:#:", "..:::::::::::..", ".#:#:#:#:#:#:#.",
+                                   "...:::::::::..."}),
+                 true);
+    Extra arrow;
+    arrow.type = ExtraType::Arrow;
+    arrow.cell = {7, 5};
+    a.setExtras({arrow}, 1);
+    for (int i = 0; i < 4; ++i) a.addPlayer(i);
+    std::vector<AiPlayer> ai;
+    for (int i = 0; i < 4; ++i) ai.emplace_back(900u + static_cast<std::uint32_t>(i));
+    auto inputs = [&] {
+        Inputs in{};
+        for (int i = 0; i < 4; ++i) in[static_cast<std::size_t>(i)] = ai[static_cast<std::size_t>(i)].decide(a, i, 50);
+        return in;
+    };
+    // Into the round, until bombs and flames are about.
+    int t = 0;
+    for (; t < 2000 && !(a.activeBombs() > 0 && t > 200); ++t) a.tick(50, inputs());
+    CHECK(a.activeBombs() > 0);
+
+    const std::vector<std::uint8_t> saved = a.saveState();
+    World b{values, 1};  // another seed, no round started
+    CHECK(b.stateHash() != a.stateHash());
+    CHECK(b.loadState(saved));
+    CHECK_EQ(b.stateHash(), a.stateHash());
+    CHECK(b.saveState() == saved);
+    int differences = 0;
+    for (int n = 0; n < 1500 && !a.roundOver(); ++n) {
+        const Inputs in = inputs();
+        a.tick(50, in);
+        b.tick(50, in);
+        if (a.stateHash() != b.stateHash()) ++differences;
+    }
+    CHECK_EQ(differences, 0);
+    CHECK_EQ(a.tickCount(), b.tickCount());
+    CHECK_EQ(a.alivePlayers(), b.alivePlayers());
+
+    // The hash notices a single changed field.
+    const std::uint32_t before = b.stateHash();
+    b.player(0).kills += 1;
+    CHECK(b.stateHash() != before);
+    b.player(0).kills -= 1;
+    CHECK_EQ(b.stateHash(), before);
+
+    // Malformed input is refused and leaves the state alone.
+    std::vector<std::uint8_t> cut(saved.begin(), saved.begin() + static_cast<std::ptrdiff_t>(saved.size() / 2));
+    CHECK(!b.loadState(cut));
+    CHECK(!b.loadState({}));
+    std::vector<std::uint8_t> longer = saved;
+    longer.push_back(0);
+    CHECK(!b.loadState(longer));
+    CHECK_EQ(b.stateHash(), before);
+}
+
 }  // namespace
 
 int main() {
@@ -1870,6 +1930,7 @@ int main() {
         {"closing walls", testClosingWalls},
         {"round result", testRoundResult},
         {"determinism", testDeterminism},
+        {"state transfer", testStateTransfer},
     };
     for (const auto& [name, fn] : tests) {
         const int before = g_failures;
