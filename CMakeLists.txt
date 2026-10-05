@@ -35,6 +35,15 @@ add_library(ab_resources src/resources/scheme_file.cpp src/resources/ani_file.cp
 target_link_libraries(ab_resources PUBLIC ab_game)
 ab_warnings(ab_resources)
 
+# Network play: sockets, protocol, server and client. No SDL: the dedicated
+# server is built from this alone.
+add_library(ab_net src/net/socket.cpp src/net/protocol.cpp src/net/server.cpp src/net/client.cpp)
+target_link_libraries(ab_net PUBLIC ab_game ab_resources)
+if(WIN32)
+    target_link_libraries(ab_net PUBLIC ws2_32)
+endif()
+ab_warnings(ab_net)
+
 # Front end: SDL3 window, input and audio + OpenGL 3.3 renderer. Optional.
 # SDL3 is taken from the system when installed. With -DAB_FETCH_SDL3=ON it is
 # downloaded and built as a static library instead (used by the release builds).
@@ -77,3 +86,9 @@ add_executable(ab_tests tests/unit/test_core.cpp)
 target_link_libraries(ab_tests PRIVATE ab_game ab_resources)
 ab_warnings(ab_tests)
 add_test(NAME core COMMAND ab_tests)
+
+# Network mode: codec tests, and a server with several clients over the loopback interface.
+add_executable(ab_net_tests tests/unit/test_net.cpp)
+target_link_libraries(ab_net_tests PRIVATE ab_net)
+ab_warnings(ab_net_tests)
+add_test(NAME net COMMAND ab_net_tests)

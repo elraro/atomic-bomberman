@@ -1,0 +1,454 @@
+// Tests for the network mode (docs/specifications/networking.md): the message
+// encoding, and a server with clients in one process over 127.0.0.1. Time is
+// simulated (the server and clients take the clock as an argument), so a whole
+// round runs in well under a second.
+#include <cstdio>
+#include <functional>
+#include <memory>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "net/client.hpp"
+#include "net/protocol.hpp"
+#include "net/server.hpp"
+
+using namespace ab;
+using namespace ab::net;
+
+namespace {
+
+int g_failures = 0;
+int g_checks = 0;
+
+#define CHECK(cond)                                                       \
+    do {                                                                  \
+        ++g_checks;                                                       \
+        if (!(cond)) {                                                    \
+            ++g_failures;                                                 \
+            std::printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); \
+        }                                                                 \
+    } while (0)
+
+#define CHECK_EQ(a, b)                                                                                \
+    do {                                                                                              \
+        ++g_checks;                                                                                   \
+        const auto va = (a);                                                                          \
+        const auto vb = (b);                                                                          \
+        if (!(va == vb)) {                                                                            \
+            ++g_failures;                                                                             \
+            std::printf("  FAIL %s:%d  %s == %s  (%lld vs %lld)\n", __FILE__, __LINE__, #a, #b,       \
+                        static_cast<long long>(va), static_cast<long long>(vb));                      \
+        }                                                                                             \
+    } while (0)
+
+void testCodec() {
+    PlayerInput in;
+    in.dir = {true, false, false, true};
+    in.button2 = true;
+    const PlayerInput back = unpackInput(packInput(in));
+    CHECK(back.dir == in.dir && back.button1 == in.button1 && back.button2 == in.button2);
+    CHECK_EQ(packInput(in), 1 | 8 | 32);
+
+    RoundStartMsg start;
+    start.roundId = 7;
+    start.seed = 0xDEADBEEFu;
+    start.values = Values::defaults().entries();
+    start.winsNeeded = 3;
+    start.score.wins[2] = 1;
+    start.score.kills[4] = -2;
+    RoundSetup& s = start.setup;
+    s.level = 7;
+    s.scheme = Scheme::pillars();
+    s.scheme.brickDensity = 80;
+    s.scheme.start[3] = {14, 10};
+    s.powers[1].bornWith = 4;
+    s.powers[9].hasOverride = true;
+    s.powers[9].overrideValue = -5;
+    s.powers[2].forbidden = true;
+    Extra warp;
+    warp.type = ExtraType::Warp;
+    warp.cell = {3, 4};
+    warp.id = 2;
+    warp.linkTo = 1;
+    Extra tramp;
+    tramp.type = ExtraType::Trampoline;
+    tramp.cell = {-1, -1};
+    s.extras = {warp, tramp};
+    s.teamPlay = true;
+    s.teams = {0, 1, 0, 1, 1, 0, 0, 0, 1, 1};
+    s.playTime = kInfinitePlayTime;
+    s.enclosementDepth = 3;
+    s.conveyorSpeed = 2;
+    s.present = {true, true, false, true};
+    s.human = {true, false, false, true};
+    const std::vector<std::uint8_t> bytes = encoded(start);
+    RoundStartMsg got;
+    {
+        ByteReader r(bytes);
+        CHECK(decode(r, got) && r.atEnd());
+    }
+    CHECK(encoded(got) == bytes);
+    CHECK_EQ(got.setup.level, 7);
+    CHECK_EQ(got.setup.extras.size(), 2u);
+    CHECK_EQ(got.setup.extras[1].cell.x, -1);
+    CHECK_EQ(got.setup.powers[9].overrideValue, -5);
+    CHECK_EQ(got.score.kills[4], -2);
+    CHECK(got.setup.present[3] && !got.setup.present[2] && !got.setup.human[1]);
+    // Two worlds built from the two copies are the same world.
+    {
+        Values values = Values::defaults();
+        World a{values, start.seed}, b{values, got.seed};
+        applyRoundSetup(a, values, start.setup);
+        applyRoundSetup(b, values, got.setup);
+        CHECK_EQ(a.stateHash(), b.stateHash());
+    }
+    // Every truncation is refused, none crashes.
+    int accepted = 0;
+    for (std::size_t n = 0; n < bytes.size(); ++n) {
+        const std::vector<std::uint8_t> cut(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(n));
+        ByteReader r(cut);
+        RoundStartMsg m;
+        if (decode(r, m)) ++accepted;
+    }
+    CHECK_EQ(accepted, 0);
+    // Out-of-range content is refused.
+    {
+        std::vector<std::uint8_t> bad = bytes;
+        bad[4 + 4 + 2 + start.values.size() * 8 + 1] = 9;  // a tile value
+        ByteReader r(bad);
+        RoundStartMsg m;
+        CHECK(!decode(r, m));
+    }
+
+    LobbyState lobby;
+    lobby.phase = Phase::Result;
+    lobby.admin = 3;
+    lobby.settings.level = -1;
+    lobby.settings.schemeTitle = "X marks the spot";
+    lobby.settings.playTime = kInfinitePlayTime;
+    lobby.seats[0] = {SeatKind::Human, 3, 1};
+    lobby.seats[1] = {SeatKind::Computer, 0, 0};
+    lobby.clients.push_back({3, "Ann", 0, 42});
+    lobby.clients.push_back({5, "Watcher", -1, 7});
+    LobbyState lobby2;
+    {
+        const std::vector<std::uint8_t> lb = encoded(lobby);
+        ByteReader r(lb);
+        CHECK(decode(r, lobby2) && r.atEnd());
+        CHECK(encoded(lobby2) == lb);
+    }
+    CHECK_EQ(lobby2.settings.level, -1);
+    CHECK(lobby2.seatName(0) == "Ann");
+    CHECK(lobby2.seatName(1) == "Computer");
+    CHECK(lobby2.seatName(2).empty());
+    CHECK_EQ(lobby2.clients[1].seat, -1);
+
+    StepsMsg steps;
+    steps.roundId = 9;
+    steps.firstStep = 100;
+    steps.steps.resize(3);
+    steps.steps[2][9] = 63;
+    steps.hash = 0x12345678u;
+    StepsMsg steps2;
+    {
+        const std::vector<std::uint8_t> sb = encoded(steps);
+        ByteReader r(sb);
+        CHECK(decode(r, steps2) && r.atEnd());
+    }
+    CHECK_EQ(steps2.steps.size(), 3u);
+    CHECK_EQ(steps2.steps[2][9], 63);
+    CHECK_EQ(steps2.hash, 0x12345678u);
+
+    CHECK(cleanText("  hi\x01 there\n ", 100) == "hi there");
+    CHECK(cleanText("abcdef", 3) == "abc");
+    CHECK(cleanText("a\xC3\xA9z", 2) == "a");  // not cut inside a character
+    CHECK(resolveHostPort("127.0.0.1:99999", 1) == std::nullopt);
+    CHECK(resolveHostPort("127.0.0.1", 5)->port == 5);
+    CHECK(resolveHostPort("127.0.0.1:1234", 5)->port == 1234);
+    CHECK(resolveHostPort("127.0.0.1", 5)->ip == kLoopback);
+}
+
+// A server and its clients on one simulated clock.
+struct Harness {
+    Server server;
+    std::vector<std::unique_ptr<Client>> clients;
+    std::uint64_t now = 100000;
+    std::vector<std::string> log;
+
+    bool start(const std::string& password = "", int computers = 1) {
+        ServerConfig config;
+        config.port = 0;
+        config.seed = 4242;
+        config.password = password;
+        config.discoverable = false;
+        config.settings.computers = computers;
+        config.settings.enclosementDepth = 3;
+        config.settings.playTime = 60;
+        config.settings.winsNeeded = 1;
+        config.log = [this](const std::string& line) { log.push_back(line); };
+        return server.start(config);
+    }
+    Client& join(const std::string& name, const std::string& password = "", bool udp = true) {
+        clients.push_back(std::make_unique<Client>());
+        if (!udp) clients.back()->disableUdp();
+        clients.back()->connect("127.0.0.1:" + std::to_string(server.port()), name, password, now);
+        return *clients.back();
+    }
+    void turn() {
+        server.update(now);
+        for (auto& c : clients) {
+            c->update(now);
+            c->advance(now, nullptr, nullptr);
+        }
+        now += 5;
+        std::this_thread::yield();
+    }
+    bool until(const std::function<bool()>& done, int maxMs = 20000) {
+        for (int waited = 0; waited < maxMs; waited += 5) {
+            if (done()) return true;
+            turn();
+        }
+        return done();
+    }
+    void spin(int ms) {
+        for (int waited = 0; waited < ms; waited += 5) turn();
+    }
+};
+
+void testLobby() {
+    Harness h;
+    CHECK(h.start("secret"));
+    CHECK(h.server.port() != 0);
+
+    Client& ann = h.join("Ann", "secret");
+    CHECK(h.until([&] { return ann.state() == Client::State::Lobby && !ann.lobby().clients.empty(); }));
+    CHECK(ann.isAdmin());
+    CHECK_EQ(ann.seat(), 0);
+    CHECK(ann.lobby().seats[0].kind == SeatKind::Human);
+    CHECK(ann.lobby().seats[1].kind == SeatKind::Computer);
+    CHECK(ann.lobby().seats[2].kind == SeatKind::Empty);
+
+    Client& nopass = h.join("Mallory");
+    CHECK(h.until([&] { return nopass.state() == Client::State::Failed; }));
+    CHECK(nopass.error() == "This server needs a password");
+    Client& wrong = h.join("Mallory", "guess");
+    CHECK(h.until([&] { return wrong.state() == Client::State::Failed; }));
+    CHECK(wrong.error() == "Wrong password");
+    CHECK_EQ(h.server.players(), 1);
+
+    // The second player takes the computer's seat number 1; the computer moves down.
+    Client& bob = h.join("Bob", "secret");
+    CHECK(h.until([&] { return bob.state() == Client::State::Lobby && bob.lobby().clients.size() == 2; }));
+    CHECK(!bob.isAdmin());
+    CHECK_EQ(bob.seat(), 1);
+    CHECK(h.until([&] { return ann.lobby().clients.size() == 2; }));
+    CHECK(ann.lobby().seats[2].kind == SeatKind::Computer);
+    CHECK(ann.lobby().seatName(1) == "Bob");
+
+    // A second "Ann" gets another name.
+    Client& ann2 = h.join("Ann", "secret");
+    CHECK(h.until([&] { return ann2.state() == Client::State::Lobby && ann2.lobby().client(ann2.id()) != nullptr; }));
+    CHECK(ann2.lobby().client(ann2.id())->name == "Ann 2");
+
+    // Chat reaches everyone, with the sender's name as the server knows it.
+    bob.sendChat("hello there");
+    CHECK(h.until([&] {
+        for (const ChatLine& line : ann.chat())
+            if (!line.fromServer && line.name == "Bob" && line.text == "hello there") return true;
+        return false;
+    }));
+    bool joinedNotice = false;
+    for (const ChatLine& line : ann.chat()) joinedNotice = joinedNotice || (line.fromServer && line.text == "Bob has joined");
+    CHECK(joinedNotice);
+
+    // Only the administrator changes settings.
+    bob.sendOption(Option::Wins, 1);
+    h.spin(200);
+    CHECK_EQ(ann.lobby().settings.winsNeeded, 1);
+    ann.sendOption(Option::Wins, 1);
+    ann.sendOption(Option::Level, -1);
+    ann.sendOption(Option::TeamPlay, 1);
+    CHECK(h.until([&] { return bob.lobby().settings.winsNeeded == 2 && bob.lobby().settings.level == -1 && bob.lobby().settings.teamPlay; }));
+    // Anyone changes their own team.
+    const int before = bob.lobby().seats[1].team;
+    bob.sendTeam();
+    CHECK(h.until([&] { return ann.lobby().seats[1].team == 1 - before; }));
+
+    // More computer players fill the free seats; the administrator removes a player.
+    for (int i = 0; i < 12; ++i) ann.sendOption(Option::Computers, 1);
+    CHECK(h.until([&] { return ann.lobby().settings.computers == 9; }));
+    int computers = 0;
+    for (const Seat& s : ann.lobby().seats) computers += s.kind == SeatKind::Computer ? 1 : 0;
+    CHECK_EQ(computers, 7);
+    bob.sendKick(ann.id());  // not the administrator: nothing happens
+    ann.sendKick(ann2.id());
+    CHECK(h.until([&] { return ann2.state() == Client::State::Failed; }));
+    CHECK(ann2.error() == "Removed by the administrator");
+    CHECK(ann.state() == Client::State::Lobby);
+
+    // When the administrator leaves, the next player takes over.
+    ann.disconnect();
+    CHECK(h.until([&] { return bob.isAdmin() && bob.lobby().clients.size() == 1; }));
+    CHECK_EQ(bob.seat(), 1);
+}
+
+// Plays rounds until every client shows a result; returns false on a timeout.
+bool playToResult(Harness& h, const std::vector<Client*>& clients) {
+    return h.until(
+        [&] {
+            for (Client* c : clients)
+                if (c->state() != Client::State::Result) return false;
+            return true;
+        },
+        400000);
+}
+
+void testRound(bool udp) {
+    Harness h;
+    CHECK(h.start("", 2));
+    Client& ann = h.join("Ann", "", udp);
+    Client& bob = h.join("Bob", "", udp);
+    CHECK(h.until([&] { return ann.state() == Client::State::Lobby && bob.state() == Client::State::Lobby && ann.lobby().clients.size() == 2; }));
+    if (udp) CHECK(h.until([&] { return ann.udpActive() && bob.udpActive(); }));
+    h.spin(300);
+
+    // Too few players is refused with the reason, in the chat.
+    bob.sendStart();  // not the administrator
+    h.spin(200);
+    CHECK(h.server.phase() == Phase::Lobby);
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }));
+    CHECK(h.server.phase() == Phase::Round);
+    CHECK_EQ(ann.world()->alivePlayers(), 4);
+
+    // Both walk about and drop bombs; the inputs arrive at the server.
+    PlayerInput walk;
+    walk.dir[1] = true;
+    ann.setInput(walk);
+    CHECK(h.until([&] { return ann.stepsApplied() > 60 && bob.stepsApplied() > 60; }));
+    CHECK(h.server.world()->player(0).x > cellToPixelX(0) || h.server.world()->player(0).facing == 1);
+    ann.setInput({});
+
+    // A client whose state has gone wrong is put right by the server.
+    bob.world()->player(0).kills += 5;
+    CHECK(h.until([&] { return bob.snapshotsLoaded() == 1; }));
+    CHECK_EQ(ann.snapshotsLoaded(), 0);
+
+    // Someone who connects now watches the round from here.
+    Client& cat = h.join("Cat", "", udp);
+    CHECK(h.until([&] { return cat.state() == Client::State::Round && cat.stepsApplied() > 0; }));
+    CHECK_EQ(cat.seat(), -1);
+    CHECK_EQ(cat.snapshotsLoaded(), 1);
+
+    // Rounds until the match is decided (one win is enough here); after each, every
+    // client holds exactly the server's state and scores.
+    bool decided = false;
+    int rounds = 0;
+    while (!decided && rounds < 20) {
+        ++rounds;
+        CHECK(playToResult(h, {&ann, &bob, &cat}));
+        CHECK(h.server.phase() == Phase::Result);
+        const std::uint32_t hash = h.server.world()->stateHash();
+        CHECK_EQ(ann.world()->stateHash(), hash);
+        CHECK_EQ(bob.world()->stateHash(), hash);
+        CHECK_EQ(cat.world()->stateHash(), hash);
+        CHECK_EQ(ann.stepsApplied(), h.server.steps());
+        CHECK_EQ(cat.stepsApplied(), h.server.steps());
+        CHECK_EQ(ann.udpActive(), udp);
+        CHECK(ann.score().wins == h.server.score().wins);
+        CHECK(cat.score().kills == h.server.score().kills);
+        CHECK_EQ(ann.score().matchWinner, h.server.score().matchWinner);
+        decided = ann.score().matchWinner >= 0;
+        if (decided) CHECK_EQ(ann.result().winner, ann.score().matchWinner);
+        // Everyone presses a key: the next round, or the lobby once the match is decided.
+        const std::uint32_t round = ann.roundId();
+        ann.sendContinue();
+        bob.sendContinue();
+        if (!decided) CHECK(h.until([&] { return ann.state() == Client::State::Round && cat.state() == Client::State::Round && ann.roundId() == round + 1; }));
+    }
+    CHECK(decided);
+    CHECK_EQ(ann.snapshotsLoaded(), 0);
+    CHECK_EQ(bob.snapshotsLoaded(), 1);
+    CHECK_EQ(cat.snapshotsLoaded(), 1);
+    // Back in the lobby the watcher gets a seat.
+    CHECK(h.until([&] { return ann.state() == Client::State::Lobby && cat.state() == Client::State::Lobby && cat.seat() >= 0; }));
+    CHECK(ann.world() == nullptr);
+    CHECK(h.server.phase() == Phase::Lobby);
+    for (const std::string& line : h.log) CHECK(line.rfind("ERROR", 0) != 0);
+}
+
+// A player who leaves in the middle is played by the computer; the others go on.
+void testLeaveDuringRound() {
+    Harness h;
+    CHECK(h.start("", 1));
+    Client& ann = h.join("Ann");
+    Client& bob = h.join("Bob");
+    CHECK(h.until([&] { return ann.lobby().clients.size() == 2 && bob.state() == Client::State::Lobby; }));
+    ann.sendStart();
+    CHECK(h.until([&] { return bob.stepsApplied() > 30; }));
+    ann.disconnect();
+    CHECK(h.until([&] { return bob.isAdmin(); }));
+    CHECK(h.server.phase() == Phase::Round);
+    CHECK(bob.lobby().seats[0].kind == SeatKind::Computer);
+    CHECK(playToResult(h, {&bob}));
+    CHECK_EQ(bob.world()->stateHash(), h.server.world()->stateHash());
+    // The last human leaves: the server goes back to the lobby and frees the seats.
+    bob.disconnect();
+    CHECK(h.until([&] { return h.server.phase() == Phase::Lobby && h.server.players() == 0; }));
+    CHECK(h.server.world() == nullptr);
+}
+
+void testLanBrowser() {
+    // Only the answer path is checked: a query sent straight to the server's port.
+    Server server;
+    ServerConfig config;
+    config.port = 0;
+    config.name = "Test server";
+    config.password = "x";
+    CHECK(server.start(config));
+    UdpSocket udp;
+    CHECK(udp.open(0));
+    ByteWriter w;
+    w.u32(kUdpMagic);
+    w.u8(static_cast<std::uint8_t>(UdpMsg::Query));
+    w.u16(kProtocolVersion);
+    CHECK(udp.sendTo({kLoopback, server.port()}, w.data()));
+    ServerInfo info;
+    bool answered = false;
+    for (int i = 0; i < 2000 && !answered; ++i) {
+        server.update(1000 + static_cast<std::uint64_t>(i));
+        Address from;
+        std::vector<std::uint8_t> data;
+        if (udp.receiveFrom(from, data)) {
+            ByteReader r(data);
+            answered = r.u32() == kUdpMagic && static_cast<UdpMsg>(r.u8()) == UdpMsg::Info && decode(r, info);
+        }
+        std::this_thread::yield();
+    }
+    CHECK(answered);
+    CHECK(info.name == "Test server");
+    CHECK_EQ(info.port, server.port());
+    CHECK(info.password);
+    CHECK_EQ(info.players, 0);
+}
+
+}  // namespace
+
+int main() {
+    const std::vector<std::pair<std::string, std::function<void()>>> tests = {
+        {"codec", testCodec},
+        {"lobby", testLobby},
+        {"round over udp", [] { testRound(true); }},
+        {"round over tcp only", [] { testRound(false); }},
+        {"leave during round", testLeaveDuringRound},
+        {"lan answer", testLanBrowser},
+    };
+    for (const auto& [name, fn] : tests) {
+        const int before = g_failures;
+        fn();
+        std::printf("%s %s\n", g_failures == before ? "ok  " : "FAIL", name.c_str());
+    }
+    std::printf("%d checks, %d failures\n", g_checks, g_failures);
+    return g_failures == 0 ? 0 : 1;
+}

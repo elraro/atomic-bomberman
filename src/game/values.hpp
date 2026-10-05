@@ -4,6 +4,8 @@
 
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace ab {
 
@@ -21,6 +23,7 @@ public:
     int get(int id) const;  // throws std::out_of_range for an undefined id
     void set(int id, int value) { table_[id] = value; }
     bool has(int id) const { return table_.contains(id); }
+    std::vector<std::pair<int, int>> entries() const;  // every id and value, sorted by id
 
 private:
     std::unordered_map<int, int> table_;

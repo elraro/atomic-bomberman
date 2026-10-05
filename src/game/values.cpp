@@ -1,5 +1,6 @@
 #include "game/values.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -110,6 +111,12 @@ void Values::parse(const std::string& text) {
             p = end;
         }
     }
+}
+
+std::vector<std::pair<int, int>> Values::entries() const {
+    std::vector<std::pair<int, int>> out(table_.begin(), table_.end());
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 int Values::get(int id) const {
