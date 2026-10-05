@@ -34,8 +34,9 @@ public:
     void draw(const World& world, const RenderSnapshot& previous, float alpha, int windowW, int windowH,
               SpriteBank* sprites = nullptr, const std::array<int, kMaxPlayers>* wins = nullptr);
 
-    // Building blocks for menu screens, in the 640x480 logical screen.
-    void begin(int windowW, int windowH);
+    // Building blocks for menu screens, in the 640x480 logical screen. With clear off,
+    // what follows is drawn over the picture already there (text over the playfield).
+    void begin(int windowW, int windowH, bool clear = true);
     void end();
     void image(unsigned texture);  // full-screen picture (dark fill if 0)
     void picture(unsigned texture, float x, float y, float w, float h);  // a picture at a place

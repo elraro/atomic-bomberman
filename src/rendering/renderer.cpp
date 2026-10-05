@@ -180,14 +180,16 @@ void Renderer::flush() {
     batch_.clear();
 }
 
-void Renderer::begin(int windowW, int windowH) {
+void Renderer::begin(int windowW, int windowH, bool clear) {
     // Letterbox the 640x480 logical screen into the window.
     const float scale = std::min(static_cast<float>(windowW) / kScreenW, static_cast<float>(windowH) / kScreenH);
     const int vw = static_cast<int>(kScreenW * scale);
     const int vh = static_cast<int>(kScreenH * scale);
     glViewport(0, 0, windowW, windowH);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    if (clear) {
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
     glViewport((windowW - vw) / 2, (windowH - vh) / 2, vw, vh);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);

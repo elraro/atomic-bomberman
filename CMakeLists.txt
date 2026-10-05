@@ -44,6 +44,13 @@ if(WIN32)
 endif()
 ab_warnings(ab_net)
 
+# Dedicated server: no window, no SDL.
+find_package(Threads REQUIRED)
+add_executable(atomic_server src/server/main.cpp)
+target_link_libraries(atomic_server PRIVATE ab_net Threads::Threads)
+ab_warnings(atomic_server)
+install(TARGETS atomic_server RUNTIME DESTINATION .)
+
 # Front end: SDL3 window, input and audio + OpenGL 3.3 renderer. Optional.
 # SDL3 is taken from the system when installed. With -DAB_FETCH_SDL3=ON it is
 # downloaded and built as a static library instead (used by the release builds).
@@ -65,11 +72,12 @@ if(SDL3_FOUND)
     add_executable(atomic
         src/app/main.cpp
         src/app/editor.cpp
+        src/app/net_ui.cpp
         src/rendering/gl.cpp
         src/rendering/renderer.cpp
         src/rendering/sprites.cpp
         src/audio/audio.cpp)
-    target_link_libraries(atomic PRIVATE ab_game ab_resources SDL3::SDL3)
+    target_link_libraries(atomic PRIVATE ab_game ab_resources ab_net SDL3::SDL3)
     ab_warnings(atomic)
     install(TARGETS atomic RUNTIME DESTINATION .)
 else()
@@ -81,6 +89,11 @@ enable_testing()
 add_executable(mve_dump tools/diagnostics/mve_dump.cpp)
 target_link_libraries(mve_dump PRIVATE ab_resources)
 ab_warnings(mve_dump)
+
+# Developer tool for the network mode: a client without a window (not installed).
+add_executable(net_bot tools/diagnostics/net_bot.cpp)
+target_link_libraries(net_bot PRIVATE ab_net)
+ab_warnings(net_bot)
 
 add_executable(ab_tests tests/unit/test_core.cpp)
 target_link_libraries(ab_tests PRIVATE ab_game ab_resources)

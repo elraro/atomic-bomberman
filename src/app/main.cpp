@@ -18,6 +18,8 @@
 #include <vector>
 
 #include "app/editor.hpp"
+#include "app/names.hpp"
+#include "app/net_ui.hpp"
 #include "audio/audio.hpp"
 #include "game/ai.hpp"
 #include "game/match.hpp"
@@ -44,7 +46,7 @@ struct Options {
     std::string screenshot;   // write the last frame as a PPM file
     std::string importFrom;   // --import-assets: build the asset folder from this original game folder and exit
     std::string assetsDir;    // --assets-dir: where --import-assets writes (default: the per-user data folder)
-    int menuShot = 0;         // automated: 1 = capture the main menu, 2 = the player list
+    int menuShot = 0;         // automated: 1 = capture the main menu, 2 = the player list, ... 10-13 the network screens
     bool resultShot = false;  // automated: capture the result screen of the first decided round and exit
     std::vector<std::string> script;  // automated: key names pressed one after another (see --script)
     bool demo = false;        // scripted input instead of the keyboard
@@ -60,6 +62,8 @@ struct Options {
     int attractSeconds = -1;  // --attract-seconds N: idle time on the menu before the demo (default: value 92)
     bool debug = false;       // --debug: the original's debug keys (it used the KWD environment variable)
     bool noIntro = false;     // --no-intro: go straight to the main menu
+    std::string connect;      // --connect ADDRESS: join that network game at once
+    int host = 0;             // --host [PORT]: host a network game at once
     bool playersSet = false;  // --players or --humans given
     bool levelSet = false;    // --level, --wins, --scheme given: they win over the saved settings
     bool winsSet = false;
@@ -90,6 +94,8 @@ Options parseArgs(int argc, char** argv) {
                       "  --debug              debug keys in a match: Ctrl-A animation list, Alt-D information, F10 clears a campaign stage\n"
                       "  --no-intro           skip the intro movie, the logo and the title screens\n"
                       "  --roulette           the round winner spins for a prize before the next round\n"
+                      "  --connect ADDRESS    join the network game at host or host:port at once\n"
+                      "  --host [PORT]        host a network game at once (default port 27410)\n"
                       "  --seed N             random seed\n"
                       "  --mute               no sound\n"
                       "  --native             640x480 window\n"
@@ -134,6 +140,12 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--intro-shot") o.introShot = std::atoi(next().c_str());
         else if (a == "--movie-shot") o.movieShot = std::atoi(next().c_str());
         else if (a == "--campaign") o.campaign = next();
+        else if (a == "--connect") o.connect = next(), o.noIntro = true;
+        else if (a == "--host") {
+            o.host = ab::net::kDefaultPort;
+            o.noIntro = true;
+            if (i + 1 < argc && std::isdigit(static_cast<unsigned char>(argv[i + 1][0]))) o.host = std::clamp(std::atoi(argv[++i]), 1, 65535);
+        }
         else if (a == "--roulette-shot") o.roulette = o.rouletteShot = true;
         else {
             std::fprintf(stderr, "ERROR unknown argument %s (see --help)\n", a.c_str());
@@ -141,7 +153,7 @@ Options parseArgs(int argc, char** argv) {
         }
     }
     o.players = std::clamp(o.players, 1, ab::kMaxPlayers);
-    if (o.demo || o.frames > 0) o.menu = o.menuShot != 0 || !o.script.empty();
+    if (o.demo || o.frames > 0) o.menu = o.menuShot != 0 || !o.script.empty() || !o.connect.empty() || o.host > 0;
     return o;
 }
 
@@ -321,12 +333,7 @@ const char* controlName(Control c) {
 }
 
 constexpr int kOptionRows = 14;
-enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor, AudioAdjust, Movie };
-
-// Level names, original messages 150-160.
-const char* const kLevelName[11] = {"Green Acres",   "Classic Green Acres", "The Hockey Rink",  "Ancient Egypt",
-                                    "The Coal Mine", "The Beach",           "Aliens",           "Haunted House",
-                                    "Under the Ocean", "Deep Forest Green", "Inner City Trash"};
+enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor, AudioAdjust, Movie, Net };
 
 using ab::SchemeEntry;
 
@@ -577,6 +584,7 @@ int main(int argc, char** argv) {
             screen = Screen::Editor;
         }
         if (opt.menuShot == 5) openHelp("credits.bm", Screen::MainMenu);
+        const int netShot = opt.menuShot;  // 10 join, 11 host, 12 lobby of a hosted game, 13 a hosted match
         if (opt.menuShot == 6) openHelp("manual.bm", Screen::MainMenu);
 
         ab::RenderSnapshot previous;
@@ -623,6 +631,32 @@ int main(int argc, char** argv) {
             if (cfg.disableGameMusic) audio.stopMusic();
             else audio.playMusic(1100 + level);
         };
+        // Network play: the screens behind "Start Network Game" and "Join Network Game".
+        ab::NetUi::Hooks netHooks;
+        netHooks.roundStarted = [&](int lv) {
+            if (!opt.shapes && spritesPtr->level() != lv) {
+                spritesPtr = std::make_unique<ab::SpriteBank>();
+                spritesPtr->load(opt.gameDir, lv);
+            }
+            if (!sound) return;
+            if (cfg.disableGameMusic) audio.stopMusic();
+            else audio.playMusic(1100 + lv);
+        };
+        netHooks.stepped = [&](ab::World& w) { playEvents(w, audio); };
+        netHooks.resultShown = [&](bool draw, bool decided) {
+            if (!sound) return;
+            audio.playMusic(1130);
+            if (draw) audio.playRange(1700, 1999);
+            else if (decided) audio.playRange(2000, 2299);
+        };
+        netHooks.lobbyEntered = [&]() {
+            if (sound) audio.playMusic(1020);
+        };
+        netHooks.sound = [&](int id) {
+            if (sound) audio.playRange(id, id == 40 ? 49 : id);
+        };
+        netHooks.settingsChanged = [&]() { saveSettings(); };
+        ab::NetUi net(cfg, opt.gameDir, userSchemesDir, netHooks);
         // What the original resets once per match (0x421793): scores, kills and, with
         // "random start", the start positions: 200 swaps of two of the ten.
         auto newMatch = [&]() {
@@ -875,6 +909,32 @@ int main(int argc, char** argv) {
             }
         };
 
+        if (haveMenu && netShot >= 10 && netShot <= 13) {
+            if (netShot == 10) net.openJoin();
+            if (netShot == 11) net.openHost();
+            if (netShot >= 12) net.hostNow(27497, netShot == 13);
+            screen = Screen::Net;
+        }
+        if (haveMenu && !opt.connect.empty()) {
+            net.joinNow(opt.connect);
+            screen = Screen::Net;
+        } else if (haveMenu && opt.host > 0) {
+            net.hostNow(opt.host, false);
+            screen = Screen::Net;
+        }
+        if (screen == Screen::Net && sound) audio.playMusic(1020);
+        // Leaving the network screens: the menu again, with the local game's level graphics.
+        auto leaveNet = [&]() {
+            screen = Screen::MainMenu;
+            menuIdleSince = SDL_GetTicks();
+            if (!opt.shapes && spritesPtr->level() != level) {
+                spritesPtr = std::make_unique<ab::SpriteBank>();
+                spritesPtr->load(opt.gameDir, level);
+            }
+            if (sound) audio.playMusic(1010);
+        };
+
+        int netResultFrames = 0;
         bool paused = false;
         int frame = 0;
         int step = 0;
@@ -917,6 +977,14 @@ int main(int argc, char** argv) {
                     }
                     continue;
                 }
+                if (screen == Screen::Net) {
+                    if (e.type == SDL_EVENT_TEXT_INPUT) net.text(e.text.text);
+                    // Held Backspace repeats; nothing else does.
+                    if (e.type == SDL_EVENT_KEY_DOWN && (!e.key.repeat || e.key.key == SDLK_BACKSPACE))
+                        net.key(e.key.key, (e.key.mod & SDL_KMOD_CTRL) != 0);
+                    if (net.finished()) leaveNet();
+                    continue;
+                }
                 if (e.type != SDL_EVENT_KEY_DOWN || e.key.repeat) continue;
                 const SDL_Keycode key = e.key.key;
                 menuIdleSince = SDL_GetTicks();
@@ -955,6 +1023,12 @@ int main(int argc, char** argv) {
                             } else {
                                 screen = Screen::PlayerList;
                             }
+                        }
+                        if (menuItem == 1 || menuItem == 2) {  // Start Network Game, Join Network Game
+                            if (sound) audio.playMusic(1020);
+                            if (menuItem == 1) net.openHost();
+                            else net.openJoin();
+                            screen = Screen::Net;
                         }
                         if (menuItem == 3) {
                             screen = Screen::Options;
@@ -1281,6 +1355,16 @@ int main(int argc, char** argv) {
             int h = 0;
             SDL_GetWindowSizeInPixels(window, &w, &h);
 
+            if (screen == Screen::Net) {
+                // This player's controller: the first key set or the first gamepad.
+                ab::PlayerInput local = keyboardInput(SDL_GetKeyboardState(nullptr), cfg.keys[0]);
+                const ab::PlayerInput pad = gamepadInput(pads[0]);
+                for (std::size_t d = 0; d < 4; ++d) local.dir[d] = local.dir[d] || pad.dir[d];
+                local.button1 = local.button1 || pad.button1;
+                local.button2 = local.button2 || pad.button2;
+                net.update(ab::net::clockMs(), local);
+                if (opt.frames > 0) SDL_Delay(5);  // automated runs: the network runs on the real clock
+            }
             if (screen == Screen::Match) {
                 accumulatorMs += std::min(frameMs, 250.0);
                 if (paused) accumulatorMs = singleStep ? kStepMs : 0.0;
@@ -1412,7 +1496,8 @@ int main(int argc, char** argv) {
                     leaveRoulette();
                 }
             }
-            if (const bool want = screen == Screen::Editor && editor.wantsTextInput(); want != textInputOn) {
+            if (const bool want = (screen == Screen::Editor && editor.wantsTextInput()) || (screen == Screen::Net && net.wantsTextInput());
+                want != textInputOn) {
                 textInputOn = want;
                 if (want) SDL_StartTextInput(window);
                 else SDL_StopTextInput(window);
@@ -1467,6 +1552,8 @@ int main(int argc, char** argv) {
                     }
                     renderer.end();
                 }
+            } else if (screen == Screen::Net) {
+                net.draw(renderer, *spritesPtr, w, h, frame, ab::net::clockMs());
             } else if (screen == Screen::Roulette && roulette) {
                 static const char* const kPower[ab::kPowTypeCount] = {"bomb", "flame", "disease", "kicker", "skate", "punch", "grab",
                                                                     "spooge", "goldflame", "trigger", "jelly", "disease3", "random", "clog"};
@@ -1702,7 +1789,7 @@ int main(int argc, char** argv) {
                         }
                 }
                 const std::string lines[4] = {
-                    randomLevel ? "Random Each Game" : kLevelName[level],
+                    randomLevel ? "Random Each Game" : ab::kLevelName[level],
                     schemes.empty() ? std::string("(built-in arena)") : "Scheme: " + schemes[static_cast<std::size_t>(schemeIndex)].title,
                     std::to_string(winsNeeded) + (cfg.winByKills ? " Kills" : " Wins") + " to win match",  // messages 211, 208/209
                     std::string("Team play: ") + (teamPlay ? "ON (teams from the scheme)" : "OFF")};
@@ -1728,9 +1815,7 @@ int main(int argc, char** argv) {
                 // Original layout: heading at (40,140), list from (70,170) every 24 px (values 705/710).
                 renderer.text(*spritesPtr, "Available players:", 41, 141, 0, 0, 0);
                 renderer.text(*spritesPtr, "Available players:", 40, 140, 1, 1, 1);
-                static const float colour[ab::kMaxPlayers][3] = {
-                    {0.95f, 0.95f, 0.95f}, {0.55f, 0.55f, 0.55f}, {0.90f, 0.15f, 0.15f}, {0.20f, 0.35f, 0.95f}, {0.15f, 0.80f, 0.20f},
-                    {0.95f, 0.90f, 0.15f}, {0.15f, 0.85f, 0.85f}, {0.90f, 0.20f, 0.90f}, {0.95f, 0.55f, 0.10f}, {0.55f, 0.20f, 0.90f}};
+                const auto& colour = ab::kSeatColour;
                 for (int i = 0; i < ab::kMaxPlayers; ++i) {
                     std::string line = "Player " + std::to_string(i + 1) + ": " + controlName(control[static_cast<std::size_t>(i)]);
                     if (teamPlay && control[static_cast<std::size_t>(i)] != Control::Off)
@@ -1755,6 +1840,10 @@ int main(int argc, char** argv) {
 
             ++frame;
             if (opt.resultShot && screen == Screen::Match && world.roundOver() && roundOverSteps == 50) {
+                if (!opt.screenshot.empty()) writePpm(opt.screenshot, w, h);
+                running = false;
+            }
+            if (opt.resultShot && screen == Screen::Net && net.showingResult() && ++netResultFrames == 30) {
                 if (!opt.screenshot.empty()) writePpm(opt.screenshot, w, h);
                 running = false;
             }

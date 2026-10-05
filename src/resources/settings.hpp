@@ -25,6 +25,11 @@ struct Settings {
     int musicVolume = 100;            // music_volume, sound_volume: 0-100 (not in the original, whose
     int soundVolume = 100;            // "Adjust Audio" screen was never made)
     bool assignKeyboards = true;      // assign_keyboards: a keyboard player in the default player list
+    // Network play (this implementation's client-server mode; not the original's keys).
+    std::string netName;              // net_name: the player's name; empty until first set
+    std::string netAddress;           // net_address: the server last joined
+    std::string netServerName;        // net_server_name: name of a game hosted from the menu
+    int netPort = 27410;              // net_port: port of a game hosted from the menu
     // keydef=set,index,code: two keyboard sets of six keys (up, right, down, left,
     // action 1, action 2) as DirectInput key codes, which are PC scan codes. Defaults
     // as in the original: arrows, Space, Enter; and R, G, F, D, S, A.

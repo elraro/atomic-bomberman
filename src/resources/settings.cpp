@@ -47,6 +47,10 @@ void Settings::parse(const std::string& text) {
         else if (key == "smallmemory") smallMemory = n != 0;
         else if (key == "music_volume") musicVolume = std::clamp(n, 0, 100);
         else if (key == "sound_volume") soundVolume = std::clamp(n, 0, 100);
+        else if (key == "net_name") netName = value.substr(0, 16);
+        else if (key == "net_address") netAddress = value.substr(0, 64);
+        else if (key == "net_server_name") netServerName = value.substr(0, 32);
+        else if (key == "net_port") netPort = n >= 1 && n <= 65535 ? n : netPort;
         else if (key == "keydef") {
             int set = -1, slot = -1, code = 0;
             if (std::sscanf(value.c_str(), "%d,%d,%d", &set, &slot, &code) == 3 && set >= 0 && set < kKeySets && slot >= 0 &&
@@ -74,7 +78,8 @@ std::string Settings::serialize() const {
         << "\nstomped_bombs_detonate=" << stompedBombsDetonate << "\nwin_by_kills=" << winByKills << "\ngoldman=" << goldman
         << "\nschemefilename=" << scheme << ".SCH\nplaytime=" << playTime << "\ndiseases_destroyable=" << diseasesDestroyable
         << "\ndisable_game_music=" << disableGameMusic << "\nassign_keyboards=" << assignKeyboards << "\nsmallmemory=" << smallMemory
-        << "\nmusic_volume=" << musicVolume << "\nsound_volume=" << soundVolume << "\n";
+        << "\nmusic_volume=" << musicVolume << "\nsound_volume=" << soundVolume << "\nnet_name=" << netName << "\nnet_address="
+        << netAddress << "\nnet_server_name=" << netServerName << "\nnet_port=" << netPort << "\n";
     for (int set = 0; set < kKeySets; ++set)
         for (int slot = 0; slot < kKeysPerSet; ++slot)
             out << "keydef=" << set << "," << slot << "," << keys[static_cast<std::size_t>(set)][static_cast<std::size_t>(slot)] << "\n";
