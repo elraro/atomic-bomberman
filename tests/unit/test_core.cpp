@@ -2029,6 +2029,23 @@ void testFreeAssets() {
             CHECK(inGrid(e.cell) || (e.type == ExtraType::Trampoline && e.cell.x == -1));
         }
     CHECK(extras > 30);
+    // Campaigns: every stage names an arena of the set and a real level, and has an enemy to clear.
+    int stagesSeen = 0;
+    for (const char* name : {"first-steps", "night-shift", "gauntlet"}) {
+        const auto stages = loadCampaignFile(dir + "/data/res/" + name + ".cam");
+        CHECK(stages.has_value() && stages->size() >= 6);
+        if (!stages) continue;
+        for (const CampaignStage& st : *stages) {
+            ++stagesSeen;
+            bool arena = false;
+            for (const SchemeEntry& entry : schemes) arena = arena || entry.file == st.scheme;
+            CHECK(arena);
+            CHECK(st.level >= 0 && st.level <= 10 && !st.name.empty());
+            CHECK(st.rovers + st.ghosts > 0 && st.computerPlayers <= 8);
+            CHECK((st.rovers == 0 || st.roverSpeed > 0) && (st.ghosts == 0 || st.ghostSpeed > 0));
+        }
+    }
+    CHECK_EQ(stagesSeen, 24);
     CHECK(loadHelpFile(dir + "/manual.bm").has_value() && loadHelpFile(dir + "/credits.bm").has_value());
     // With sounds asked for, the folder is completed; asked again, nothing is rewritten.
     CHECK(ensureFreeAssets(dir, true));

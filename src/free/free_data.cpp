@@ -12,7 +12,7 @@ namespace ab {
 namespace {
 
 // Raised whenever the written files change, so an older folder is renewed.
-const char* const kMarker = "atomic-bomberman-modern free asset set, version 3\n"
+const char* const kMarker = "atomic-bomberman-modern free asset set, version 4\n"
                             "Made by the program itself; contains nothing from the original game.\n"
                             "This folder is rewritten when the program is updated: do not keep your own files here.\n";
 
@@ -125,6 +125,47 @@ const char* const kExtras[11] = {
     "-C,W,3,8\n-C,W,4,8\n-C,W,5,8\n-C,W,6,8\n-C,W,7,8\n-C,W,8,8\n-C,W,9,8\n-C,W,10,8\n-C,W,11,8\n",  // two conveyor belts
 };
 
+// Campaigns of the free set. One stage per line:
+//   -C,name,level,arena,rovers,rover speed,ghosts,ghost speed,computer players,difficulty
+// Speeds are hundredths of a pixel per step; rovers cannot pass bricks, ghosts can.
+struct Campaign {
+    const char* file;
+    const char* text;
+};
+
+const Campaign kCampaigns[] = {
+    {"first-steps",
+     "; First Steps: a gentle start.\n"
+     "-C,A Lonely Rover,0,arena,1,300,0,0,0,50\n"
+     "-C,Rovers in the Brickyard,1,basic,2,300,0,0,0,50\n"
+     "-C,Something in the Walls,7,basic,0,0,1,120,0,50\n"
+     "-C,A Rival Appears,0,basic,1,350,0,0,1,50\n"
+     "-C,Open Ground,5,open,3,350,1,130,0,50\n"
+     "-C,Graduation,3,cross,2,400,2,140,1,50\n"},
+    {"night-shift",
+     "; Night Shift: ghosts, and more ghosts.\n"
+     "-C,Lights Out,7,arena,0,0,2,130,0,50\n"
+     "-C,Through the Bricks,7,basic,0,0,3,140,0,50\n"
+     "-C,Four Rooms and a Ghost,4,rooms,0,0,3,150,0,50\n"
+     "-C,Cold Company,2,ring,0,0,4,150,0,50\n"
+     "-C,Deep Water,8,diagonal,0,0,5,160,1,50\n"
+     "-C,The Long Corridor,9,lanes,1,400,5,170,0,50\n"
+     "-C,Midnight,7,open,0,0,8,180,1,50\n"},
+    {"gauntlet",
+     "; Gauntlet: everything at once, through every level.\n"
+     "-C,Warm-up,0,basic,2,350,1,130,0,50\n"
+     "-C,Classic Trouble,1,cross,3,400,1,140,1,50\n"
+     "-C,Slippery,2,arena,4,400,2,140,0,50\n"
+     "-C,Follow the Arrows,3,diagonal,3,450,2,150,1,50\n"
+     "-C,Down the Mine,4,rooms,4,450,2,150,1,50\n"
+     "-C,Beach Party,5,open,5,450,3,160,1,50\n"
+     "-C,Not From Here,6,ring,4,500,3,160,2,50\n"
+     "-C,House Guests,7,lanes,3,500,5,170,1,50\n"
+     "-C,Under Pressure,8,basic,5,500,4,170,2,50\n"
+     "-C,Lost in the Woods,9,cross,5,550,5,180,2,50\n"
+     "-C,Rush Hour,10,open,6,600,6,190,3,50\n"},
+};
+
 const char* const kManual =
     "ATOMIC BOMBERMAN - MODERN\n"
     "Manual of the free asset set\n"
@@ -172,7 +213,12 @@ const char* const kManual =
     "Join Network Game. Type to chat in the lobby, T in a match.\n"
     "\n"
     "HIDDEN\n"
-    "Ctrl-E six times on the main menu opens the arena editor.\n";
+    "Ctrl-E six times on the main menu opens the arena editor.\n"
+    "C five times on the player list opens campaign mode: stages\n"
+    "against rovers (they keep to the open ground) and ghosts (they\n"
+    "drift through bricks). Clear every enemy to go on. Three\n"
+    "campaigns come with the free set: first-steps, night-shift\n"
+    "and gauntlet.\n";
 
 const char* const kCredits =
     "ATOMIC BOMBERMAN - MODERN\n"
@@ -220,6 +266,7 @@ bool ensureFreeAssets(const std::string& dir, bool withSounds) {
     for (const Arena& a : kArenas) ok = writeText(root / "data" / "schemes" / (std::string(a.file) + ".sch"), arenaText(a)) && ok;
     for (int level = 0; level < 11; ++level)
         ok = writeText(root / "data" / "res" / ("extra" + std::to_string(level) + ".res"), kExtras[level]) && ok;
+    for (const Campaign& c : kCampaigns) ok = writeText(root / "data" / "res" / (std::string(c.file) + ".cam"), c.text) && ok;
     ok = writeText(root / "manual.bm", kManual) && ok;
     ok = writeText(root / "credits.bm", kCredits) && ok;
 
