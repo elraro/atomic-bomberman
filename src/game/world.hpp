@@ -118,12 +118,20 @@ enum class EventKind : std::uint8_t {
     Hurry,
     PlayerDied,
     HeadHit,
-    Pickup,
+    Pickup,          // a powerup other than a disease
+    PickupJelly,     // the jelly powerup has its own sound
+    PickupAwesome,   // the 7th good pickup of the round and every 5th after it
+    DiseaseGot,      // value = disease index
+    BombPooped,      // a bomb dropped by the "drops bombs" diseases
+    BombString,      // the last bomb of a capacity of value 651 or more was laid
+    Warped,
+    TrampolineJump,
 };
 
 struct Event {
     EventKind kind;
     int player = -1;
+    int value = 0;
 };
 
 struct PlayerInput {
@@ -167,6 +175,7 @@ struct Player {
     int team = 0;       // 0 or 1; only meaningful in team play
     int kills = 0;
     int killedBy = -1;  // player index, or -1
+    int goodPickups = 0; // powerups picked up this round, diseases apart
     bool human = true;   // campaign: only human players respawn and are hurt by enemies
     int lives = 0;       // campaign: respawns left
     int score = 0;       // campaign points
@@ -410,7 +419,7 @@ private:
     void updateExtras();
     void updateSpecial(int i, int dt);
     std::vector<Event> events_;
-    void emit(EventKind kind, int player = -1) { events_.push_back({kind, player}); }
+    void emit(EventKind kind, int player = -1, int value = 0) { events_.push_back({kind, player, value}); }
 
     std::array<Tile, kGridW * kGridH> tiles_{};
     std::array<Flame, kGridW * kGridH> flames_{};

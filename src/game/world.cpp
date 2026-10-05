@@ -786,6 +786,7 @@ void World::cureDiseases(Player& p) {
 void World::giveDisease(int playerIndex) {
     Player& p = players_[static_cast<std::size_t>(playerIndex)];
     const int d = rng_.below(kDiseaseCount);
+    emit(EventKind::DiseaseGot, playerIndex, d);
     if (d == kDisSwap) {
         // Trade places with a random other living player.
         for (int attempt = 0; attempt < 200; ++attempt) {
@@ -852,6 +853,13 @@ void World::pickUp(int playerIndex, int type) {
         for (int n = 0; n < 3; ++n) giveDisease(playerIndex);
         return;
     }
+
+    // Sound: the jelly has its own; the 7th good pickup of the round and every 5th after
+    // it is "awesome" (original 0x41E4FB; the count wraps from 51 back to 7).
+    ++p.goodPickups;
+    const bool awesome = p.goodPickups >= 7 && (p.goodPickups - 7) % 5 == 0;
+    if (p.goodPickups > 50) p.goodPickups = 7;
+    emit(awesome ? EventKind::PickupAwesome : type == kPowJelly ? EventKind::PickupJelly : EventKind::Pickup, playerIndex);
 
     ++p.inventory[static_cast<std::size_t>(type)];
     switch (type) {
@@ -1075,7 +1083,6 @@ void World::checkPickup(int i) {
     if (!inGrid(c) || powerups_[index(c)].state != PowerupState::Revealed) return;
     const int type = powerups_[index(c)].type;
     powerups_[index(c)] = {};
-    emit(EventKind::Pickup, i);
     pickUp(i, type);
 }
 
@@ -1139,11 +1146,13 @@ bool World::movePlayer(int i, Dir requested) {
                     for (const Extra& o : extras_)
                         if (&o != &e && o.type == ExtraType::Warp && o.id == e.linkTo) dest = o.cell;
                     p.special = Special::WarpOut;
+                    emit(EventKind::Warped, i);
                     p.warpX = cellToPixelX(dest.x);
                     p.warpY = cellToPixelY(dest.y);
                 } else if (e.type == ExtraType::Trampoline) {
                     e.animFrame = 1;
                     p.special = Special::Trampoline;
+                    emit(EventKind::TrampolineJump, i);
                     p.warpX = 0;
                 }
                 if (p.special != Special::None) {
@@ -1215,8 +1224,13 @@ void World::dropBomb(int i, Cell cell, int delayFrames) {
     if (p.disease[kDisShortFlame]) range = 1;
     if (p.inventory[kPowGoldflame] > 0) range = std::max(kGridW, kGridH);
     const int fuse = p.disease[kDisShortFuse] ? p.fuseFrames / 3 : p.fuseFrames;
+    int out = 0;
+    for (const Bomb& b : bombs_) out += b.active && b.owner == i ? 1 : 0;
     if (createBomb(i, cell, type, range, fuse)) {
-        emit(EventKind::BombDropped, i);
+        const bool forcedDrop = p.disease[kDisDropBombs] || p.disease[kDisFastDrop];
+        if (p.inventory[kPowBomb] >= values_.get(vid::kBombStringSize) && out == p.inventory[kPowBomb] - 1)
+            emit(EventKind::BombString, i);
+        emit(forcedDrop ? EventKind::BombPooped : EventKind::BombDropped, i);
         // The newest bomb of this owner in that cell gets the start delay.
         // Now and then (not before the dud timer has run out) a regular bomb is a dud.
         bool dud = false;

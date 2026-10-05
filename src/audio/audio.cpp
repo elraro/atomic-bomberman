@@ -92,6 +92,21 @@ const std::vector<std::uint8_t>* Audio::load(const std::string& name) {
     return &cache_.emplace(name, std::move(data)).first->second;
 }
 
+void Audio::playSeries(int baseId) {
+    if (!ready_ || names_.find(baseId) == names_.end()) return;
+    int last = baseId;
+    while (names_.find(last + 1) != names_.end()) ++last;
+    int pick = baseId;
+    for (int tries = 0; tries < 8; ++tries) {
+        rng_ = rng_ * 1664525u + 1013904223u;
+        pick = baseId + static_cast<int>((rng_ >> 16) % static_cast<unsigned>(last - baseId + 1));
+        const auto it = lastOfSeries_.find(baseId);
+        if (last == baseId || it == lastOfSeries_.end() || it->second != pick) break;
+    }
+    lastOfSeries_[baseId] = pick;
+    playRange(pick, pick);
+}
+
 void Audio::playRange(int firstId, int lastId) {
     if (!ready_) return;
     std::vector<const std::string*> candidates;

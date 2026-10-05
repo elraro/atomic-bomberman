@@ -46,6 +46,8 @@ Values Values::defaults() {
     v.set(322, 3);
     v.set(323, 120);
     v.set(330, 13);
+    v.set(650, 4);
+    v.set(651, 4);
     v.set(665, 2);
     v.set(667, 3);
     v.set(1000, 320);

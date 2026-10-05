@@ -209,19 +209,33 @@ ab::PlayerInput gamepadInput(SDL_Gamepad* pad) {
 void playEvents(ab::World& world, ab::Audio& audio) {
     for (const ab::Event& e : world.takeEvents()) {
         switch (e.kind) {
-            case ab::EventKind::BombDropped: audio.playRange(100, 109); break;
-            case ab::EventKind::BombKicked: audio.playRange(122, 129); break;
-            case ab::EventKind::BombStopped: audio.playRange(130, 134); break;
-            case ab::EventKind::BombPunched: audio.playRange(150, 159); break;
-            case ab::EventKind::BombBounced: audio.playRange(160, 169); break;
-            case ab::EventKind::BombGrabbed: audio.playRange(170, 171); break;
-            case ab::EventKind::BombThrown: audio.playRange(172, 175); break;
-            case ab::EventKind::BombExploded: audio.playRange(200, 299); break;
-            case ab::EventKind::WallBlock: audio.playRange(140, 142); break;
-            case ab::EventKind::Hurry: audio.playRange(2700, 2799); break;
-            case ab::EventKind::PlayerDied: audio.playRange(300, 301); break;
-            case ab::EventKind::HeadHit: audio.playRange(360, 369); break;
-            case ab::EventKind::Pickup: audio.playRange(400, 499); break;
+            // Sound ids as at the original's call sites; each is the first of a run of
+            // consecutive ids from which one is taken.
+            case ab::EventKind::BombDropped: audio.playSeries(100); break;
+            case ab::EventKind::BombPooped: audio.playSeries(550); break;
+            case ab::EventKind::BombString:
+                if (std::rand() % 4 == 0) audio.playSeries(1200);  // 1 in value 650
+                break;
+            case ab::EventKind::BombKicked: audio.playSeries(120); break;
+            case ab::EventKind::BombStopped: audio.playSeries(130); break;
+            case ab::EventKind::BombPunched: audio.playSeries(150); break;
+            case ab::EventKind::BombBounced: audio.playSeries(160); break;
+            case ab::EventKind::BombGrabbed: audio.playSeries(170); break;
+            case ab::EventKind::BombThrown: audio.playSeries(150); break;
+            case ab::EventKind::BombExploded: audio.playSeries(200); break;
+            case ab::EventKind::WallBlock: audio.playRange(140, 142); break;  // one of three, fixed in the original
+            case ab::EventKind::Hurry: audio.playSeries(2700); break;
+            case ab::EventKind::PlayerDied: audio.playSeries(300); break;
+            case ab::EventKind::HeadHit: audio.playSeries(360); break;
+            case ab::EventKind::Pickup: audio.playSeries(400); break;
+            case ab::EventKind::PickupJelly: audio.playSeries(135); break;
+            case ab::EventKind::PickupAwesome: audio.playSeries(1400); break;
+            case ab::EventKind::DiseaseGot:
+                // 1 in 3: the line for that disease (3000 + 50 per disease); else a general one.
+                audio.playSeries(std::rand() % 3 == 0 ? 3000 + 50 * e.value : 2300);
+                break;
+            case ab::EventKind::Warped: audio.playSeries(1330); break;
+            case ab::EventKind::TrampolineJump: audio.playSeries(350); break;
         }
     }
 }

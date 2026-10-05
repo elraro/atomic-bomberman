@@ -20,6 +20,9 @@ public:
     bool init(const std::string& gameDir);
     // Plays one sound chosen at random among the ids defined in [firstId, lastId].
     void playRange(int firstId, int lastId);
+    // As the original's sound call (0x427961): one of the run of consecutive ids that
+    // starts at baseId, not the one played last from that run; nothing if baseId is not defined.
+    void playSeries(int baseId);
     // Starts a looping tune by sound id (stops the previous one). Level music is id 1100 + level.
     void playMusic(int id);
     void stopMusic();
@@ -38,6 +41,7 @@ private:
     SDL_AudioStream* music_ = nullptr;
     const std::vector<std::uint8_t>* musicData_ = nullptr;
     std::uint32_t rng_ = 12345;
+    std::map<int, int> lastOfSeries_;
 };
 
 }  // namespace ab

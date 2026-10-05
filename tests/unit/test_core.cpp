@@ -1055,6 +1055,54 @@ void testSchemePowers() {
     CHECK_EQ(f.w.player(0).inventory[kPowBomb], 1);
 }
 
+void testSoundEvents() {
+    Fixture f;
+    f.place(0, {0, 0});
+    f.place(1, {14, 10});
+    f.w.takeEvents();
+    // Six good pickups are plain, the seventh is "awesome"; the jelly has its own event.
+    int plain = 0, awesome = 0, jelly = 0;
+    for (int n = 0; n < 7; ++n) {
+        f.w.placePowerup({0, 0}, n == 2 ? kPowJelly : kPowFlame, PowerupState::Revealed);
+        f.run(1);
+        for (const Event& e : f.w.takeEvents()) {
+            plain += e.kind == EventKind::Pickup ? 1 : 0;
+            awesome += e.kind == EventKind::PickupAwesome ? 1 : 0;
+            jelly += e.kind == EventKind::PickupJelly ? 1 : 0;
+        }
+    }
+    CHECK_EQ(plain, 5);
+    CHECK_EQ(jelly, 1);
+    CHECK_EQ(awesome, 1);
+    // A disease reports which one it was, and no pickup sound.
+    f.w.placePowerup({0, 0}, kPowDisease, PowerupState::Revealed);
+    f.run(1);
+    int diseases = 0, pickups = 0;
+    for (const Event& e : f.w.takeEvents()) {
+        if (e.kind == EventKind::DiseaseGot) {
+            ++diseases;
+            CHECK(e.value >= 0 && e.value < kDiseaseCount);
+        }
+        pickups += e.kind == EventKind::Pickup || e.kind == EventKind::PickupAwesome ? 1 : 0;
+    }
+    CHECK_EQ(diseases, 1);
+    CHECK_EQ(pickups, 0);
+    // The last bomb of a big capacity raises the "string of bombs" event.
+    Fixture g(Scheme::pillars());
+    g.place(0, {0, 0});
+    g.place(1, {14, 10});
+    g.w.player(0).inventory[kPowBomb] = 4;
+    g.w.takeEvents();
+    int strings = 0;
+    for (int n = 0; n < 4; ++n) {
+        g.place(0, {2 * n, 0});
+        g.press1(0);
+        g.run(1);                                       // button released
+        for (const Event& e : g.w.takeEvents()) strings += e.kind == EventKind::BombString ? 1 : 0;
+    }
+    CHECK_EQ(strings, 1);
+}
+
 void testSettings() {
     Settings s;
     s.parse("levelno=4\nnum_to_win_match=3\nenclosement_depth=9\nconveyor_speed=2\nteam_play=1\nrandom_start=1\n"
@@ -1583,6 +1631,7 @@ int main() {
         {"trapped animation", testTrappedAnimation},
         {"roulette", testRoulette},
         {"settings", testSettings},
+        {"sound events", testSoundEvents},
         {"scheme powers", testSchemePowers},
         {"campaign file", testCampaignFile},
         {"campaign enemies", testCampaignEnemies},
