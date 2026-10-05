@@ -53,6 +53,7 @@ struct Options {
     bool roulette = false;    // the "goldman" roulette between rounds (original option goldman)
     std::string campaign;     // --campaign NAME: start that campaign file (data/res/NAME.cam) at once
     int introShot = 0;        // automated: start on intro screen N (1-3)
+    int attractSeconds = -1;  // --attract-seconds N: idle time on the menu before the demo (default: value 92)
     bool noIntro = false;     // --no-intro: go straight to the main menu
     bool levelSet = false;    // --level, --wins, --scheme given: they win over the saved settings
     bool winsSet = false;
@@ -79,6 +80,7 @@ Options parseArgs(int argc, char** argv) {
                       "  --humans N           keyboard players, 0-2\n"
                       "  --wins N             round wins needed for the match\n"
                       "  --campaign NAME      play a campaign file of the game data (simple, ghosts, crouton)\n"
+                      "  --attract-seconds N  idle seconds on the menu before a demo round starts (default 30)\n"
                       "  --no-intro           skip the logo and title screens\n"
                       "  --roulette           the round winner spins for a prize before the next round\n"
                       "  --seed N             random seed\n"
@@ -120,6 +122,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--native") o.native = true;
         else if (a == "--roulette") o.roulette = true;
         else if (a == "--no-intro") o.noIntro = true;
+        else if (a == "--attract-seconds") o.attractSeconds = std::atoi(next().c_str());
         else if (a == "--intro-shot") o.introShot = std::atoi(next().c_str());
         else if (a == "--campaign") o.campaign = next();
         else if (a == "--roulette-shot") o.roulette = o.rouletteShot = true;
@@ -648,6 +651,23 @@ int main(int argc, char** argv) {
             helpListReturn = back;
             screen = Screen::HelpList;
         };
+        // Attract mode (original 0x42BB52): after value 92 (30) idle seconds on the main menu
+        // a demo round is played by computer players, then the menu and its settings return.
+        bool attract = false;
+        Uint64 menuIdleSince = SDL_GetTicks();
+        std::array<Control, ab::kMaxPlayers> savedControl{};
+        int savedLevel = 0;
+        bool savedRandomLevel = false, savedTeamPlay = false;
+        auto endAttract = [&]() {
+            attract = false;
+            control = savedControl;
+            level = savedLevel;
+            randomLevel = savedRandomLevel;
+            teamPlay = savedTeamPlay;
+            screen = Screen::MainMenu;
+            menuIdleSince = SDL_GetTicks();
+            if (sound) audio.playMusic(1010);
+        };
         int introStep = 0;
         Uint64 introStart = 0;
         bool running = true;
@@ -779,6 +799,11 @@ int main(int argc, char** argv) {
                 if (e.type == SDL_EVENT_QUIT) running = false;
                 if (e.type != SDL_EVENT_KEY_DOWN || e.key.repeat) continue;
                 const SDL_Keycode key = e.key.key;
+                menuIdleSince = SDL_GetTicks();
+                if (attract) {  // any key ends the demo
+                    endAttract();
+                    continue;
+                }
                 // F1 opens the help file list from every game screen, as in the original (0x41431C).
                 if (key == SDLK_F1 && haveMenu &&
                     (screen == Screen::MainMenu || screen == Screen::PlayerList || screen == Screen::LevelSetup ||
@@ -1078,6 +1103,10 @@ int main(int argc, char** argv) {
                     playEvents(world, audio);
                     accumulatorMs -= kStepMs;
                     ++step;
+                    if (attract && world.roundOver()) {  // one round, no result screen
+                        endAttract();
+                        break;
+                    }
                     if (campaignMode && world.roundOver()) {
                         // Stage result (original 0x42A63B): a notice on failure, then the next
                         // stage, or the same one again if no human player was left.
@@ -1150,6 +1179,30 @@ int main(int argc, char** argv) {
                         beginMatch();
                         playLevelMusic();
                     }
+                }
+            }
+            {
+                const int idle = opt.attractSeconds >= 0 ? opt.attractSeconds : values.get(92);
+                if (screen != Screen::MainMenu) menuIdleSince = SDL_GetTicks();
+                if (screen == Screen::MainMenu && haveMenu && idle >= 5 && (opt.frames <= 0 || opt.attractSeconds >= 0) &&
+                    SDL_GetTicks() - menuIdleSince > static_cast<Uint64>(idle) * 1000u) {
+                    attract = true;
+                    savedControl = control;
+                    savedLevel = level;
+                    savedRandomLevel = randomLevel;
+                    savedTeamPlay = teamPlay;
+                    // max(3, 1..10) computer players in the first seats, a random level, no teams.
+                    const int n = std::max(3, appRng.below(10) + 1);
+                    for (int i = 0; i < ab::kMaxPlayers; ++i) control[static_cast<std::size_t>(i)] = i < n ? Control::Ai : Control::Off;
+                    randomLevel = false;
+                    level = appRng.below(11);
+                    teamPlay = false;
+                    campaignMode = false;
+                    newMatch();
+                    screen = Screen::Match;
+                    beginMatch();
+                    playLevelMusic();
+                    std::fprintf(stderr, "INFO  Attract mode players=%d level=%d\n", n, level);
                 }
             }
             if (screen == Screen::Roulette && roulette) {

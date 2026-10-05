@@ -550,3 +550,12 @@ Intro (`0x42B060`, picture routine `0x42A088`): tune 1000, pictures `iplogo`, `h
 Level screen (`0x406DE4`): two rows from value 735 (55,170, 24 px apart): the level name (message 150 + level, 149 "Random Each Game" for -1) and message 211 "%u Wins/Kills to win match". Whenever the level choice changes, `0x406AA3` draws a sample arena at value 730 = (400,100), 5 × 5 cells: first a piece of that level's `field%u` picture (5 cells + 20 px wide, 5 cells + 18 px high, placed 20 px left of the sample), then `tile %u solid` at odd column and odd row and, elsewhere except the top-left 2 × 2 cells, `tile %u brick` with 4 chances in 5. With "random" selected every tile comes from a random level. Confidence: HIGH for the tiles; MEDIUM for which part of the field picture is used and its vertical position (arguments not fully recovered).
 
 Modern: both implemented; the scheme and team rows of the modern level screen are additions.
+
+### Discovery: menu details (teams, checks, F1, exit question, keys, attract mode)
+
+- Player list (`0x4117xx`): `T` toggles the selected player's team (`0x4119DD`), `0` switches the seat off, `c` five times opens the campaign chooser. Start checks at `0x411BA9`: messages 45, 46 (skipped in campaign) and 48, each under the title "Problem!!" (96).
+- `0x41431C` (help file list, message 610 `*.BM`) is called from every screen's F1 key (scan value 0x13B), including the match (which pauses) and the roulette.
+- Key definitions: two sets of ten slots at `0x4645BC` (40 bytes per set), six used. Defaults at `0x406158`: C8 CD D0 CB 39 1C (arrows, Space, Enter) and 13 22 21 20 1F plus 1E or 10 chosen by the keyboard layout (R G F D S A/Q). Stored as `keydef=%u,%u,%u`.
+- Attract mode (`0x42BB52`): with value 92 (30) > 5, that many idle seconds on the main menu save the player list, level and team setting, switch teams off and start a match. Match setup (`0x41119E`) then makes max(3, rand%10+1) of the first seats computer players, the rest off, and picks level rand % value 35. Enter ends it (`0x42A562`); results are skipped (`0x42A6CB`); the menu restores the saved settings (`0x42B9F4`).
+
+Confidence: HIGH (static). All implemented in the application; in attract mode any key ends the demo (the original: Enter).
