@@ -1019,6 +1019,11 @@ void testSettings() {
     CHECK(s.scheme == "TESTLAB");
     CHECK_EQ(s.playTime, 60);          // below a minute becomes a minute
     CHECK(!s.diseasesDestroyable && s.disableGameMusic);
+    CHECK_EQ(s.keys[0][4], 0x39);      // defaults: Space is action 1 of the first set
+    CHECK_EQ(s.keys[1][0], 0x13);      // R is "up" of the second set
+    s.parse("keydef=1,5,16\nkeydef=0,0,17\nkeydef=2,0,30\nkeydef=0,9,30\n");
+    CHECK_EQ(s.keys[1][5], 16);
+    CHECK_EQ(s.keys[0][0], 17);
     Settings t;
     t.parse(s.serialize());            // round trip
     CHECK(t.serialize() == s.serialize());

@@ -43,6 +43,12 @@ void Settings::parse(const std::string& text) {
         else if (key == "playtime") playTime = n;
         else if (key == "diseases_destroyable") diseasesDestroyable = n != 0;
         else if (key == "disable_game_music") disableGameMusic = n != 0;
+        else if (key == "keydef") {
+            int set = -1, slot = -1, code = 0;
+            if (std::sscanf(value.c_str(), "%d,%d,%d", &set, &slot, &code) == 3 && set >= 0 && set < kKeySets && slot >= 0 &&
+                slot < kKeysPerSet && code > 0 && code < 256)
+                keys[static_cast<std::size_t>(set)][static_cast<std::size_t>(slot)] = code;
+        }
         else if (key == "schemefilename") {
             if (const auto dot = value.rfind('.'); dot != std::string::npos) value.erase(dot);
             if (!value.empty()) scheme = value;
@@ -64,6 +70,9 @@ std::string Settings::serialize() const {
         << "\nstomped_bombs_detonate=" << stompedBombsDetonate << "\nwin_by_kills=" << winByKills << "\ngoldman=" << goldman
         << "\nschemefilename=" << scheme << ".SCH\nplaytime=" << playTime << "\ndiseases_destroyable=" << diseasesDestroyable
         << "\ndisable_game_music=" << disableGameMusic << "\n";
+    for (int set = 0; set < kKeySets; ++set)
+        for (int slot = 0; slot < kKeysPerSet; ++slot)
+            out << "keydef=" << set << "," << slot << "," << keys[static_cast<std::size_t>(set)][static_cast<std::size_t>(slot)] << "\n";
     return out.str();
 }
 

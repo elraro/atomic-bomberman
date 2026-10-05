@@ -2,6 +2,7 @@
 // ("key=value" lines), so an original file can be read as it is.
 #pragma once
 
+#include <array>
 #include <string>
 
 namespace ab {
@@ -20,6 +21,13 @@ struct Settings {
     int playTime = 150;               // playtime in seconds; kInfiniteTime = no limit
     bool diseasesDestroyable = true;  // diseases_destroyable
     bool disableGameMusic = false;    // disable_game_music
+    // keydef=set,index,code: two keyboard sets of six keys (up, right, down, left,
+    // action 1, action 2) as DirectInput key codes, which are PC scan codes. Defaults
+    // as in the original: arrows, Space, Enter; and R, G, F, D, S, A.
+    static constexpr int kKeySets = 2;
+    static constexpr int kKeysPerSet = 6;
+    std::array<std::array<int, kKeysPerSet>, kKeySets> keys{{{0xC8, 0xCD, 0xD0, 0xCB, 0x39, 0x1C}, {0x13, 0x22, 0x21, 0x20, 0x1F, 0x1E}}};
+    void resetKeys() { keys = Settings().keys; }
 
     static constexpr int kInfiniteTime = 1001;
 
