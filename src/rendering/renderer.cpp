@@ -416,8 +416,13 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
         if (!p.alive) {
             // Death animation, one step per 50 ms, shown once.
             const std::string seq = "die green " + std::to_string(std::max(1, p.deathAnim));
-            if (p.dying && p.dyingFrames < bank.sequenceLength(seq))
-                sprite(bank, seq, p.dyingFrames, colour, static_cast<float>(p.x), static_cast<float>(p.y));
+            if (p.dying && (p.deathAnim == 9 || p.dyingFrames < bank.sequenceLength(seq))) {
+                // Death animation 9 (the angel) rises 4 px per frame, its frames repeating,
+                // until it has left the top of the screen (original 0x41F43A, value 106).
+                const float rise = p.deathAnim == 9 ? 4.0f * static_cast<float>(p.dyingFrames) : 0.0f;
+                if (static_cast<float>(p.y) - rise >= -20.0f)
+                    sprite(bank, seq, p.dyingFrames, colour, static_cast<float>(p.x), static_cast<float>(p.y) - rise);
+            }
             continue;
         }
         if (p.special == Special::WarpOut || p.special == Special::WarpIn) {
