@@ -89,3 +89,12 @@ A hidden, visibly unfinished mode of the original, recovered from `campaign.c` a
 ## Keyboard definitions
 
 Two keyboard sets of six keys: up, right, down, left, action 1, action 2. Defaults: the arrow keys, Space, Enter; and R, G, F, D, S, A (the last one is Q on a keyboard layout where that key sits there). Stored in `options.ini` as `keydef=set,index,code` with DirectInput key codes. [S] The "Define keyboard layouts" screen lists the twelve keys and "Return to default keys"; choosing a key asks "Press key for '…'". [S for the texts, M for the layout]
+
+## Scheme editor
+
+Described by the original's own `editor.bm` (first-party text); the original's code for it was not read, so the screen layout here is this implementation's. [M]
+
+- Entered with Ctrl-E pressed six times on the main menu. Menu: 1) edit a scheme file, 2) create a new one, Q) exit.
+- Editing: left mouse button places the selected brick, right button the selected player's start position. Tab or 1/2/3 choose open space / unbreakable / breakable; + and - choose the player; 0 switches between the level's tiles and the plain "line" tiles; N renames the scheme; D sets the brick density; Ctrl-B restores the basic grid; Ctrl-F fills the field with the selected brick (after a warning); T switches the selected player between the white and red team; P opens the powerup table; Esc leaves, offering to save under a file name.
+- Powerup table: for each of the 13 types "Modify" asks for the born-with amount, whether it is forbidden from randoms, whether it has an override and, if so, the override value.
+- Files are written in the original's scheme format. This implementation saves them to the user's scheme folder and never into the game data.

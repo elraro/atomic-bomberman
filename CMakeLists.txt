@@ -54,6 +54,7 @@ endif()
 if(SDL3_FOUND)
     add_executable(atomic
         src/app/main.cpp
+        src/app/editor.cpp
         src/rendering/gl.cpp
         src/rendering/renderer.cpp
         src/rendering/sprites.cpp

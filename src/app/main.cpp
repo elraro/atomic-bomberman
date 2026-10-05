@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "app/editor.hpp"
 #include "audio/audio.hpp"
 #include "game/ai.hpp"
 #include "game/roulette.hpp"
@@ -290,28 +291,14 @@ const char* controlName(Control c) {
 }
 
 constexpr int kOptionRows = 11;
-enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys };
+enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor };
 
 // Level names, original messages 150-160.
 const char* const kLevelName[11] = {"Green Acres",   "Classic Green Acres", "The Hockey Rink",  "Ancient Egypt",
                                     "The Coal Mine", "The Beach",           "Aliens",           "Haunted House",
                                     "Under the Ocean", "Deep Forest Green", "Inner City Trash"};
 
-struct SchemeEntry {
-    std::string file;  // name without extension
-    std::string title;
-};
-
-std::vector<SchemeEntry> listSchemes(const std::string& gameDir) {
-    std::vector<SchemeEntry> out;
-    std::error_code ec;
-    for (const auto& e : std::filesystem::directory_iterator(gameDir + "/data/schemes", ec)) {
-        if (e.path().extension() != ".sch") continue;
-        if (auto sf = ab::loadSchemeFile(e.path().string())) out.push_back({e.path().stem().string(), sf->name});
-    }
-    std::sort(out.begin(), out.end(), [](const SchemeEntry& a, const SchemeEntry& b) { return a.file < b.file; });
-    return out;
-}
+using ab::SchemeEntry;
 
 int main(int argc, char** argv) {
     Options opt = parseArgs(argc, argv);
@@ -346,8 +333,10 @@ int main(int argc, char** argv) {
     // that they stay reproducible; command-line choices win over it.
     ab::Settings cfg;
     std::string settingsPath;
+    std::string userSchemesDir;  // schemes made with the editor
     if (char* pref = SDL_GetPrefPath("atomic-bomberman-modern", "atomic")) {
         settingsPath = std::string(pref) + "options.ini";
+        userSchemesDir = std::string(pref) + "schemes";
         SDL_free(pref);
     }
     const bool useSettings = opt.frames <= 0 && !opt.demo && opt.script.empty() && !settingsPath.empty();
@@ -427,7 +416,10 @@ int main(int argc, char** argv) {
         int level = opt.level;
         int winsNeeded = opt.wins;
         std::vector<SchemeEntry> schemes;
-        if (!opt.gameDir.empty()) schemes = listSchemes(opt.gameDir);
+        if (!opt.gameDir.empty()) schemes = ab::listSchemes(opt.gameDir + "/data/schemes", userSchemesDir);
+        ab::SchemeEditor editor(opt.gameDir + "/data/schemes", userSchemesDir);
+        int editorKeyCount = 0;
+        bool textInputOn = false;
         int schemeIndex = 0;
         for (std::size_t i = 0; i < schemes.size(); ++i)
             if (schemes[i].file == opt.scheme) schemeIndex = static_cast<int>(i);
@@ -451,7 +443,7 @@ int main(int argc, char** argv) {
             }
             extras = ab::loadExtrasFile(opt.gameDir + "/data/res/extra" + std::to_string(level) + ".res");
             if (!schemes.empty())
-                if (auto sf = ab::loadSchemeFile(opt.gameDir + "/data/schemes/" + schemes[static_cast<std::size_t>(schemeIndex)].file + ".sch")) {
+                if (auto sf = ab::loadSchemeFile(schemes[static_cast<std::size_t>(schemeIndex)].path)) {
                     scheme = sf->scheme;
                     schemePowers = sf->powers;
                     // The scheme gives the teams; choices made with T on the player list stay
@@ -528,6 +520,11 @@ int main(int argc, char** argv) {
         if (opt.menuShot == 3) screen = Screen::LevelSetup;
         if (opt.menuShot == 4) screen = Screen::Options;
         if (opt.menuShot == 7) screen = Screen::Keys;
+        if (opt.menuShot == 8) {  // the editor on a new scheme
+            editor.open();
+            editor.key(SDLK_2, false);
+            screen = Screen::Editor;
+        }
         if (opt.menuShot == 5) openHelp("credits.bm", Screen::MainMenu);
         if (opt.menuShot == 6) openHelp("manual.bm", Screen::MainMenu);
 
@@ -810,6 +807,28 @@ int main(int argc, char** argv) {
             bool singleStep = false;
             while (SDL_PollEvent(&e)) {
                 if (e.type == SDL_EVENT_QUIT) running = false;
+                if (screen == Screen::Editor) {
+                    // The editor takes keys, typed text and the mouse (left: brick, right: start position).
+                    if (e.type == SDL_EVENT_TEXT_INPUT) editor.text(e.text.text);
+                    if (e.type == SDL_EVENT_KEY_DOWN) editor.key(e.key.key, (e.key.mod & SDL_KMOD_CTRL) != 0);
+                    if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_MOTION) {
+                        float mx = 0, my = 0;
+                        const SDL_MouseButtonFlags held = SDL_GetMouseState(&mx, &my);
+                        int ww = 1, wh = 1;
+                        SDL_GetWindowSize(window, &ww, &wh);
+                        const float scale = std::min(static_cast<float>(ww) / 640.0f, static_cast<float>(wh) / 480.0f);
+                        const float lx = (mx - (static_cast<float>(ww) - 640.0f * scale) / 2.0f) / scale;
+                        const float ly = (my - (static_cast<float>(wh) - 480.0f * scale) / 2.0f) / scale;
+                        editor.mouse(lx, ly, (held & SDL_BUTTON_LMASK) != 0, (held & SDL_BUTTON_RMASK) != 0);
+                    }
+                    if (editor.takeHelpRequest()) openHelp("editor.bm", Screen::Editor);
+                    if (editor.takeSaved()) schemes = ab::listSchemes(opt.gameDir + "/data/schemes", userSchemesDir);
+                    if (editor.finished()) {
+                        screen = Screen::MainMenu;
+                        menuIdleSince = SDL_GetTicks();
+                    }
+                    continue;
+                }
                 if (e.type != SDL_EVENT_KEY_DOWN || e.key.repeat) continue;
                 const SDL_Keycode key = e.key.key;
                 menuIdleSince = SDL_GetTicks();
@@ -825,6 +844,16 @@ int main(int argc, char** argv) {
                     continue;
                 }
                 if (screen == Screen::MainMenu) {
+                    // The original's secret level editor: Ctrl-E six times (editor.bm).
+                    if (key == SDLK_E && (e.key.mod & SDL_KMOD_CTRL) != 0) {
+                        if (++editorKeyCount == 6) {
+                            editorKeyCount = 0;
+                            editor.open();
+                            screen = Screen::Editor;
+                        }
+                    } else if (key != SDLK_LCTRL && key != SDLK_RCTRL) {
+                        editorKeyCount = 0;
+                    }
                     // Items as on the original's menu picture.
                     if (key == SDLK_UP) menuItem = (menuItem + 6) % 7;
                     if (key == SDLK_DOWN) menuItem = (menuItem + 1) % 7;
@@ -1242,6 +1271,11 @@ int main(int argc, char** argv) {
                     leaveRoulette();
                 }
             }
+            if (const bool want = screen == Screen::Editor && editor.wantsTextInput(); want != textInputOn) {
+                textInputOn = want;
+                if (want) SDL_StartTextInput(window);
+                else SDL_StopTextInput(window);
+            }
             audio.update();
 
             if (screen == Screen::Match) {
@@ -1396,6 +1430,10 @@ int main(int argc, char** argv) {
                 }
                 renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, 107.0f + 22.0f * static_cast<float>(helpRow));
                 renderer.text(*spritesPtr, "Up/Down: select   Enter: read   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
+                renderer.end();
+            } else if (screen == Screen::Editor) {
+                renderer.begin(w, h);
+                editor.draw(renderer, *spritesPtr, level, frame);
                 renderer.end();
             } else if (screen == Screen::Keys) {
                 static const char* const kAction[6] = {"Move Up", "Move Right", "Move Down", "Move Left", "Action 1", "Action 2"};  // 1120-1125

@@ -559,3 +559,8 @@ Modern: both implemented; the scheme and team rows of the modern level screen ar
 - Attract mode (`0x42BB52`): with value 92 (30) > 5, that many idle seconds on the main menu save the player list, level and team setting, switch teams off and start a match. Match setup (`0x41119E`) then makes max(3, rand%10+1) of the first seats computer players, the rest off, and picks level rand % value 35. Enter ends it (`0x42A562`); results are skipped (`0x42A6CB`); the menu restores the saved settings (`0x42B9F4`).
 
 Confidence: HIGH (static). All implemented in the application; in attract mode any key ends the demo (the original: Enter).
+
+### Scheme files: powerup settings applied; editor
+
+- The `-P` lines of scheme files (born-with, has-override, override, forbidden) were known since session 3 (UNKNOWN-015) but the modern game did not apply them. It does now; 66 of the lines in the 68 shipped schemes differ from the defaults.
+- The scheme editor is implemented from the original's `editor.bm` and messages 700-768. `edit.ani` holds the "line draw" tiles as `tile -1 blank/brick/solid`. The original's editor code (around `0x4023A2`-`0x4032D3`, which calls the help routine) was not read. Confidence in matching the original's screen: LOW; in matching its functions and file format: HIGH (first-party description, and files written by this editor read back identically).
