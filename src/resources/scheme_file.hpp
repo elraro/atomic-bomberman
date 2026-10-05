@@ -6,17 +6,10 @@
 #include <string>
 #include <vector>
 
+#include "game/match.hpp"
 #include "game/world.hpp"
 
 namespace ab {
-
-// Per-powerup settings of a scheme (-P lines), for types 0-12.
-struct SchemePower {
-    int bornWith = 0;          // > 0: every player starts with this many
-    bool hasOverride = false;  // replace the level's count of this powerup
-    int overrideValue = 0;     // n >= 0: that many; n < 0: |n| tries at 1 in 10
-    bool forbidden = false;    // never produced by the "random" powerup
-};
 
 struct SchemeFile {
     Scheme scheme;
@@ -43,5 +36,15 @@ std::optional<SchemeFile> loadSchemeFile(const std::string& path);
 // game core to place.
 std::vector<Extra> parseExtrasText(const std::string& text);
 std::vector<Extra> loadExtrasFile(const std::string& path);  // empty if the file does not exist
+
+struct SchemeEntry {
+    std::string file;   // name without extension, lower case
+    std::string title;  // the scheme's own name
+    std::string path;
+};
+
+// Schemes of the game data and of the user's folder (a user file hides a
+// game file of the same name), sorted by file name.
+std::vector<SchemeEntry> listSchemes(const std::string& gameSchemesDir, const std::string& userSchemesDir);
 
 }  // namespace ab

@@ -15,16 +15,6 @@
 
 namespace ab {
 
-struct SchemeEntry {
-    std::string file;   // name without extension
-    std::string title;  // the scheme's own name
-    std::string path;
-};
-
-// Schemes of the game data and of the user's folder (a user file hides a
-// game file of the same name), sorted by file name.
-std::vector<SchemeEntry> listSchemes(const std::string& gameSchemesDir, const std::string& userSchemesDir);
-
 class SchemeEditor {
 public:
     SchemeEditor(std::string gameSchemesDir, std::string userSchemesDir);

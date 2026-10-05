@@ -20,6 +20,7 @@
 #include "app/editor.hpp"
 #include "audio/audio.hpp"
 #include "game/ai.hpp"
+#include "game/match.hpp"
 #include "game/roulette.hpp"
 #include "game/world.hpp"
 #include "rendering/renderer.hpp"
@@ -579,7 +580,8 @@ int main(int argc, char** argv) {
         if (opt.menuShot == 6) openHelp("manual.bm", Screen::MainMenu);
 
         ab::RenderSnapshot previous;
-        std::array<int, ab::kMaxPlayers> wins{};  // round wins in the current match
+        ab::MatchScore score;
+        std::array<int, ab::kMaxPlayers>& wins = score.wins;  // round wins in the current match
         int roundOverSteps = 0;
         bool resultKey = false;    // a key was pressed on the result screen
         bool autoResults = false;  // Alt-W: result screens go on by themselves
@@ -611,8 +613,8 @@ int main(int argc, char** argv) {
         int campaignKeyCount = 0;
         std::vector<std::string> campaignFiles;
         int campaignRow = 0;
-        std::array<int, ab::kMaxPlayers> matchKills{};  // kills over the rounds of the match
-        int matchWinner = -1;                           // player or team once the match is decided
+        std::array<int, ab::kMaxPlayers>& matchKills = score.kills;  // kills over the rounds of the match
+        int& matchWinner = score.matchWinner;                        // player or team once the match is decided
         std::array<ab::Cell, ab::kMaxPlayers> startCells = scheme.start;
         ab::Rng appRng(opt.seed * 2654435761u + 99u);
         // Level music, unless switched off in the settings (original disable_game_music).
@@ -645,46 +647,36 @@ int main(int argc, char** argv) {
                 }
         };
         auto beginMatch = [&]() {
-            // Settings the core reads as tuning values.
-            world.setValue(ab::vid::kEnclosementDepth, cfg.enclosementDepth);
-            world.setValue(ab::vid::kWallsDetonateBombs, cfg.stompedBombsDetonate ? 1 : 0);
-            world.setValue(ab::vid::kDiseasesDestroyable, cfg.diseasesDestroyable ? 1 : 0);
-            world.setValue(ab::vid::kRoundSeconds, cfg.playTime);
             // The original flushes its sound cache and picks a new selection of voice lines
             // every value 7 seconds (value 9 in the normal memory model), between rounds.
             if (sound && values.get(cfg.smallMemory ? 9 : 7) > 0 && audio.selectionAge() > values.get(cfg.smallMemory ? 9 : 7)) {
                 audio.chooseSounds();
                 std::fprintf(stderr, "INFO  Sound selection renewed\n");
             }
-            world.setWinByKills(cfg.winByKills);
-            world.setLevelRules(values.get(450 + level), values.get(340 + level));
-            // Scheme powerup rules (original 0x404630): a born-with above zero replaces the
-            // starting amount, an override replaces the level's count, and forbidden types
-            // are kept out of the random powerup. Other types keep the game's own values.
-            std::array<bool, 13> forbidden{};
-            for (int t = 0; t < 13; ++t) {
-                const ab::SchemePower& pw = schemePowers[static_cast<std::size_t>(t)];
-                world.setValue(ab::vid::kStartInventory + t, pw.bornWith > 0 ? pw.bornWith : values.get(ab::vid::kStartInventory + t));
-                world.setValue(ab::vid::kLevelCount + t, pw.hasOverride ? pw.overrideValue : values.get(ab::vid::kLevelCount + t));
-                forbidden[static_cast<std::size_t>(t)] = pw.forbidden;
-            }
-            world.setForbiddenRandom(forbidden);
-            ab::Scheme placed = scheme;
-            placed.start = startCells;
-            world.setCampaign(campaignMode);
-            world.startRound(placed, true);
-            if (cfg.playTime >= ab::Settings::kInfiniteTime) world.setRoundSeconds(-1);
-            world.setExtras(extras, cfg.conveyorSpeed);
-            world.setTeamPlay(teamPlay, teams);
+            ab::RoundSetup setup;
+            setup.level = level;
+            setup.scheme = scheme;
+            setup.scheme.start = startCells;
+            setup.powers = schemePowers;
+            setup.extras = extras;
+            setup.conveyorSpeed = cfg.conveyorSpeed;
+            setup.teamPlay = teamPlay;
+            setup.teams = teams;
+            setup.enclosementDepth = cfg.enclosementDepth;
+            setup.stompedBombsDetonate = cfg.stompedBombsDetonate;
+            setup.diseasesDestroyable = cfg.diseasesDestroyable;
+            setup.playTime = cfg.playTime;
+            setup.winByKills = cfg.winByKills;
+            setup.campaign = campaignMode;
             int n = 0;
-            for (int i = 0; i < ab::kMaxPlayers; ++i)
-                if (control[static_cast<std::size_t>(i)] != Control::Off) {
-                    world.addPlayer(i);
-                    ++n;
-                }
-            // Computer players are marked: the level's control delay is for humans only.
-            for (int i = 0; i < ab::kMaxPlayers; ++i)
-                if (world.player(i).present) world.setHuman(i, control[static_cast<std::size_t>(i)] != Control::Ai);
+            for (int i = 0; i < ab::kMaxPlayers; ++i) {
+                const Control c = control[static_cast<std::size_t>(i)];
+                setup.present[static_cast<std::size_t>(i)] = c != Control::Off;
+                // Computer players are marked: the level's control delay is for humans only.
+                setup.human[static_cast<std::size_t>(i)] = c != Control::Ai;
+                n += c != Control::Off ? 1 : 0;
+            }
+            ab::applyRoundSetup(world, values, setup);
             if (campaignMode) {
                 const ab::CampaignStage& st = stages[static_cast<std::size_t>(stageIndex)];
                 world.spawnAliens(ab::AlienType::Ghost, st.ghosts, st.ghostSpeed);
@@ -1327,30 +1319,11 @@ int main(int argc, char** argv) {
                     }
                     // A decided round stays on screen for three seconds, then the next one starts.
                     if (world.roundOver() && roundOverSteps == 0) {
-                        const int win = world.teamPlay() ? world.winningTeam() : world.winner();
-                        if (win >= 0) {
-                            const int total = ++wins[static_cast<std::size_t>(win)];
-                            std::fprintf(stderr, "INFO  Round over winner=%d kills=%d wins=%d\n", win, world.player(win).kills, total);
-                        } else {
+                        const int win = score.roundDecided(world, winsNeeded, cfg.winByKills);
+                        if (win >= 0)
+                            std::fprintf(stderr, "INFO  Round over winner=%d kills=%d wins=%d\n", win, world.player(win).kills, wins[static_cast<std::size_t>(win)]);
+                        else
                             std::fprintf(stderr, "INFO  Round over draw\n");
-                        }
-                        for (int i = 0; i < ab::kMaxPlayers; ++i)
-                            if (world.player(i).present) matchKills[static_cast<std::size_t>(i)] += world.player(i).kills;
-                        // Match winner, as the original's results code (0x42AB04): by wins, or with
-                        // "win by kills" (not in team play) the single player with the most kills
-                        // once that reaches the target.
-                        if (cfg.winByKills && !world.teamPlay()) {
-                            int best = -1000, holders = 0, who = -1;
-                            for (int i = 0; i < ab::kMaxPlayers; ++i) {
-                                if (!world.player(i).present) continue;
-                                const int k = matchKills[static_cast<std::size_t>(i)];
-                                if (k > best) best = k, holders = 1, who = i;
-                                else if (k == best) ++holders;
-                            }
-                            if (best >= winsNeeded && holders == 1) matchWinner = who;
-                        } else if (win >= 0 && wins[static_cast<std::size_t>(win)] >= winsNeeded) {
-                            matchWinner = win;
-                        }
                         if (matchWinner >= 0) {
                             matchOver = true;
                             std::fprintf(stderr, "INFO  Match over winner=%d\n", matchWinner);

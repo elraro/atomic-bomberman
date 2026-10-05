@@ -22,25 +22,6 @@ void shadowed(Renderer& r, const SpriteBank& bank, const std::string& s, float x
 }
 }  // namespace
 
-std::vector<SchemeEntry> listSchemes(const std::string& gameSchemesDir, const std::string& userSchemesDir) {
-    std::map<std::string, SchemeEntry> byName;
-    for (const std::string& dir : {gameSchemesDir, userSchemesDir}) {
-        std::error_code ec;
-        if (dir.empty()) continue;
-        for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
-            std::string ext = e.path().extension().string();
-            for (char& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-            if (ext != ".sch") continue;
-            std::string name = e.path().stem().string();
-            for (char& ch : name) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-            if (auto sf = loadSchemeFile(e.path().string())) byName[name] = {name, sf->name, e.path().string()};
-        }
-    }
-    std::vector<SchemeEntry> out;
-    for (auto& [name, entry] : byName) out.push_back(entry);
-    return out;
-}
-
 SchemeEditor::SchemeEditor(std::string gameSchemesDir, std::string userSchemesDir)
     : gameDir_(std::move(gameSchemesDir)), userDir_(std::move(userSchemesDir)) {}
 
