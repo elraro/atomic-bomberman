@@ -60,6 +60,8 @@ bool Server::start(const ServerConfig& config) {
         // Not fatal: clients fall back to TCP; the server just cannot be found on the LAN.
         log("WARN  UDP port " + std::to_string(listener_.port()) + " is not available: TCP only, no LAN discovery");
     }
+    if (config.discoverable && !discovery_.open(kDiscoveryPort, false, true))
+        log("WARN  UDP port " + std::to_string(kDiscoveryPort) + " is not available: this server will not show up in LAN searches");
     values_ = Values::defaults();
     schemes_.clear();
     if (!config.gameDir.empty()) {
@@ -99,6 +101,7 @@ void Server::stop() {
     peers_.clear();
     listener_.close();
     udp_.close();
+    discovery_.close();
     world_.reset();
     running_ = false;
 }
@@ -393,7 +396,7 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
     }
 }
 
-void Server::handleDatagram(const Address& from, const std::vector<std::uint8_t>& data) {
+void Server::handleDatagram(const Address& from, const std::vector<std::uint8_t>& data, bool viaDiscovery) {
     ByteReader r(data);
     if (r.u32() != kUdpMagic) return;
     const auto type = static_cast<UdpMsg>(r.u8());
@@ -406,7 +409,8 @@ void Server::handleDatagram(const Address& from, const std::vector<std::uint8_t>
         info.players = players();
         info.phase = phase_;
         info.password = !config_.password.empty();
-        udp_.sendTo(from, datagram(UdpMsg::Info, info));
+        // Answered from the socket the question came to.
+        (viaDiscovery ? discovery_ : udp_).sendTo(from, datagram(UdpMsg::Info, info));
         return;
     }
     if (type == UdpMsg::Probe) {
@@ -642,7 +646,12 @@ void Server::update(std::uint64_t nowMs) {
     if (udp_.isOpen()) {
         Address from;
         std::vector<std::uint8_t> data;
-        for (int n = 0; n < 256 && udp_.receiveFrom(from, data); ++n) handleDatagram(from, data);
+        for (int n = 0; n < 256 && udp_.receiveFrom(from, data); ++n) handleDatagram(from, data, false);
+    }
+    if (discovery_.isOpen()) {
+        Address from;
+        std::vector<std::uint8_t> data;
+        for (int n = 0; n < 64 && discovery_.receiveFrom(from, data); ++n) handleDatagram(from, data, true);
     }
     // Departures, one at a time: each may change seats or end the match.
     for (std::size_t i = 0; i < peers_.size();) {

@@ -147,7 +147,7 @@ private:
     std::uint64_t inputSentAt_ = 0;
 };
 
-// Finds servers on the local network (UDP broadcast on the default port).
+// Finds servers on the local network, whatever port they play on (UDP broadcast to the discovery port).
 class LanBrowser {
 public:
     struct Entry {

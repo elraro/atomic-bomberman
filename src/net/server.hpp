@@ -62,7 +62,7 @@ private:
     void log(const std::string& line) const;
     void handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint8_t>& payload);
     void handleHello(Peer& p, const std::vector<std::uint8_t>& payload);
-    void handleDatagram(const Address& from, const std::vector<std::uint8_t>& data);
+    void handleDatagram(const Address& from, const std::vector<std::uint8_t>& data, bool viaDiscovery);
     void applyInput(Peer& p, const InputMsg& m);
     void changeOption(Option option, int direction);
     void reject(Peer& p, const std::string& reason);
@@ -89,6 +89,7 @@ private:
     std::string error_;
     TcpListener listener_;
     UdpSocket udp_;
+    UdpSocket discovery_;  // answers LAN searches on kDiscoveryPort
     std::vector<std::unique_ptr<Peer>> peers_;
     std::uint64_t now_ = 0;
     std::uint64_t joinCounter_ = 0;

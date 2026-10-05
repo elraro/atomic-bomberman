@@ -95,7 +95,9 @@ public:
     UdpSocket(const UdpSocket&) = delete;
     UdpSocket& operator=(const UdpSocket&) = delete;
 
-    bool open(std::uint16_t port, bool broadcast = false);  // 0: any free port
+    // 0: any free port. `shared`: several sockets on this machine may bind the port (each
+    // gets a copy of a broadcast), used for the discovery port.
+    bool open(std::uint16_t port, bool broadcast = false, bool shared = false);
     void close();
     bool isOpen() const { return fd_ != -1; }
     std::uint16_t port() const { return port_; }

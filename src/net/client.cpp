@@ -398,8 +398,8 @@ void LanBrowser::update(std::uint64_t nowMs) {
         w.u32(kUdpMagic);
         w.u8(static_cast<std::uint8_t>(UdpMsg::Query));
         w.u16(kProtocolVersion);
-        udp_.sendTo({kBroadcast, kDefaultPort}, w.data());
-        udp_.sendTo({kLoopback, kDefaultPort}, w.data());  // a server on this machine, where broadcast may not loop back
+        udp_.sendTo({kBroadcast, kDiscoveryPort}, w.data());
+        udp_.sendTo({kLoopback, kDiscoveryPort}, w.data());  // a server on this machine, where broadcast may not loop back
     }
     Address from;
     std::vector<std::uint8_t> data;

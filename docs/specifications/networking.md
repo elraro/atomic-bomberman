@@ -43,7 +43,7 @@ One port number (default **27410**) for both protocols.
 | Channel | Used for |
 |---|---|
 | TCP | Joining, lobby state, settings, chat, round start, round result, snapshots. Reliable and ordered. |
-| UDP | The two messages that repeat during a round: inputs to the server, steps to the clients. Also finding servers on the LAN. |
+| UDP | The two messages that repeat during a round: inputs to the server, steps to the clients. Also finding servers on the LAN: every server, whatever its own port, also listens on UDP **27409** (a port several servers on one machine can share) and answers searches there. |
 
 UDP loss is handled without retransmission requests: every input message carries the number of the last step the client has; every step message carries **all steps after that one** (at most 40, i.e. 2 s). A lost datagram is covered by the next one.
 
@@ -95,7 +95,7 @@ Server to client:
 | ProbeAck | S to C | |
 | Input | C to S | token, round id, last step held, input byte |
 | Steps | S to C | as the TCP message |
-| Query | broadcast | protocol version |
+| Query | broadcast to the discovery port **27409** | protocol version |
 | Info | S to C | protocol version, TCP port, server name, players, seats, phase, password needed |
 
 An input byte: bits 0-3 north, east, south, west; bit 4 bomb; bit 5 action.
@@ -133,7 +133,6 @@ The dedicated server reads the game data (tuning values, schemes, level extras) 
 
 - Prediction covers the picture only: sounds still arrive with the round-trip delay, and other players' changes of direction appear as small corrections.
 - IPv4 only; no NAT traversal: the host's port must be reachable.
-- LAN search finds servers on the default port only.
 - One player per client; no roulette, no campaign.
 - Clients trust the server's snapshots (see `../migration/networking.md`).
 - Different versions of the program must not be mixed: the protocol version is raised whenever the simulation changes.

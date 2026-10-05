@@ -536,6 +536,17 @@ void testLanBrowser() {
         }
         std::this_thread::yield();
     }
+    // The browser finds it although it plays on some other port: the search goes to the
+    // discovery port, which every server listens on.
+    LanBrowser browser;
+    bool listed = false;
+    for (int i = 0; i < 4000 && !listed; ++i) {
+        server.update(5000 + static_cast<std::uint64_t>(i));
+        browser.update(5000 + static_cast<std::uint64_t>(i));
+        for (const LanBrowser::Entry& e : browser.servers()) listed = listed || (e.info.name == "Test server" && e.address.port == server.port());
+        std::this_thread::yield();
+    }
+    CHECK(listed);
     CHECK(answered);
     CHECK(info.name == "Test server");
     CHECK_EQ(info.port, server.port());

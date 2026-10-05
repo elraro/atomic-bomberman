@@ -356,13 +356,19 @@ void UdpSocket::close() {
     port_ = 0;
 }
 
-bool UdpSocket::open(std::uint16_t port, bool broadcast) {
+bool UdpSocket::open(std::uint16_t port, bool broadcast, bool shared) {
     startup();
     close();
     fd_ = newSocket(SOCK_DGRAM);
     if (fd_ == -1) return false;
     setNonBlocking(fd_);
     if (broadcast) setOption(fd_, SOL_SOCKET, SO_BROADCAST, 1);
+    if (shared) {
+        setOption(fd_, SOL_SOCKET, SO_REUSEADDR, 1);
+#ifdef SO_REUSEPORT
+        setOption(fd_, SOL_SOCKET, SO_REUSEPORT, 1);
+#endif
+    }
     const sockaddr_in sa = toSockaddr({0, port});
     if (::bind(native(fd_), reinterpret_cast<const sockaddr*>(&sa), sizeof sa) != 0) {
         close();
