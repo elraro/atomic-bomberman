@@ -37,7 +37,7 @@ The gameplay core does not know about audio. It records `Event`s during a tick (
 
 ## Leaving the game
 
-The original's quit routine (`0x412987`) asks for confirmation (text 10), stops the music, plays a random sound of the 2600 series ("exiting game", 49 voice lines in `soundlst.res`) and waits 4000 ms before exiting. The modern game does the same when leaving through the main menu (Exit or Esc), without the confirmation box; any key skips the wait. Confidence: HIGH (static).
+The original's quit routine (`0x412987`) asks for confirmation (text 10), stops the music, plays a random sound of the 2600 series ("exiting game", 49 voice lines in `soundlst.res`) and waits 4000 ms before exiting. The modern game does the same when leaving through the main menu (Exit or Esc), after the same Yes/No question; any key skips the wait. Confidence: HIGH (static).
 
 ## Intro
 

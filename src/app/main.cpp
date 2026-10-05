@@ -594,16 +594,48 @@ int main(int argc, char** argv) {
                 playLevelMusic();
             }
         };
+        Screen helpListReturn = Screen::MainMenu;
+        // Message 610: every *.BM file of the game folder.
+        auto openHelpList = [&](Screen back) {
+            helpFiles.clear();
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator(opt.gameDir, ec)) {
+                std::string ext = entry.path().extension().string();
+                for (char& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                if (ext == ".bm") helpFiles.push_back(entry.path().filename().string());
+            }
+            std::sort(helpFiles.begin(), helpFiles.end());
+            helpRow = 0;
+            helpListReturn = back;
+            screen = Screen::HelpList;
+        };
         int introStep = 0;
         Uint64 introStart = 0;
         bool running = true;
         // A notice that waits for a key (the original's message boxes).
         std::vector<std::string> messageLines;
         std::function<void()> messageDone;
+        bool messageAsks = false;  // a Yes / No question instead of a notice
+        bool messageYes = false;
+        std::function<void()> messageNo;
         auto showMessage = [&](std::vector<std::string> lines, std::function<void()> done) {
             messageLines = std::move(lines);
             messageDone = std::move(done);
+            messageAsks = false;
             screen = Screen::Message;
+        };
+        auto askQuestion = [&](std::vector<std::string> lines, std::function<void()> yes, std::function<void()> no) {
+            messageLines = std::move(lines);
+            messageDone = std::move(yes);
+            messageNo = std::move(no);
+            messageAsks = true;
+            messageYes = false;
+            screen = Screen::Message;
+        };
+        bool farewell = false;  // leaving through the menu: say goodbye first
+        // The original's quit routine (0x412987) asks first (message 10, buttons 25/26).
+        auto askExit = [&]() {
+            askQuestion({"Are you sure you want to exit?"}, [&]() { running = false, farewell = true; }, [&]() { screen = Screen::MainMenu; });
         };
         // Next campaign stage (original 0x40133F and 0x40151B): level and scheme from the
         // campaign file, the computer players replaced by the stage's number of them in
@@ -692,7 +724,6 @@ int main(int argc, char** argv) {
         Uint64 last = SDL_GetTicksNS();
         double accumulatorMs = 0.0;
 
-        bool farewell = false;  // leaving through the menu: say goodbye first
         while (running) {
             // Scripted key presses for automated checks of the menu screens.
             if (!opt.script.empty() && frame % 10 == 5 && static_cast<std::size_t>(frame / 10) < opt.script.size()) {
@@ -709,11 +740,18 @@ int main(int argc, char** argv) {
                 if (e.type == SDL_EVENT_QUIT) running = false;
                 if (e.type != SDL_EVENT_KEY_DOWN || e.key.repeat) continue;
                 const SDL_Keycode key = e.key.key;
+                // F1 opens the help file list from every game screen, as in the original (0x41431C).
+                if (key == SDLK_F1 && haveMenu &&
+                    (screen == Screen::MainMenu || screen == Screen::PlayerList || screen == Screen::LevelSetup ||
+                     screen == Screen::Options || screen == Screen::Roulette || screen == Screen::Match)) {
+                    openHelpList(screen);
+                    continue;
+                }
                 if (screen == Screen::MainMenu) {
                     // Items as on the original's menu picture.
                     if (key == SDLK_UP) menuItem = (menuItem + 6) % 7;
                     if (key == SDLK_DOWN) menuItem = (menuItem + 1) % 7;
-                    if (key == SDLK_ESCAPE) running = false, farewell = true;
+                    if (key == SDLK_ESCAPE) askExit();
                     if (key == SDLK_RETURN) {
                         if (menuItem == 0) {
                             if (sound) audio.playMusic(1020);  // pre-game screens tune
@@ -731,20 +769,8 @@ int main(int argc, char** argv) {
                             optionsGlue = appRng.below(std::max(1, values.get(16)));
                         }
                         if (menuItem == 4) openHelp("credits.bm", Screen::MainMenu);  // original 0x42BDE7
-                        if (menuItem == 5) {
-                            // Message 610: every *.BM file of the game folder.
-                            helpFiles.clear();
-                            std::error_code ec;
-                            for (const auto& entry : std::filesystem::directory_iterator(opt.gameDir, ec)) {
-                                std::string ext = entry.path().extension().string();
-                                for (char& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-                                if (ext == ".bm") helpFiles.push_back(entry.path().filename().string());
-                            }
-                            std::sort(helpFiles.begin(), helpFiles.end());
-                            helpRow = 0;
-                            screen = Screen::HelpList;
-                        }
-                        if (menuItem == 6) running = false, farewell = true;
+                        if (menuItem == 5) openHelpList(Screen::MainMenu);
+                        if (menuItem == 6) askExit();
                         if (sound) audio.playRange(10, 10);
                     }
                 } else if (screen == Screen::PlayerList) {
@@ -847,6 +873,16 @@ int main(int argc, char** argv) {
                         if (sound) audio.playRange(10, 10);
                         advanceIntro();
                     }
+                } else if (screen == Screen::Message && messageAsks) {
+                    if (key == SDLK_LEFT || key == SDLK_RIGHT || key == SDLK_TAB) messageYes = !messageYes;
+                    const bool yes = key == SDLK_Y || (messageYes && (key == SDLK_RETURN || key == SDLK_SPACE));
+                    const bool no = key == SDLK_N || key == SDLK_ESCAPE || (!messageYes && (key == SDLK_RETURN || key == SDLK_SPACE));
+                    if (yes || no) {
+                        const std::function<void()> act = yes ? std::move(messageDone) : std::move(messageNo);
+                        messageDone = nullptr;
+                        messageNo = nullptr;
+                        if (act) act();
+                    }
                 } else if (screen == Screen::Message) {
                     if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_ESCAPE) {
                         const std::function<void()> done = std::move(messageDone);
@@ -879,7 +915,7 @@ int main(int argc, char** argv) {
                     if (key == SDLK_UP && n > 0) helpRow = (helpRow + n - 1) % n;
                     if (key == SDLK_DOWN && n > 0) helpRow = (helpRow + 1) % n;
                     if (key == SDLK_RETURN && n > 0) openHelp(helpFiles[static_cast<std::size_t>(helpRow)], Screen::HelpList);
-                    if (key == SDLK_ESCAPE) screen = Screen::MainMenu;
+                    if (key == SDLK_ESCAPE) screen = helpListReturn;
                 } else if (screen == Screen::Options) {
                     // The original's settings screen (0x4080DC), without its network, keyboard-layout,
                     // memory and audio-adjustment rows.
@@ -1163,8 +1199,14 @@ int main(int argc, char** argv) {
                     const float tx = 320.0f - renderer.textWidth(*spritesPtr, messageLines[r]) / 2.0f;
                     renderer.text(*spritesPtr, messageLines[r], tx, 196.0f + 24.0f * static_cast<float>(r), r == 0 ? 1.0f : 0.9f, r == 0 ? 0.95f : 0.9f, r == 0 ? 0.3f : 0.9f);
                 }
-                const std::string ok = "Enter: Ok";
-                renderer.text(*spritesPtr, ok, 320.0f - renderer.textWidth(*spritesPtr, ok) / 2.0f, 180.0f + boxH - 30.0f, 0.4f, 1.0f, 1.0f);
+                if (messageAsks) {
+                    // The two buttons, messages 25 and 26.
+                    renderer.text(*spritesPtr, "No", 250, 180.0f + boxH - 30.0f, messageYes ? 0.6f : 1.0f, messageYes ? 0.6f : 0.95f, messageYes ? 0.6f : 0.3f);
+                    renderer.text(*spritesPtr, "Yes", 360, 180.0f + boxH - 30.0f, messageYes ? 1.0f : 0.6f, messageYes ? 0.95f : 0.6f, messageYes ? 0.3f : 0.6f);
+                } else {
+                    const std::string ok = "Enter: Ok";
+                    renderer.text(*spritesPtr, ok, 320.0f - renderer.textWidth(*spritesPtr, ok) / 2.0f, 180.0f + boxH - 30.0f, 0.4f, 1.0f, 1.0f);
+                }
                 renderer.end();
             } else if (screen == Screen::CampaignList) {
                 renderer.begin(w, h);
