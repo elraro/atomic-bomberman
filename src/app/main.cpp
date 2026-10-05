@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "app/editor.hpp"
+#include "app/android_folder.hpp"
 #include "app/import_screen.hpp"
 #include "app/names.hpp"
 #include "app/net_ui.hpp"
@@ -372,7 +373,11 @@ const char* controlName(Control c) {
     }
 }
 
+#ifdef __ANDROID__
+constexpr int kOptionRows = 17;  // and the folder of the original game
+#else
 constexpr int kOptionRows = 16;
+#endif
 enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor, AudioAdjust, Movie, Net, SoundTest };
 
 using ab::SchemeEntry;
@@ -441,9 +446,13 @@ int main(int argc, char** argv) {
     std::string requested = opt.gameDir;
     std::string freeDir = "free-assets";  // the free asset set, written once to the per-user folder
     std::string noticeFile = "import-notice-shown.txt";
+    std::string importRequestFile = "import-requested.txt";  // written when another folder was chosen under Options
+    std::string stagingDir = "import-staging";
     if (char* pref = SDL_GetPrefPath("atomic-bomberman-modern", "atomic")) {
         freeDir = std::string(pref) + "free-assets";
         noticeFile = std::string(pref) + noticeFile;
+        importRequestFile = std::string(pref) + importRequestFile;
+        stagingDir = std::string(pref) + stagingDir;
         SDL_free(pref);
     }
     // The original game's data taken from a folder the user fills: on a phone there is no
@@ -451,7 +460,10 @@ int main(int argc, char** argv) {
     // or when the converted files were made by another release.
 #ifdef __ANDROID__
     if (opt.importFolder.empty())
-        if (const char* shared = SDL_GetAndroidExternalStoragePath()) opt.importFolder = std::string(shared) + "/original";
+        if (const char* shared = SDL_GetAndroidExternalStoragePath()) {
+            opt.importFolder = std::string(shared) + "/original";
+            stagingDir = std::string(shared) + "/import-staging";  // the roomier storage
+        }
 #endif
     if (!opt.importFolder.empty() && requested.empty() && !opt.freeAssets && ab::ensureFreeAssets(freeDir, true)) {
         ab::ImportScreens screens;
@@ -459,6 +471,8 @@ int main(int argc, char** argv) {
         screens.converted = opt.assetsDir.empty() ? userAssetsDir() : opt.assetsDir;
         screens.release = AB_VERSION;
         screens.noticeFile = noticeFile;
+        screens.staging = stagingDir;
+        screens.requestFile = importRequestFile;
         screens.fontDir = freeDir;
         screens.automated = opt.frames > 0 || opt.menuShot > 0 || !opt.script.empty();
         if (!opt.importShot.empty())
@@ -644,6 +658,7 @@ int main(int argc, char** argv) {
         Screen screen = haveMenu ? Screen::MainMenu : Screen::Match;
         int menuItem = 0;
         int optionRow = 0;
+        bool choosingFolder = false;  // Android: the folder chooser is open (Options, Original Game Data)
         int keyRow = 0;
         int audioRow = 0;
         // Sound test: the catalogue, which part of it is listed (0 all, 1 only those the game
@@ -1439,6 +1454,12 @@ int main(int argc, char** argv) {
                                     screen = Screen::SoundTest;
                                 }
                                 break;
+                            case 16:  // Android: the system's folder chooser; the answer is picked up below
+                                if (ab::folder::available()) {
+                                    ab::folder::pick();
+                                    choosingFolder = true;
+                                }
+                                break;
                         }
                     }
                     if (key == SDLK_ESCAPE) {
@@ -1946,6 +1967,10 @@ int main(int argc, char** argv) {
                 static const char* const kYesNo[2] = {"No", "Yes"};
                 static const char* const kSpeed[3] = {"Low", "Medium", "High"};
                 static const char* const kDepth[4] = {"None", "A Little", "A Lot", "All the way!"};
+#ifdef __ANDROID__
+                std::string folderShown = ab::folder::savedName();  // the end of it, if it is long
+                if (folderShown.size() > 26) folderShown = "..." + folderShown.substr(folderShown.size() - 23);
+#endif
                 const std::string rows[kOptionRows] = {
                     std::string("Team Play: ") + kYesNo[teamPlay],
                     std::string("Random Start: ") + kYesNo[cfg.randomStart],
@@ -1962,7 +1987,12 @@ int main(int argc, char** argv) {
                     "Define keyboard layouts",
                     std::string("Use Enhanced Memory Model: ") + kYesNo[!cfg.smallMemory],  // message 267
                     "Adjust Audio",                                                          // message 268
-                    "Sound Test"};
+                    "Sound Test"
+#ifdef __ANDROID__
+                    ,
+                    "Original Game Data: " + (ab::folder::saved().empty() ? std::string("Choose Folder") : folderShown)
+#endif
+                };
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
                 for (int r = 0; r < kOptionRows; ++r) {
@@ -2064,6 +2094,14 @@ int main(int argc, char** argv) {
             }
 
             touch.update(SDL_GetTicks());
+            if (choosingFolder && ab::folder::pickState() != ab::folder::Pick::Open) {
+                choosingFolder = false;
+                if (ab::folder::pickState() == ab::folder::Pick::Chosen) {
+                    std::ofstream(importRequestFile) << "asked\n";
+                    showMessage({"Original Game Data", "The folder is remembered.", "Its data is converted at the next", "start of the game."},
+                                [&]() { screen = Screen::Options; });
+                }
+            }
             touch.draw(renderer, w, h);
             ++frame;
             if (opt.resultShot && screen == Screen::Match && world.roundOver() && roundOverSteps == 50) {

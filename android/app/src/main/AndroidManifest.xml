@@ -18,9 +18,9 @@
         android:hardwareAccelerated="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
 
-        <!-- SDL's own activity: it loads libSDL3.so and libmain.so (the game). -->
+        <!-- SDL's activity (it loads libSDL3.so and libmain.so, the game), extended by the folder chooser. -->
         <activity
-            android:name="org.libsdl.app.SDLActivity"
+            android:name=".GameActivity"
             android:exported="true"
             android:screenOrientation="sensorLandscape"
             android:launchMode="singleInstance"

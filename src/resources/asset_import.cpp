@@ -195,6 +195,7 @@ ImportReport importAssets(const std::string& source, const std::string& destinat
 
     ImportProgress state;
     state.total = static_cast<int>(copies.size() + sounds.size()) + 1;
+    state.dataFiles = static_cast<int>(copies.size()) + 1;
     // False: the caller wants the work stopped.
     auto tell = [&](const std::string& item, bool isSound) {
         state.item = item;

@@ -29,6 +29,7 @@ struct ImportReport {
 struct ImportProgress {
     int done = 0;
     int total = 0;
+    int dataFiles = 0;    // how many of `total` are data files; the sounds follow them
     std::string item;     // file being copied or converted
     bool sounds = false;  // converting sounds (the long part); otherwise copying data files
 };

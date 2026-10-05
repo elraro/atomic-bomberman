@@ -11,6 +11,7 @@
 #include <thread>
 #include <vector>
 
+#include "app/android_folder.hpp"
 #include "rendering/renderer.hpp"
 #include "rendering/sprites.hpp"
 #include "resources/asset_import.hpp"
@@ -75,11 +76,11 @@ public:
     }
 
     // One picture: the lines centred as a block, and, with `bar` >= 0, a progress bar under them.
-    void draw(const std::vector<Line>& lines, float bar, const std::string& barText, const std::vector<Line>& below) {
+    void draw(const std::vector<Line>& lines, float bar, const std::string& barText, const std::vector<Line>& below, float room = 0.0f) {
         SDL_GetWindowSizeInPixels(window_, &w_, &h_);
         const float lineH = static_cast<float>(std::max(12, font_.font().height + 4));
         const float barH = bar >= 0.0f ? 64.0f : 0.0f;
-        const float total = lineH * static_cast<float>(lines.size() + below.size()) + barH;
+        const float total = lineH * static_cast<float>(lines.size() + below.size()) + barH + room;
         float y = std::max(10.0f, (480.0f - total) / 2.0f);
         renderer_.begin(w_, h_);
         renderer_.quad(0, 0, 640, 480, 0.04f, 0.05f, 0.11f);
@@ -127,8 +128,130 @@ public:
         }
     }
 
-    // The conversion, running beside the pictures.
-    ImportReport convert(const std::string& source) {
+    // Two buttons under a text. True for the first (also Enter), false for the second (also Esc).
+    bool choice(const std::vector<Line>& lines, const std::string& first, const std::string& second, const std::string& name) {
+        pump();
+        const float bw = 230.0f, bh = 44.0f, gap = 30.0f;
+        const float x1 = 320.0f - gap / 2.0f - bw, x2 = 320.0f + gap / 2.0f;
+        for (int frame = 0; !closed_; ++frame) {
+            const float lineH = static_cast<float>(std::max(12, font_.font().height + 4));
+            const float top = std::max(10.0f, (480.0f - lineH * static_cast<float>(lines.size()) - bh - 24.0f) / 2.0f);
+            const float by = top + lineH * static_cast<float>(lines.size()) + 20.0f;
+            int picked = 0;
+            SDL_Event e;
+            while (SDL_PollEvent(&e)) {
+                if (e.type == SDL_EVENT_QUIT) closed_ = true;
+                if (frame < 10) continue;
+                if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
+                    if (e.key.key == SDLK_RETURN || e.key.key == SDLK_SPACE) picked = 1;
+                    if (e.key.key == SDLK_ESCAPE || e.key.key == SDLK_AC_BACK) picked = 2;
+                }
+                if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) picked = e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH ? 1 : 2;
+                float px = -1.0f, py = -1.0f;  // in window pixels
+                if (e.type == SDL_EVENT_FINGER_DOWN) px = e.tfinger.x * static_cast<float>(w_), py = e.tfinger.y * static_cast<float>(h_);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.which != SDL_TOUCH_MOUSEID) {
+                    int ww = 1, wh = 1;
+                    SDL_GetWindowSize(window_, &ww, &wh);
+                    px = e.button.x * static_cast<float>(w_) / static_cast<float>(std::max(1, ww));
+                    py = e.button.y * static_cast<float>(h_) / static_cast<float>(std::max(1, wh));
+                }
+                if (px >= 0.0f) {
+                    // To the 640x480 screen, which sits in the middle of the window.
+                    const float scale = std::min(static_cast<float>(w_) / 640.0f, static_cast<float>(h_) / 480.0f);
+                    const float lx = (px - (static_cast<float>(w_) - 640.0f * scale) / 2.0f) / scale;
+                    const float ly = (py - (static_cast<float>(h_) - 480.0f * scale) / 2.0f) / scale;
+                    if (ly >= by - 6.0f && ly <= by + bh + 6.0f) {
+                        if (lx >= x1 && lx <= x1 + bw) picked = 1;
+                        if (lx >= x2 && lx <= x2 + bw) picked = 2;
+                    }
+                }
+            }
+            draw(lines, -1.0f, "", {}, bh + 24.0f);
+            renderer_.begin(w_, h_, false);
+            auto button = [&](float x, const std::string& label, float r, float g, float b) {
+                renderer_.quad(x - 2, by - 2, bw + 4, bh + 4, 0.9f, 0.9f, 0.95f);
+                renderer_.quad(x, by, bw, bh, r, g, b);
+                renderer_.text(font_, label, x + (bw - renderer_.textWidth(font_, label)) / 2.0f,
+                               by + (bh - static_cast<float>(font_.font().height)) / 2.0f, 1.0f, 1.0f, 1.0f);
+            };
+            button(x1, first, 0.75f, 0.4f, 0.05f);
+            button(x2, second, 0.2f, 0.22f, 0.3f);
+            renderer_.end();
+            show(name);
+            if (picked != 0) return picked == 1;
+            if (setup_.automated && frame >= 3) return false;
+        }
+        return false;
+    }
+
+    // One picture of work in progress.
+    void progress(const std::string& from, const std::string& step, float part, const std::string& file, Uint64 start, const std::string& name) {
+        std::vector<Line> lines{yellow("CONVERTING THE ORIGINAL GAME DATA"), kGap, grey("From")};
+        addPath(lines, from);
+        lines.push_back(kGap);
+        lines.push_back(white(step));
+        const int seconds = static_cast<int>((SDL_GetTicks() - start) / 1000);
+        char buf[160];
+        std::vector<Line> below;
+        below.push_back(file.empty() ? kGap : Line{file});
+        // A guess of the time left once there is something to go by.
+        if (part > 0.05f && seconds >= 3) {
+            const int left = static_cast<int>(static_cast<float>(seconds) * (1.0f - part) / part) + 1;
+            std::snprintf(buf, sizeof buf, "Time: %d:%02d, about %d:%02d left in this step", seconds / 60, seconds % 60, left / 60, left % 60);
+        } else {
+            std::snprintf(buf, sizeof buf, "Time: %d:%02d", seconds / 60, seconds % 60);
+        }
+        below.push_back(Line{buf});
+        below.push_back(kGap);
+        below.push_back(grey("This is done once for each release of the game."));
+        below.push_back(grey("Please keep the game open until it is finished."));
+        std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(part * 100.0f));
+        draw(lines, part, buf, below);
+        show(name);
+    }
+
+    // Waits for the system's folder chooser. True if a folder was chosen.
+    bool pickFolder() {
+        folder::pick();
+        while (!closed_ && folder::pickState() == folder::Pick::Open) {
+            pump();
+            draw({yellow("ORIGINAL GAME DATA"), kGap, Line{"Choose the folder that holds your copy of the game..."}}, -1.0f, "", {});
+            show("");
+            SDL_Delay(50);
+        }
+        return !closed_ && folder::pickState() == folder::Pick::Chosen;
+    }
+
+    // The needed files of the chosen folder copied to where they can be read by path.
+    // Returns what went wrong; empty if nothing did.
+    std::string stage(const std::string& from) {
+        std::error_code ec;
+        fs::remove_all(setup_.staging, ec);
+        fs::create_directories(setup_.staging, ec);
+        SDL_DisableScreenSaver();
+        const Uint64 start = SDL_GetTicks();
+        folder::startStaging(setup_.staging);
+        folder::Staging st;
+        for (;;) {
+            pump();
+            if (closed_) folder::stopStaging();
+            st = folder::staging();
+            if (st.state != folder::Staging::State::Running) break;
+            char buf[200];
+            std::snprintf(buf, sizeof buf, "File %d of %d", std::min(st.done + 1, std::max(1, st.total)), st.total);
+            const std::string name = st.item.substr(st.item.find_last_of('/') == std::string::npos ? 0 : st.item.find_last_of('/') + 1);
+            progress(from, st.total == 0 ? "Step 1 of 3: looking through the chosen folder" : "Step 1 of 3: reading the files from the chosen folder",
+                     st.total > 0 ? static_cast<float>(st.done) / static_cast<float>(st.total) : 0.0f,
+                     st.total > 0 ? std::string(buf) + ": " + name : std::string(), start, "");
+        }
+        SDL_EnableScreenSaver();
+        if (st.state == folder::Staging::State::Done) return {};
+        return st.error.empty() ? "the chosen folder could not be read" : st.error;
+    }
+
+    // The conversion, running beside the pictures. `steps` is 2, or 3 when the files were
+    // fetched from a chosen folder first; `from` is what to show as the source.
+    ImportReport convert(const std::string& source, const std::string& from, int steps) {
         struct Shared {
             std::mutex lock;
             ImportProgress progress;
@@ -148,10 +271,8 @@ public:
             finished = true;
         });
         SDL_DisableScreenSaver();  // a phone must not go to sleep half way
-        const Uint64 start = SDL_GetTicks();
-        std::vector<Line> head{yellow("CONVERTING THE ORIGINAL GAME DATA"), kGap, grey("From")};
-        addPath(head, source);
-        head.push_back(kGap);
+        Uint64 start = SDL_GetTicks();
+        bool inSounds = false;
         while (!finished) {
             pump();
             if (closed_) stop = true;
@@ -160,31 +281,21 @@ public:
                 const std::lock_guard<std::mutex> guard(shared.lock);
                 p = shared.progress;
             }
-            std::vector<Line> lines = head;
-            if (p.total == 0)
-                lines.push_back(white("Looking at the files..."));
-            else
-                lines.push_back(white(p.sounds ? "Step 2 of 2: converting the sounds and the music" : "Step 1 of 2: copying graphics, levels and schemes"));
-            const float part = p.total > 0 ? static_cast<float>(p.done) / static_cast<float>(p.total) : 0.0f;
-            const int seconds = static_cast<int>((SDL_GetTicks() - start) / 1000);
-            char buf[160];
-            std::vector<Line> below;
-            std::snprintf(buf, sizeof buf, "File %d of %d: %s", std::min(p.done + 1, std::max(1, p.total)), p.total, p.item.c_str());
-            below.push_back(p.total > 0 ? Line{buf} : kGap);
-            // A guess of the time left once there is something to go by.
-            if (part > 0.05f && seconds >= 3) {
-                const int left = static_cast<int>(static_cast<float>(seconds) * (1.0f - part) / part) + 1;
-                std::snprintf(buf, sizeof buf, "Time: %d:%02d, about %d:%02d left", seconds / 60, seconds % 60, left / 60, left % 60);
-            } else {
-                std::snprintf(buf, sizeof buf, "Time: %d:%02d", seconds / 60, seconds % 60);
+            if (p.sounds && !inSounds) {
+                inSounds = true;
+                start = SDL_GetTicks();
             }
-            below.push_back(Line{buf});
-            below.push_back(kGap);
-            below.push_back(grey("This is done once for each release of the game."));
-            below.push_back(grey("Please keep the game open until it is finished."));
-            std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(part * 100.0f));
-            draw(lines, part, buf, below);
-            show(part >= 0.5f ? "progress" : "");
+            const std::string of = " of " + std::to_string(steps) + ": ";
+            const std::string step = p.total == 0 ? "Looking at the files..."
+                                     : p.sounds   ? "Step " + std::to_string(steps) + of + "converting the sounds and the music"
+                                                  : "Step " + std::to_string(steps - 1) + of + "copying graphics, levels and schemes";
+            // Each step has the bar to itself: the sounds are nearly all of the work.
+            const int first = p.sounds ? p.dataFiles : 0;
+            const int span = p.sounds ? p.total - p.dataFiles : p.dataFiles;
+            const float part = p.total > 0 ? static_cast<float>(p.done - first) / static_cast<float>(std::max(1, span)) : 0.0f;
+            char buf[200];
+            std::snprintf(buf, sizeof buf, "File %d of %d: %s", std::min(p.done + 1, std::max(1, p.total)), p.total, p.item.c_str());
+            progress(from, step, part, p.total > 0 ? buf : "", start, p.sounds && part >= 0.5f ? "progress" : "");
         }
         worker.join();
         SDL_EnableScreenSaver();
@@ -223,17 +334,53 @@ bool runImportScreens(SDL_Window* window, const ImportScreens& setup) {
                 "plays with the original graphics, sounds and levels.\n\n"
                 "Leave the files here: each new release of the game converts them again.\n";
     }
-    const std::string source = findOriginalGame(setup.folder);
+    // Two ways to the original: a copy put into the folder (always there; by USB or adb), and,
+    // where the system has a folder chooser, a folder chosen once and remembered.
+    const std::string dropped = findOriginalGame(setup.folder);
+    const bool chooser = folder::available();
+    const bool remembered = chooser && !folder::saved().empty();
     const bool noticeShown = fs::exists(setup.noticeFile, ec);
-    const bool due = !source.empty() && importIsDue(setup.converted, setup.release);
-    const bool unrecognised = source.empty() && holdsOtherFiles(setup.folder);
-    if (!due && !unrecognised && noticeShown) return true;
+    const bool asked = !setup.requestFile.empty() && fs::exists(setup.requestFile, ec);
+    const bool due = importIsDue(setup.converted, setup.release) || asked;
+    const bool unrecognised = dropped.empty() && !remembered && holdsOtherFiles(setup.folder);
+    const bool convertNow = due && (!dropped.empty() || remembered);
+    if (!convertNow && !unrecognised && noticeShown) return true;
 
     Screens screens(window, setup);
-    if (due) {
-        std::fprintf(stderr, "INFO  Converting the original game data from %s\n", source.c_str());
-        const ImportReport r = screens.convert(source);
+    bool fromChosen = dropped.empty() && remembered;
+    bool go = convertNow;
+    if (!go && !noticeShown && chooser) {
+        const std::vector<Line> lines = {yellow("ORIGINAL GAME DATA"), kGap, Line{"The game plays with its own free graphics and sounds."}, kGap,
+                                         Line{"If you own the original Atomic Bomberman (1997) and its"}, Line{"folder (the one with COLOR.PAL and DATA) is on this device,"},
+                                         Line{"choose it now: the game converts the data and plays with"}, Line{"the original graphics, sounds and levels."}, kGap,
+                                         grey("Later: Options, Original Game Data.")};
+        if (screens.choice(lines, "CHOOSE FOLDER", "NOT NOW", "notice") && screens.pickFolder()) go = fromChosen = true;
         if (screens.closed()) return false;
+        std::ofstream(setup.noticeFile) << "shown\n";
+        if (!go) return true;
+    }
+    if (go) {
+        std::string source = dropped, from = dropped, problem;
+        if (fromChosen) {
+            from = folder::savedName();
+            std::fprintf(stderr, "INFO  Reading the original game data from the chosen folder %s\n", from.c_str());
+            problem = screens.stage(from);
+            if (screens.closed()) return false;
+            if (problem.empty()) {
+                source = findOriginalGame(setup.staging);
+                if (source.empty()) problem = "No copy of Atomic Bomberman in the chosen folder: it has to be the folder that holds COLOR.PAL and DATA, or the one above it.";
+            }
+        }
+        ImportReport r;
+        if (problem.empty()) {
+            std::fprintf(stderr, "INFO  Converting the original game data from %s\n", source.c_str());
+            r = screens.convert(source, from, fromChosen ? 3 : 2);
+        } else {
+            r.error = problem;
+        }
+        if (fromChosen) fs::remove_all(setup.staging, ec);
+        if (screens.closed()) return false;
+        if (!setup.requestFile.empty()) fs::remove(setup.requestFile, ec);  // asked once; a failure is told, not repeated at every start
         char buf[160];
         std::vector<Line> lines;
         if (r.ok) {
@@ -248,7 +395,7 @@ bool runImportScreens(SDL_Window* window, const ImportScreens& setup) {
             lines.push_back(kGap);
             lines.push_back(Line{fs::exists(fs::path(setup.converted), ec) ? "The data converted before stays in use."
                                                                            : "The game goes on with its free graphics and sounds."});
-            lines.push_back(Line{"The next start tries again."});
+            lines.push_back(Line{fromChosen ? "Another folder can be chosen under Options, Original Game Data." : "The next start tries again."});
             std::fprintf(stderr, "WARN  Conversion failed: %s\n", r.error.c_str());
         }
         screens.message(lines, "done");

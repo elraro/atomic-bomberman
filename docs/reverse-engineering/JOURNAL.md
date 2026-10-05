@@ -642,3 +642,9 @@ Not a discovery about the original; a record of what was built and seen.
 - The importer (`src/resources/asset_import.*`) lists its work first, reports progress per file, can be stopped, and counts files it could not write. `importForRelease` converts beside the target and swaps on success; the converted folder carries the release in `converted-by.txt`.
 - The app (`src/app/import_screen.*`) looks into `<external files>/original` on Android (`--import-folder DIR` elsewhere) on every start: first-start note with the path, conversion with a progress bar when a copy is there and the converted files are missing or from another release.
 - Validation: unit tests on a made-up original (Level 4 for the importer's rules); the screens seen on the desktop and on the Android emulator (API 34) with the real data: 260 data files, 971 sounds, 297 MB, then the original intro and menu. Not run on a real device.
+
+### Modern: Android folder chooser for the original data (2026-10-05)
+
+- `android/.../GameActivity.java` (extends SDL's activity): Android's folder chooser (`ACTION_OPEN_DOCUMENT_TREE`), the permission kept over restarts, the choice saved; the files the importer needs (listed sounds only, read from the game's `soundlst.res`) are copied into a staging folder, since a chosen folder cannot be read by path. `src/app/android_folder.*` calls it from C++.
+- First start offers CHOOSE FOLDER / NOT NOW; Options has "Original Game Data"; a release change reads the remembered folder again.
+- Seen on the emulator (API 34): choice of `Download/ATOMIC`, 1233 files read, 260 data files and 971 sounds converted, about 160 s in all; no conversion at the following start; choosing again from Options converts at the next start. Not run on a real device.

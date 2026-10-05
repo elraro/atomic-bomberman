@@ -1,6 +1,6 @@
 # Android build
 
-The Android app is the same game: the C++ code of the repository built with the Android NDK, started by SDL's activity. This folder holds only the wrapping (Gradle files and the manifest).
+The Android app is the same game: the C++ code of the repository built with the Android NDK, started by SDL's activity. This folder holds the wrapping: Gradle files, the manifest, and one small Java class (`GameActivity`, SDL's activity plus the folder chooser for the original game's data).
 
 ## What it is like
 
@@ -12,27 +12,25 @@ The Android app is the same game: the C++ code of the repository built with the 
 
 ## Using the original game's data
 
-The app looks on every start into one folder of the device:
+**Choosing the folder (the usual way).** Put your copy of the original game somewhere on the device: the installed game or the whole CD, that is the folder holding `COLOR.PAL` and `DATA` (about 550 MB; for instance `Download/ATOMIC`).
 
-```
-Android/data/io.github.elraro.atomicbomberman/files/original
-```
+1. On its first start the app offers **CHOOSE FOLDER** / **NOT NOW**. Later the same is under **Options, Original Game Data**.
+2. Android's own folder chooser opens: go to the game's folder (or the one above it), *Use this folder*, *Allow*.
+3. The app reads the files it needs from there, converts them into its private storage (about 300 MB) and plays with the original graphics, sounds, levels and intro. A screen shows the step (1 of 3: reading the files; 2: graphics, levels and schemes; 3: sounds), a progress bar, the file in hand and the time left. On the emulator the whole took about two and a half minutes.
 
-(on the device's shared storage; the first start shows the full path and creates the folder, with a note in it).
-
-1. Start the app once. It says where the folder is and goes on with the free asset set.
-2. Copy your copy of the original game into that folder: the installed game or the whole CD, that is the folder holding `COLOR.PAL` and `DATA`. It may be put there directly or as one folder inside. About 550 MB.
-3. Start the app again. It converts the data (a screen with a progress bar, the file in hand and the time left; under a minute on the emulator) into its private storage, about 300 MB, and from then on plays with the original graphics, sounds, levels and intro.
+Chosen from Options, the folder is converted at the next start of the app.
 
 Things to know:
 
-- **Each new release converts again**: the converted files carry the release that made them, and a start with another release redoes them. So leave the original files in the folder. If they are gone, the files converted before stay in use.
-- The conversion is made beside the files in use and replaces them only when all of it went well. If it fails (storage full) or the app is closed half way, what was there stays, the reason is shown, and the next start tries again.
-- If the folder holds files but no game is recognised in it, a start says so.
-- **Reaching the folder**: from a computer over USB (file transfer), or with `adb`. On Android 11 and later the file managers on the device itself are mostly not allowed into `Android/data`. With `adb`, pushing straight into that folder may be refused; this works: `adb push GAME /data/local/tmp/ATOMIC`, then `adb shell cp -r /data/local/tmp/ATOMIC /sdcard/Android/data/io.github.elraro.atomicbomberman/files/original/`.
-- Uninstalling the app removes the folder and the converted files with it.
+- **The choice is remembered**, together with Android's permission to read that folder. **Each new release converts again** by itself (the converted files carry the release that made them), so leave the original files where they are. If they are gone or the permission was withdrawn, the start says so and the files converted before stay in use.
+- Android does not let a folder's files be read by path, so they are first copied into `Android/data/io.github.elraro.atomicbomberman/files/import-staging` (about 300 MB more, removed after the conversion). Only what the game uses is fetched.
+- Android does not allow choosing the top of the storage or the `Download` folder itself: a folder inside them is fine.
+- The conversion is made beside the files in use and replaces them only when all of it went well. If it fails (storage full) or the app is closed half way, what was there stays and the reason is shown.
+- Uninstalling the app removes the converted files and forgets the folder.
 
-The same can be tried on a desktop with `atomic --import-folder DIR` (there `--import-assets` is the usual way).
+**Without the chooser.** The app also looks on every start into `Android/data/io.github.elraro.atomicbomberman/files/original` (it creates the folder, with a note in it). A copy of the game put there (directly or one folder below) is converted the same way and wins over a chosen folder. That folder can be reached from a computer over USB or with `adb`; pushing straight into it may be refused, this works: `adb push GAME /data/local/tmp/ATOMIC`, then `adb shell cp -r /data/local/tmp/ATOMIC /sdcard/Android/data/io.github.elraro.atomicbomberman/files/original/`.
+
+On a desktop the folder way can be tried with `atomic --import-folder DIR` (there `--import-assets` is the usual way).
 
 ## Building it
 
@@ -55,4 +53,4 @@ The APK is signed with the debug key of whichever machine built it. It installs 
 
 ## State
 
-Built and started on the Android emulator (API 34, x86_64): the title, the menus, a local match and the touch controls were seen working. The import of the original data was run there too: first-start note, conversion with its progress screen (260 data files, 971 sounds), original intro and menu afterwards, no second conversion on the next start. Not yet run on a real phone or tablet; sound was not listened to; network play from the app was not tried.
+Built and started on the Android emulator (API 34, x86_64): the title, the menus, a local match and the touch controls were seen working. The import of the original data was run there too, both ways (the folder chooser from the first start and from Options; a copy pushed into the app's folder): first-start note, conversion with its progress screen (260 data files, 971 sounds), original intro and menu afterwards, no second conversion on the next start. Not yet run on a real phone or tablet; sound was not listened to; network play from the app was not tried.

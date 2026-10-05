@@ -2340,6 +2340,7 @@ void testAssetImport() {
     CHECK_EQ(seen.size(), 8u);  // 4 files, the movie, 2 sounds, and the end
     for (std::size_t i = 0; i < seen.size(); ++i) {
         CHECK_EQ(seen[i].total, 7);
+        CHECK_EQ(seen[i].dataFiles, 5);
         CHECK_EQ(seen[i].done, static_cast<int>(i));
         if (i > 0) CHECK(seen[i].sounds || !seen[i - 1].sounds);
     }
