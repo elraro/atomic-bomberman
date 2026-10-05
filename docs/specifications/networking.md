@@ -117,4 +117,13 @@ The dedicated server reads the game data (tuning values, schemes, level extras) 
 - Codec: every message survives encode/decode; truncated messages are refused.
 - Loopback: a server and two clients in one process over 127.0.0.1 play a round to its result with equal hashes; chat arrives; a wrong password is refused; a forced mismatch is repaired by a snapshot; a late joiner reaches the same state; with UDP blocked the round still completes over TCP.
 
+## Limits accepted for now
+
+- No client-side prediction: input delay equals the round trip to the server.
+- IPv4 only; no NAT traversal: the host's port must be reachable.
+- LAN search finds servers on the default port only.
+- One player per client; no roulette, no campaign.
+- Clients trust the server's snapshots (see `../migration/networking.md`).
+- Different versions of the program must not be mixed: the protocol version is raised whenever the simulation changes.
+
 Not covered by automated tests: behaviour on real links with loss and delay, NAT traversal (the host must be reachable on the port), more than a handful of clients.

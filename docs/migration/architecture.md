@@ -11,7 +11,10 @@ src/game/world.*        World: tiles, players, bombs, flames, powerups; tick()
 src/resources/scheme_file.*   reader for original .sch files -> ab::Scheme
 src/rendering/renderer.*      OpenGL 3.3: one shader, one VAO/VBO, batched quads, 640x480 logical screen letterboxed
 src/app/main.cpp              SDL3 window, GL context, keyboard, fixed-step loop
+src/game/match.*        how a round is set up and how rounds add up to a match (shared with the network mode)
+src/net/*, src/server/*  the client-server network mode: see networking.md
 tests/unit/test_core.cpp
+tests/unit/test_net.cpp
 ```
 
 Front-end loop: real time is accumulated and consumed in fixed 50 ms simulation steps (the original's nominal frame; see `docs/reverse-engineering/dynamic-analysis.md`). The renderer interpolates player and bomb positions between the previous and the current step, so display rate and simulation rate are independent. Gameplay code never includes SDL or OpenGL headers.
@@ -39,9 +42,9 @@ Round generation (brick density, hidden powerups, start-area clearing), start fr
 
 `src/game/ai.*` implements the original's behaviour list as an input source (see `docs/reverse-engineering/ai.md` for what is faithful and what is approximated).
 
-## Not covered yet
+## The application
 
-Campaign, networking. The application has a main menu (Start Game, Options, About Bomberman, Online Manual and Exit work; the two network items do nothing), a viewer for the original's `.bm` help pages, an options screen whose settings are stored in the original's `options.ini` format in the per-user data folder, the player list, a level/scheme/wins/team screen, and the original's draw, results, victory and team pictures after rounds. Options, network and manual screens are not built. What happens when the round clock reaches zero is not known yet (the modern clock simply stops at 0). Each is specified to some degree in `docs/specifications/` except game modes, AI and networking.
+It has a main menu (all seven items work; the two network items open the new client-server mode of `networking.md`), a viewer for the original's `.bm` help pages, an options screen whose settings are stored in the original's `options.ini` format in the per-user data folder, the player list, a level/scheme/wins/team screen, and the original's draw, results, victory and team pictures after rounds. What happens when the round clock reaches zero is not known yet (the modern clock simply stops at 0). Each is specified to some degree in `docs/specifications/` except game modes, AI and networking.
 
 ## Validation level
 

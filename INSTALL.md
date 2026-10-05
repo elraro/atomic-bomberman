@@ -16,7 +16,7 @@ You need:
 | `atomic-bomberman-modern-linux-x86_64.tar.gz` | 64-bit Linux with X11 or Wayland |
 | `atomic-bomberman-modern-windows-x64.zip` | 64-bit Windows 10 or later |
 
-They are attached to the workflow run (Actions → build → latest run → Artifacts) and, for tagged versions (`v*`), to the release page. Unpack the package anywhere; it holds the program (`atomic` or `atomic.exe`), the README, the license and this file. Nothing else needs installing: SDL3 is built into the program. A graphics driver with OpenGL 3.3 is required.
+They are attached to the workflow run (Actions → build → latest run → Artifacts) and, for tagged versions (`v*`), to the release page. Unpack the package anywhere; it holds the game (`atomic` or `atomic.exe`), the dedicated network server (`atomic_server` or `atomic_server.exe`), the README, the license and this file. Nothing else needs installing: SDL3 is built into the program. A graphics driver with OpenGL 3.3 is required.
 
 ## 2. Import the game data (once)
 
@@ -105,7 +105,24 @@ ctest --test-dir build -C Release --output-on-failure
 
 The program is `build/atomic` (Linux) or `build\Release\atomic.exe` (Windows).
 
+## Network games and the dedicated server
+
+To play over a network, one player chooses **Start Network Game** in the menu and the others **Join Network Game** (see the README's "Network play"). Nothing extra needs installing.
+
+`atomic_server` runs the same server without a window, for a machine that is always on:
+
+```sh
+./atomic_server --name "My server" --game-dir /path/to/assets
+```
+
+- It looks for the game data like the game does: `--game-dir`, the `ATOMIC_GAME_DIR` environment variable, an `assets` folder in the current folder, the per-user folder, or a `game` folder. It only needs the schemes, `valuelst.res` and the level extras; without any game data it serves one built-in arena.
+- Port **27410**, TCP and UDP, unless `--port` says otherwise. Open it in the firewall and, behind a router, forward both.
+- `--password TEXT` keeps strangers out. `--hidden` stops it answering searches on the local network.
+- `atomic_server --help` lists everything. `Ctrl-C` or `quit` stops it.
+
 ## Status of these instructions
+
+- The dedicated server and network play were run on Linux on one machine only; see the README for what that means.
 
 - The Linux steps were run as written: import (246 data files, 971 sounds, 281 MB), then starting the game from the imported folder with graphics, level extras, sounds and music loading.
 - The GitHub Actions workflow builds and tests both packages (first run: Linux and Windows both succeeded). The Windows package itself has **not** been started on a Windows machine by the author of these instructions.

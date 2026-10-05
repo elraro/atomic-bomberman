@@ -72,7 +72,15 @@ Levels as defined in AGENTS.md §53: 1 static (read from the original's code or 
 
 ## Not implemented
 
-- Network play (Start/Join Network Game, node name, modem and protocol settings): out of scope for now.
+- The original's network play (IPX and serial links, node name, modem and protocol settings). It is replaced by a new client-server mode; see below.
 - The original's remaining debug keys: Ctrl-R (a colour remap tool for the artists), Ctrl-D (switches the debug log's output) and Alt-N (writes network statistics).
 
 Implemented from the original's code or its own help pages but never compared with the original running: intro, options, key definitions, help viewer, roulette, campaign mode, attract mode, scheme editor (its screen layout is this implementation's), team selection, exit question. Gamepad input has never been run with a controller.
+
+## Network mode (new; nothing to compare with the original)
+
+The client-server mode of `../specifications/networking.md` is this project's own design, so "validated against the original" does not apply. What it rests on is the gameplay core, whose rules are covered above. Its own status:
+
+- Automated (`ab_net_tests`, `ab_tests` "state transfer"): encoding, lobby, a whole match with several clients over UDP and over TCP only, repair of a broken client state, a late joiner, a player leaving, 40 % datagram loss. All over the loopback interface with a simulated clock.
+- By hand on one machine with the real game data: dedicated server with scripted clients over several rounds and levels; the game joining as player and as watcher; screens captured from unattended runs.
+- Not done: two real machines, real loss and delay, NAT, Windows sockets at run time, a Linux build against a Windows build, a person typing in the lobby. Details in `../migration/networking.md`.

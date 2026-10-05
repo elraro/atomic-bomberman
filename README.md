@@ -35,6 +35,7 @@ The original is then run side by side (under Wine, driven by scripted key presse
 | 🗺️ **All 11 levels** | With their arrows, conveyor belts, warp holes and trampolines, and every original scheme |
 | 🤖 **Computer players** | Modelled on the original's own behaviour list |
 | 👥 **Up to 10 players** | Two on the keyboard, gamepads, the rest AI; free-for-all or team play |
+| 🌐 **Network play** | A new client-server mode over TCP/UDP: host from the menu or run the dedicated server; lobby, chat, LAN search |
 | ⏱️ **The endgame** | Round clock, "hurry", closing walls, draws, match victories |
 | 🎨 **Original look and sound** | Graphics, HUD fonts, sound effects and music loaded from your own copy of the game |
 | 🧪 **Tested** | Automated tests of the game rules run on every push (67 tests at the time of writing); 33 mechanics confirmed against the running original |
@@ -85,7 +86,7 @@ Needs CMake 3.20+ and a C++20 compiler. `-DAB_FETCH_SDL3=ON` downloads SDL3 and 
 
 The program needs the original game's data for the menu, graphics and sound. It looks in: `--game-dir PATH`, the `ATOMIC_GAME_DIR` environment variable, an imported `assets` folder (next to the executable, in the current folder, or in the per-user data folder), or a `game` folder with a copy of the original. The terminal prints `INFO  Game files: …` when it is found; if it is not, the window title says so and the program falls back to placeholder shapes with no menu.
 
-With game files the program opens on the main menu. Choose **Start Game**, set up the player list (Up/Down select a slot, Right cycles AI → KEY 0 → KEY 1 → OFF, Left switches a slot off), press Enter, then choose level, scheme and wins (Left/Right) and press Enter to play. By default player 1 uses the first key set and player 2 is a computer player, as in the original. Options, About Bomberman, Online Manual and Exit work as well; the two network items do nothing. F1 opens the help pages from any screen. As in the original there are two hidden features: press **Ctrl-E six times** on the main menu for the level (scheme) editor, and **C five times** on the player list for campaign mode. Schemes made with the editor are saved in a `schemes` folder next to your saved settings (Linux: `~/.local/share/atomic-bomberman-modern/atomic/schemes`) and appear in the scheme list.
+With game files the program opens on the main menu. Choose **Start Game**, set up the player list (Up/Down select a slot, Right cycles AI → KEY 0 → KEY 1 → OFF, Left switches a slot off), press Enter, then choose level, scheme and wins (Left/Right) and press Enter to play. By default player 1 uses the first key set and player 2 is a computer player, as in the original. Options, About Bomberman, Online Manual and Exit work as well; **Start Network Game** and **Join Network Game** open the network mode described below. F1 opens the help pages from any screen. As in the original there are two hidden features: press **Ctrl-E six times** on the main menu for the level (scheme) editor, and **C five times** on the player list for campaign mode. Schemes made with the editor are saved in a `schemes` folder next to your saved settings (Linux: `~/.local/share/atomic-bomberman-modern/atomic/schemes`) and appear in the scheme list.
 
 | | Move | Bomb | Action |
 |---|---|---|---|
@@ -100,7 +101,33 @@ The action button punches the bomb ahead (punch), stops your kicked bombs (kicke
 
 In a match: `Esc` or `Ctrl-Q` returns to the menu, `R` restarts the round, `P` pauses, `N` advances one step while paused, `F1` opens the help pages. The result screen waits for `Enter` or `Space` (it goes on by itself after six seconds when only computer players are in the game, or after `Alt-W`); the first player to reach the wins target takes the match. With `--debug` (or the environment variable `KWD=1`, as in the original) three of the original's debug keys work in a match: `Ctrl-A` lists the animation sequences, `Alt-D` shows an information window, `F10` clears a campaign stage.
 
-Options: `--scheme NAME` (file in `data/schemes`, default `basic`), `--level N` (0-10: graphics, music and extras), `--wins N` (default 2), `--players N --humans H` (preset the player list; `--humans 0` or `--demo` is all computer players), `--start` (skip the menu), `--campaign NAME` (play a campaign file: `simple`, `ghosts`, `crouton`), `--no-intro` (skip the intro movie, the logo and the title screens), `--roulette` (bonus-game wheel for the winner of a match, before the next match), `--seed N`, `--mute`, `--shapes`, `--native` (640×480 window), `--frames N --screenshot out.ppm` (automated capture), `--result-shot` (capture the first result screen), `--script up,down,left,right,enter,esc` (scripted menu keys, one every 10 frames).
+Options: `--scheme NAME` (file in `data/schemes`, default `basic`), `--level N` (0-10: graphics, music and extras), `--wins N` (default 2), `--players N --humans H` (preset the player list; `--humans 0` or `--demo` is all computer players), `--start` (skip the menu), `--campaign NAME` (play a campaign file: `simple`, `ghosts`, `crouton`), `--no-intro` (skip the intro movie, the logo and the title screens), `--roulette` (bonus-game wheel for the winner of a match, before the next match), `--connect ADDRESS` (join a network game at once), `--host [PORT]` (host one at once), `--seed N`, `--mute`, `--shapes`, `--native` (640×480 window), `--frames N --screenshot out.ppm` (automated capture), `--result-shot` (capture the first result screen), `--script up,down,left,right,enter,esc` (scripted menu keys, one every 10 frames).
+
+## 🌐 Network play
+
+This is a **new** network mode, not the original's (which used IPX and serial links). One server runs the game; everybody else connects to it. Up to ten players, one per computer; free seats can be filled with computer players. The design is in [`docs/specifications/networking.md`](docs/specifications/networking.md).
+
+<div align="center"><img src="docs/images/lobby.png" width="60%" alt="Network lobby: seats, match settings and chat"></div>
+
+**Host from the game.** Main menu → **Start Network Game**: set your name, a name for the game, the port (default 27410) and optionally a password, then *Start the server*. You land in the lobby as its administrator.
+
+**Join.** Main menu → **Join Network Game**: games on your local network are listed; for any other, type the host's address (`host` or `host:port`) and press Enter. Or start the game with `--connect ADDRESS`.
+
+**Lobby.** Seats and ping times on the left, the match settings on the right, the chat below. Just type to chat. The administrator (marked `*`, the player who has been there longest) changes the settings with the arrow keys and starts with `F2` or Enter on *Start the match*; `/kick NAME` in the chat removes a player. `F3` changes your team. `Esc` twice leaves.
+
+**In the match** you play with the first key set (arrows, Space, Enter by default) or the first gamepad. `T` opens the chat line, `Esc` twice (or `Ctrl-Q` twice) leaves; a computer player takes over the seat of someone who leaves. Whoever connects during a match watches it and gets a seat when it ends.
+
+**Dedicated server.** `atomic_server` is the same server without a window; it needs no graphics and no SDL:
+
+```sh
+./atomic_server --name "Friday bombs" --port 27410 --game-dir /path/to/assets --computers 2
+```
+
+It reads schemes, tuning values and level extras from the same game data as the game (`--game-dir`, `ATOMIC_GAME_DIR`, an `assets` folder, or the per-user folder), and logs joins, chat and results. Type `status`, `say TEXT` or `quit` on its console; `--help` lists the options (`--password`, `--level`, `--wins`, `--play-time`, `--team-play`, `--hidden`, ...). The first player to join is the administrator.
+
+**Reaching a server.** The host's port must be reachable for **TCP and UDP** (open it in the firewall; behind a home router, forward it). If only TCP gets through the game still works, a little less smoothly. Players need the same version of the program; they do not need the same schemes, because the server sends the arena.
+
+**What to expect.** What you see is always what the server has already computed, so your own moves are delayed by the trip to the server and back (nothing on a LAN, noticeable above roughly 100 ms). This mode has been tested on one machine only: automated tests over the loopback interface, including with 40 % packet loss, and matches against a dedicated server with scripted clients. It has not yet been played between two real computers.
 
 ## 🔬 How it was made
 
@@ -128,6 +155,7 @@ A few things learned along the way:
 | `src/game/` | Gameplay core and computer players. Deterministic, no platform dependencies |
 | `src/app/`, `src/rendering/`, `src/audio/` | SDL3 window and input, OpenGL 3.3 renderer, sound and music |
 | `src/resources/` | Readers for the original's file formats, and the asset importer |
+| `src/net/`, `src/server/` | Network mode: sockets, protocol, server, client; the dedicated server program |
 | `tests/unit/` | Tests that encode the specified rules |
 | `tools/asset-extractor/` | Python reader and extractor for `.ani` sprite files |
 | `tools/diagnostics/` | Scripts that run, drive and measure the original under Wine |
@@ -136,13 +164,13 @@ A few things learned along the way:
 
 ## 🚧 Status
 
-Playable: local matches against computer players or a second person, on every level.
+Playable: local matches against computer players or a second person, on every level; network matches through a hosted or dedicated server.
 
 Not there yet:
 
 - Nobody has play-tested it thoroughly; expect rough edges.
 - The Windows build and the GitHub Actions workflow are new and may need fixes.
-- Options, manual and network menu items do nothing. Network play and campaign mode are not implemented.
+- Network play is a new client-server mode (see above). It passes its automated tests and scripted matches on one machine; it has not been played between two real computers, and the Windows socket code has only been compiled.
 - About 30 scenarios of the test matrix have not been observed on the original yet (mostly random ones: diseases, duds, powerup placement).
 - The computer players follow the original's structure, but two of its search routines were approximated.
 
