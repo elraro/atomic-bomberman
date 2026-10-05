@@ -3,12 +3,12 @@
 // simulated (the server and clients take the clock as an argument), so a whole
 // round runs in well under a second.
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <functional>
 #include <map>
 #include <memory>
 #include <string>
-#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -514,7 +514,7 @@ void testPrediction() {
     CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }));
 
     std::map<std::uint32_t, std::uint32_t> predicted, confirmed;
-    int ahead = 0, samples = 0;
+    int ahead = 0, samples = 0, least = 1000, most = -1000;
     auto watch = [&](int ms) {
         for (int waited = 0; waited < ms; waited += 5) {
             h.turn();
@@ -526,6 +526,8 @@ void testPrediction() {
             if (ann.view() != ann.world()) {
                 predicted[ann.viewStep()] = own(*ann.view());
                 ahead += static_cast<int>(ann.viewStep()) - static_cast<int>(ann.stepsApplied());
+                least = std::min(least, static_cast<int>(ann.viewStep()) - static_cast<int>(ann.stepsApplied()));
+                most = std::max(most, static_cast<int>(ann.viewStep()) - static_cast<int>(ann.stepsApplied()));
                 ++samples;
             }
         }
@@ -543,6 +545,9 @@ void testPrediction() {
     watch(4000);
     CHECK(samples > 100);
     CHECK(ahead >= samples * 3 && ahead <= samples * 5);  // about four steps ahead
+    if (ahead < samples * 3 || ahead > samples * 5)
+        std::printf("  FAIL (values) ahead %d over %d samples, least %d, most %d, udp %d, confirmed steps %u, server steps %u\n", ahead, samples,
+                    least, most, ann.udpActive() ? 1 : 0, ann.stepsApplied(), h.server.steps());
     const std::uint32_t steady = ann.stepsApplied();
     CHECK(steady > 40);
     CHECK_EQ(wrong(10, steady), 0);
