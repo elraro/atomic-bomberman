@@ -34,6 +34,17 @@ public:
     // As the original's sound call (0x427961): one of the run of consecutive ids that
     // starts at baseId, not the one played last from that run; nothing if baseId is not defined.
     void playSeries(int baseId);
+    // Every sound file of the game data, for the sound test: also those the game's sound
+    // list does not name (the disc holds about as many again as the game uses).
+    struct Entry {
+        std::string name;        // file name without extension
+        std::vector<int> ids;    // its numbers in the sound list; empty: not used by the game
+        double seconds = 0.0;
+    };
+    std::vector<Entry> catalogue() const;
+    // Plays one of them by name, alone: whatever effect was sounding is cut off.
+    void playNamed(const std::string& name);
+    void stopEffects();
     // Starts a looping tune by sound id (stops the previous one). Level music is id 1100 + level.
     void playMusic(int id);
     void stopMusic();
@@ -46,6 +57,7 @@ public:
 
 private:
     const std::vector<std::uint8_t>* load(const std::string& name);
+    void startVoice(const std::vector<std::uint8_t>& data);
 
     bool ready_ = false;
     std::uint32_t device_ = 0;

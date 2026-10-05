@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <sstream>
@@ -174,7 +175,11 @@ void Audio::playRange(int firstId, int lastId) {
     const std::string& name = *candidates[(rng_ >> 16) % candidates.size()];
     const std::vector<std::uint8_t>* data = load(name);
     if (data == nullptr || data->empty()) return;
+    startVoice(*data);
+}
 
+void Audio::startVoice(const std::vector<std::uint8_t>& sound) {
+    const std::vector<std::uint8_t>* data = &sound;
     update();
     if (voices_.size() >= static_cast<std::size_t>(kMaxVoices)) {
         SDL_DestroyAudioStream(voices_.front());  // oldest voice gives way
@@ -189,6 +194,52 @@ void Audio::playRange(int firstId, int lastId) {
     SDL_PutAudioStreamData(stream, data->data(), static_cast<int>(data->size()));
     SDL_FlushAudioStream(stream);
     voices_.push_back(stream);
+}
+
+void Audio::stopEffects() {
+    for (SDL_AudioStream* voice : voices_) SDL_DestroyAudioStream(voice);
+    voices_.clear();
+}
+
+void Audio::playNamed(const std::string& name) {
+    if (!ready_) return;
+    stopEffects();
+    const std::vector<std::uint8_t>* data = load(name);
+    if (data != nullptr && !data->empty()) startVoice(*data);
+}
+
+std::vector<Audio::Entry> Audio::catalogue() const {
+    // The files of the sound folder (.wav in an imported folder, .rss in an original one)...
+    std::map<std::string, Entry> byName;
+    std::error_code ec;
+    for (const auto& file : std::filesystem::directory_iterator(soundDir_, ec)) {
+        std::string ext = file.path().extension().string(), name = file.path().stem().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return std::tolower(ch); });
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) { return std::tolower(ch); });
+        if (ext != ".wav" && ext != ".rss") continue;
+        Entry& e = byName[name];
+        e.name = name;
+        const auto bytes = static_cast<double>(file.file_size(ec)) - (ext == ".wav" ? 44.0 : 0.0);
+        e.seconds = std::max(0.0, bytes / (22050.0 * 4.0));  // 22050 Hz, stereo, 16 bit
+    }
+    // ...and the numbers the game's sound list gives them (the whole list, not the selection in use).
+    std::ifstream in(gameDir_ + "/data/res/soundlst.res", std::ios::binary);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (auto semi = line.find(';'); semi != std::string::npos) line.erase(semi);
+        const auto comma = line.find(',');
+        if (comma == std::string::npos) continue;
+        char* end = nullptr;
+        const long id = std::strtol(line.c_str(), &end, 10);
+        if (end == line.c_str()) continue;
+        std::string name = line.substr(comma + 1);
+        name.erase(std::remove_if(name.begin(), name.end(), [](unsigned char ch) { return std::isspace(ch) != 0; }), name.end());
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) { return std::tolower(ch); });
+        if (const auto it = byName.find(name); it != byName.end()) it->second.ids.push_back(static_cast<int>(id));
+    }
+    std::vector<Entry> out;
+    for (auto& [name, entry] : byName) out.push_back(std::move(entry));
+    return out;
 }
 
 void Audio::playMusic(int id) {

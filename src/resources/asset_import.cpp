@@ -112,7 +112,7 @@ bool convertRssToWav(const fs::path& from, const fs::path& to, ImportReport& rep
 
 }  // namespace
 
-ImportReport importAssets(const std::string& source, const std::string& destination) {
+ImportReport importAssets(const std::string& source, const std::string& destination, bool allSounds) {
     ImportReport report;
     const fs::path src(source);
     const fs::path dst(destination);
@@ -168,6 +168,20 @@ ImportReport importAssets(const std::string& source, const std::string& destinat
         if (rss.empty() || !convertRssToWav(rss, dst / "data" / "sound" / (name + ".wav"), report)) {
             ++report.missingSounds;
             report.missing.push_back(name);
+        }
+    }
+
+    if (allSounds && !soundDir.empty()) {
+        std::error_code scan;
+        for (const auto& e : fs::directory_iterator(soundDir, scan)) {
+            if (!e.is_regular_file(scan) || lower(e.path().extension().string()) != ".rss") continue;
+            const std::string name = lower(e.path().stem().string());
+            if (std::find(done.begin(), done.end(), name) != done.end()) continue;
+            const int before = report.sounds;
+            if (convertRssToWav(e.path(), dst / "data" / "sound" / (name + ".wav"), report)) {
+                report.sounds = before;  // counted apart
+                ++report.extraSounds;
+            }
         }
     }
 

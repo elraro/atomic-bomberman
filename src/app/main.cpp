@@ -47,6 +47,7 @@ struct Options {
     std::string screenshot;   // write the last frame as a PPM file
     std::string importFrom;   // --import-assets: build the asset folder from this original game folder and exit
     std::string assetsDir;    // --assets-dir: where --import-assets writes (default: the per-user data folder)
+    bool allSounds = false;   // --all-sounds: import also the sounds the game never plays (for the sound test)
     int menuShot = 0;         // automated: 1 = capture the main menu, 2 = the player list, ... 10-13 the network screens
     bool resultShot = false;  // automated: capture the result screen of the first decided round and exit
     std::vector<std::string> script;  // automated: key names pressed one after another (see --script)
@@ -90,6 +91,8 @@ Options parseArgs(int argc, char** argv) {
                       "  --version            print the release number and exit\n"
                       "  --import-assets DIR  import the data of an original game copy, then exit\n"
                       "  --assets-dir DIR     where --import-assets writes (default: per-user data folder)\n"
+                      "  --all-sounds         with --import-assets: also the sounds on the disc that the game never plays\n"
+                      "                       (about 180 MB more; hear them under Options, Sound Test)\n"
                       "  --game-dir DIR       imported assets or an original game folder to play from\n"
                       "  --free               play with the free asset set even if original game data is found\n"
                       "  --start              skip the menu and start a match at once\n"
@@ -123,6 +126,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--start") o.menu = false;
         else if (a == "--import-assets") o.importFrom = next();
         else if (a == "--assets-dir") o.assetsDir = next();
+        else if (a == "--all-sounds") o.allSounds = true;
         else if (a == "--result-shot") o.resultShot = true;
         else if (a == "--script") {
             // Comma-separated keys: up, down, left, right, enter, esc, space, backspace, t, f2, f3,
@@ -345,8 +349,8 @@ const char* controlName(Control c) {
     }
 }
 
-constexpr int kOptionRows = 15;
-enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor, AudioAdjust, Movie, Net };
+constexpr int kOptionRows = 16;
+enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor, AudioAdjust, Movie, Net, SoundTest };
 
 using ab::SchemeEntry;
 
@@ -355,13 +359,14 @@ int main(int argc, char** argv) {
     if (!opt.importFrom.empty()) {
         const std::string to = opt.assetsDir.empty() ? userAssetsDir() : opt.assetsDir;
         std::printf("Importing game data\n  from: %s\n  to:   %s\n", opt.importFrom.c_str(), to.c_str());
-        const ab::ImportReport r = ab::importAssets(opt.importFrom, to);
+        const ab::ImportReport r = ab::importAssets(opt.importFrom, to, opt.allSounds);
         if (!r.ok) {
             std::printf("Import failed: %s\n", r.error.c_str());
             return 1;
         }
         std::printf("Done: %d data files, %d sounds converted to .wav (%d listed sounds not found), %.1f MB.\n", r.dataFiles,
                     r.sounds, r.missingSounds, static_cast<double>(r.bytes) / 1.0e6);
+        if (r.extraSounds > 0) std::printf("Also %d sounds that the game never plays (Options, Sound Test).\n", r.extraSounds);
         if (!r.missing.empty()) {
             // The original's own list names a few sounds its disc does not have (two are
             // marked there as dummies); nothing is wrong with the copy.
@@ -583,6 +588,17 @@ int main(int argc, char** argv) {
         int optionRow = 0;
         int keyRow = 0;
         int audioRow = 0;
+        // Sound test: the catalogue, which part of it is listed (0 all, 1 only those the game
+        // never plays, 2 only those it uses), and the row the pointer is on.
+        std::vector<ab::Audio::Entry> soundList;
+        int soundFilter = 0;
+        int soundRow = 0;
+        auto shownSounds = [&]() {
+            std::vector<const ab::Audio::Entry*> shown;
+            for (const ab::Audio::Entry& e : soundList)
+                if (soundFilter == 0 || (soundFilter == 1) == e.ids.empty()) shown.push_back(&e);
+            return shown;
+        };
         bool keyCapture = false;  // waiting for the new key of the selected action
         // Sample arena on the level screen (original 0x406AA3): 5 x 5 cells at (400,100)
         // (value 730). Each cell holds the level a tile is taken from, or -1 for none;
@@ -611,6 +627,11 @@ int main(int argc, char** argv) {
         if (opt.menuShot == 4) screen = Screen::Options;
         if (opt.menuShot == 7) screen = Screen::Keys;
         if (opt.menuShot == 9) screen = Screen::AudioAdjust;
+        if (opt.menuShot == 14) {
+            soundList = audio.catalogue();
+            if (opt.frames > 100) soundFilter = 1;  // automated: the second capture shows the unused ones
+            screen = Screen::SoundTest;
+        }
         if (opt.menuShot == 8) {  // the editor on a new scheme
             editor.open();
             editor.key(SDLK_2, false);
@@ -1241,6 +1262,23 @@ int main(int argc, char** argv) {
                         saveSettings();
                         screen = Screen::Options;
                     }
+                } else if (screen == Screen::SoundTest) {
+                    const auto shown = shownSounds();
+                    const int n = static_cast<int>(shown.size());
+                    if (key == SDLK_UP && n > 0) soundRow = (soundRow + n - 1) % n;
+                    if (key == SDLK_DOWN && n > 0) soundRow = (soundRow + 1) % n;
+                    if (key == SDLK_PAGEUP || key == SDLK_LEFT) soundRow = std::max(0, soundRow - 15);
+                    if (key == SDLK_PAGEDOWN || key == SDLK_RIGHT) soundRow = std::min(std::max(0, n - 1), soundRow + 15);
+                    if (key == SDLK_HOME) soundRow = 0;
+                    if (key == SDLK_END) soundRow = std::max(0, n - 1);
+                    if (key == SDLK_TAB) soundFilter = (soundFilter + 1) % 3, soundRow = 0;
+                    if ((key == SDLK_RETURN || key == SDLK_SPACE) && n > 0) audio.playNamed(shown[static_cast<std::size_t>(soundRow)]->name);
+                    if (key == SDLK_BACKSPACE) audio.stopEffects();
+                    if (key == SDLK_ESCAPE) {
+                        audio.stopEffects();
+                        if (sound) audio.playMusic(1010);
+                        screen = Screen::Options;
+                    }
                 } else if (screen == Screen::Keys) {
                     // "Keyboard definitions" (messages 1100-1140): pick an action, press its new key.
                     constexpr int kRows = 13;
@@ -1308,10 +1346,20 @@ int main(int argc, char** argv) {
                                             },
                                             [&]() { screen = Screen::Options; });
                                 break;
-                            default:
+                            case 14:
                                 if (key != SDLK_LEFT) {
                                     screen = Screen::AudioAdjust;
                                     audioRow = 0;
+                                }
+                                break;
+                            default:
+                                // Sound test (this implementation's): every sound file of the game data.
+                                if (key != SDLK_LEFT) {
+                                    soundList = audio.catalogue();
+                                    soundFilter = 0;
+                                    soundRow = 0;
+                                    audio.stopMusic();
+                                    screen = Screen::SoundTest;
                                 }
                                 break;
                         }
@@ -1735,6 +1783,39 @@ int main(int argc, char** argv) {
                 renderer.begin(w, h);
                 editor.draw(renderer, *spritesPtr, level, frame);
                 renderer.end();
+            } else if (screen == Screen::SoundTest) {
+                const auto shown = shownSounds();
+                const int n = static_cast<int>(shown.size());
+                int unused = 0;
+                for (const ab::Audio::Entry& entry : soundList) unused += entry.ids.empty() ? 1 : 0;
+                renderer.begin(w, h);
+                renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
+                renderer.quad(30, 20, 580, 404, 0.0f, 0.0f, 0.10f, 0.85f);
+                static const char* const kFilter[3] = {"all", "never played", "used by the game"};
+                renderer.text(*spritesPtr, "Sound Test", 45, 28, 1.0f, 0.95f, 0.3f);
+                renderer.text(*spritesPtr, std::to_string(soundList.size()) + " sounds, " + std::to_string(unused) + " never played.   Showing: " + kFilter[soundFilter], 45, 50, 0.85f, 0.85f, 0.85f);
+                const int top = std::clamp(soundRow - 7, 0, std::max(0, n - 15));
+                for (int r = 0; r < 15 && top + r < n; ++r) {
+                    const ab::Audio::Entry& item = *shown[static_cast<std::size_t>(top + r)];
+                    const bool on = top + r == soundRow;
+                    const float y = 78.0f + 21.0f * static_cast<float>(r);
+                    const float cr = on ? 1.0f : item.ids.empty() ? 0.6f : 0.85f, cg = on ? 0.95f : item.ids.empty() ? 0.8f : 0.85f, cb = on ? 0.3f : item.ids.empty() ? 1.0f : 0.85f;
+                    renderer.text(*spritesPtr, item.name, 70, y, cr, cg, cb);
+                    std::string use = "never played by the game";
+                    if (!item.ids.empty()) {
+                        use = "sound " + std::to_string(item.ids[0]);
+                        if (item.ids.size() > 1) use += " and " + std::to_string(item.ids.size() - 1) + " more";
+                    }
+                    renderer.text(*spritesPtr, use, 230, y, cr, cg, cb);
+                    char length[24];
+                    std::snprintf(length, sizeof length, "%.1f s", item.seconds);
+                    renderer.text(*spritesPtr, length, 540, y, cr, cg, cb);
+                    if (on) renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 52.0f, y + 15.0f);
+                }
+                if (unused == 0 && !soundList.empty() && !ab::isFreeAssetDir(opt.gameDir))
+                    renderer.text(*spritesPtr, "For the disc's other sounds: atomic --import-assets PATH --all-sounds", 45, 398, 0.7f, 0.7f, 0.7f);
+                renderer.text(*spritesPtr, "Up/Down: choose   Enter: play   Tab: show   Esc: done", 60, 440, 0.4f, 1.0f, 1.0f);
+                renderer.end();
             } else if (screen == Screen::AudioAdjust) {
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
@@ -1794,7 +1875,8 @@ int main(int argc, char** argv) {
                     std::string("Network: Show Own Moves At Once: ") + kYesNo[cfg.netPrediction],
                     "Define keyboard layouts",
                     std::string("Use Enhanced Memory Model: ") + kYesNo[!cfg.smallMemory],  // message 267
-                    "Adjust Audio"};                                                         // message 268
+                    "Adjust Audio",                                                          // message 268
+                    "Sound Test"};
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
                 for (int r = 0; r < kOptionRows; ++r) {

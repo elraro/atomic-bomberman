@@ -101,6 +101,8 @@ The program opens on the main menu. Choose **Start Game**, set up the player lis
 | KEY 0 | arrow keys | Space | Enter |
 | KEY 1 | R (up) D (left) F (down) G (right) | S | A |
 
+**Options → Sound Test** lists every sound file of the game data and plays the one you choose (Tab switches between all, the ones the game never plays, and the ones it uses). The original's disc holds about a thousand sounds the game never plays; they are imported only if you ask: `atomic --import-assets PATH --all-sounds` (about 180 MB more).
+
 These are the original's default keys. Change them under **Options → Define keyboard layouts**.
 
 Connected gamepads appear in the player list as `JOY n` (left stick or d-pad to move, A / cross to bomb, B or X / circle or square for the action). Gamepad support is untested: no controller was available.
