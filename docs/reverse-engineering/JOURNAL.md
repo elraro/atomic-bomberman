@@ -601,3 +601,16 @@ Confidence: HIGH (static). Modern: all implemented except Ctrl-R, Ctrl-D and Alt
 ### Decision: network play becomes a new client-server mode
 
 Not a discovery about the original. The user asked for the original's network gameplay to be replaced by a client-server mode over TCP/UDP with lobby, chat and a dedicated server. The design is in `docs/specifications/networking.md`: the server runs the round and sends every step's inputs, the clients run the same deterministic core, a state hash detects divergence and a snapshot repairs it. `networking.md` in this folder (the original's IPX/serial message layer, static analysis only) is left as it stands and is not a compatibility target.
+
+### Discovery: the attack behaviour's first condition, the exact walker flood, and rand()
+
+Ghidra / disassembly: `0x40ABED`, `0x4092A1`, `0x40970B`, `0x409C1F`, `0x4091C9`, `0x409083`, `0x45190A`, `0x45192E`.
+
+- The unrecovered operands of the attack behaviour's distance test are the computer player's present cell (AI record `+0x30/+0x32`, written at `0x40A24E`) and the cell of its start position (`OBJ+0x14/+0x18`): no attack within 3 cells of the start. The five cells are tried in the order north, west, own, east, south; the first player found decides.
+- The behaviour table has "blast bricks" before "attack"; the modern code had them the other way round. Corrected.
+- The three searches share one walker flood, now written down step by step in `ai.md` (slot order, the state that makes a new walker wait, the coin). The powerup search tests the walker's own cell where the others test the looked-at cell.
+- `0x45190A` is Watcom's `rand()` (multiplier `0x41C64E6D`, increment `0x3039`, 15 bits from bit 16), seeded from `time()`. The modern generator already used this formula.
+
+Confidence: HIGH (attack, flood), CONFIRMED (rand).
+
+Modern implication: `src/game/ai.cpp` now implements the flood and the attack as read. With the attack restricted, rounds between computer players last longer and end by the clock more often (figures in `ai.md`). Whether that matches the original's play has still not been measured on the original.

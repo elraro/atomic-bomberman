@@ -3,8 +3,8 @@
 //
 // Structure follows the original (docs/reverse-engineering/ai.md): a fixed
 // priority list of behaviours, the first one that acts wins the tick.
-// The path searches and the danger values of bombs are re-implemented, not
-// transcribed; see that document for what is and is not faithful.
+// The searches work as the original's do (a flood of "walkers"); see that
+// document for what was read and what remains unverified.
 #pragma once
 
 #include <array>
@@ -26,15 +26,18 @@ private:
     int danger(Cell c) const;
     bool blocked(const World& w, Cell c) const;      // tile or bomb
     bool safeWalkable(const World& w, Cell c) const; // free, no flame, no danger
-    // First step of a shortest path through unblocked cells; kNoDir if none within maxDepth.
-    Dir pathStep(const World& w, Cell from, Cell to, int maxDepth) const;
+    // First step of a route through unblocked cells; kNoDir if none within maxDepth passes.
+    std::array<bool, kGridW * kGridH> passability(const World& w) const;
+    Dir pathStep(const World& w, Cell from, Cell to, int maxDepth);
     // Nearest cell with lower danger than `from`; returns the first step and the cell.
-    Dir stepToSafety(const World& w, Cell from, Cell* target) const;
-    bool nearestPowerup(const World& w, Cell from, int maxDepth, Cell* found) const;
+    Dir stepToSafety(const World& w, Cell from, Cell* target);
+    bool nearestPowerup(const World& w, Cell from, int maxDepth, Cell* found);
     int pickTarget(const World& w, int self);
     void press(bool& button, bool& toggle);
 
     Rng rng_;
+    Cell spawn_{};       // where this round began for the player (the attack behaviour keeps away from it)
+    int lastTick_ = -1;
     Grid danger_{};
     Dir wanderDir_ = 2;
     bool fleeing_ = false;

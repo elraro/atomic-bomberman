@@ -177,7 +177,7 @@ Not there yet:
 - The Windows build and the GitHub Actions workflow are new and may need fixes.
 - Network play is a new client-server mode (see above). Its automated tests pass on Linux and Windows (GitHub Actions) and scripted matches ran on one Linux machine; it has not been played between two real computers, and the Windows game window has not been started in this mode.
 - About 30 scenarios of the test matrix have not been observed on the original yet (mostly random ones: diseases, duds, powerup placement).
-- The computer players follow the original's structure, but two of its search routines were approximated.
+- The computer players' behaviours and searches follow the original's code as read; their playing strength has not been compared with the original running.
 
 ## Disclaimer
 

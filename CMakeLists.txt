@@ -99,6 +99,10 @@ add_executable(mve_dump tools/diagnostics/mve_dump.cpp)
 target_link_libraries(mve_dump PRIVATE ab_resources)
 ab_warnings(mve_dump)
 
+add_executable(ai_stats tools/diagnostics/ai_stats.cpp)
+target_link_libraries(ai_stats PRIVATE ab_game)
+ab_warnings(ai_stats)
+
 # Developer tool for the network mode: a client without a window (not installed).
 add_executable(net_bot tools/diagnostics/net_bot.cpp)
 target_link_libraries(net_bot PRIVATE ab_net)

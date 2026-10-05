@@ -1804,6 +1804,34 @@ void testDeterminism() {
     CHECK_EQ(runOnce(), runOnce());
 }
 
+// The original's attack behaviour keeps its hands still within three cells of the
+// player's own start cell (0x40ABED), and bombs an enemy it stands next to elsewhere.
+void testAiAttackKeepsAwayFromStart() {
+    auto bombsDropped = [](Cell enemyAt) {
+        Scheme s = Scheme::pillars();  // no bricks: the brick behaviour never drops a bomb
+        s.start[0] = {0, 0};
+        s.start[1] = enemyAt;
+        World w{Values::defaults(), 77};
+        w.startRound(s, false);
+        w.addPlayer(0);
+        w.addPlayer(1);
+        AiPlayer ai{4242};
+        int bombs = 0;
+        for (int t = 0; t < 3000 && w.player(0).alive && w.player(1).alive; ++t) {
+            Inputs in{};
+            in[0] = ai.decide(w, 0, 50);
+            w.tick(50, in);
+            for (const Event& e : w.takeEvents()) bombs += e.kind == EventKind::BombDropped ? 1 : 0;
+        }
+        return bombs;
+    };
+    // The enemy stands beside the start cell: every cell next to it is within two cells of
+    // the start, so the computer player never bombs it.
+    CHECK_EQ(bombsDropped({1, 0}), 0);
+    // The enemy stands far off: the computer player walks over and bombs it.
+    CHECK(bombsDropped({8, 0}) > 0);
+}
+
 // Network play rests on this: a saved state loaded into another World goes on
 // exactly like the original, and the hash tells two states apart.
 void testStateTransfer() {
@@ -2127,6 +2155,7 @@ int main() {
         {"closing walls", testClosingWalls},
         {"round result", testRoundResult},
         {"determinism", testDeterminism},
+        {"ai attack and start cell", testAiAttackKeepsAwayFromStart},
         {"state transfer", testStateTransfer},
         {"free assets", testFreeAssets},
     };
