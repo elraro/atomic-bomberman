@@ -56,6 +56,7 @@ struct Options {
     int introShot = 0;        // automated: start on intro screen N (1-3)
     int attractSeconds = -1;  // --attract-seconds N: idle time on the menu before the demo (default: value 92)
     bool noIntro = false;     // --no-intro: go straight to the main menu
+    bool playersSet = false;  // --players or --humans given
     bool levelSet = false;    // --level, --wins, --scheme given: they win over the saved settings
     bool winsSet = false;
     bool schemeSet = false;
@@ -93,8 +94,8 @@ Options parseArgs(int argc, char** argv) {
         }
         else if (a == "--game-dir") o.gameDir = next();
         else if (a == "--scheme") o.scheme = next(), o.schemeSet = true;
-        else if (a == "--players") o.players = std::atoi(next().c_str());
-        else if (a == "--humans") o.humans = std::clamp(std::atoi(next().c_str()), 0, 2);
+        else if (a == "--players") o.players = std::atoi(next().c_str()), o.playersSet = true;
+        else if (a == "--humans") o.humans = std::clamp(std::atoi(next().c_str()), 0, 2), o.playersSet = true;
         else if (a == "--frames") o.frames = std::atoi(next().c_str());
         else if (a == "--screenshot") o.screenshot = next();
         else if (a == "--seed") o.seed = static_cast<std::uint32_t>(std::atoi(next().c_str()));
@@ -290,7 +291,7 @@ const char* controlName(Control c) {
     }
 }
 
-constexpr int kOptionRows = 11;
+constexpr int kOptionRows = 12;
 enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor };
 
 // Level names, original messages 150-160.
@@ -486,6 +487,18 @@ int main(int argc, char** argv) {
         for (int i = 0; i < opt.players; ++i)
             control[static_cast<std::size_t>(i)] =
                 opt.demo ? Control::Ai : i == 0 && opt.humans >= 1 ? Control::Key0 : i == 1 && opt.humans >= 2 ? Control::Key1 : Control::Ai;
+        if (!opt.playersSet && !opt.demo) {
+            // The original's default list (0x42123F): each seat takes the next joystick if
+            // there is one; otherwise the first such seat takes the keyboard (option
+            // "Assign Keyboard Player"), and seat 2 becomes a computer player.
+            control = {};
+            bool keyboardGiven = !cfg.assignKeyboards;
+            for (int i = 0; i < ab::kMaxPlayers; ++i) {
+                if (i < padCount) control[static_cast<std::size_t>(i)] = static_cast<Control>(static_cast<int>(Control::Pad0) + i);
+                else if (!keyboardGiven) control[static_cast<std::size_t>(i)] = Control::Key0, keyboardGiven = true;
+                else if (i == 1) control[static_cast<std::size_t>(i)] = Control::Ai;
+            }
+        }
 
         // The menu screens need the original pictures; without them the match starts at once.
         const bool haveMenu = opt.menu && spritesPtr->loaded() && spritesPtr->picture("mainmenu") != 0;
@@ -1065,6 +1078,7 @@ int main(int argc, char** argv) {
                             case 7: cfg.playTime = ab::Settings::nextPlayTime(cfg.playTime, d); break;
                             case 8: cfg.diseasesDestroyable = !cfg.diseasesDestroyable; break;
                             case 9: cfg.disableGameMusic = !cfg.disableGameMusic; break;
+                            case 10: cfg.assignKeyboards = !cfg.assignKeyboards; break;
                             default:
                                 if (key != SDLK_LEFT) {
                                     screen = Screen::Keys;
@@ -1476,6 +1490,7 @@ int main(int argc, char** argv) {
                     "Play Time: " + ab::Settings::playTimeText(cfg.playTime),
                     std::string("Diseases Can Be Destroyed: ") + kYesNo[cfg.diseasesDestroyable],
                     std::string("Disable music during gameplay: ") + kYesNo[cfg.disableGameMusic],
+                    std::string("Assign Keyboard Player: ") + kYesNo[cfg.assignKeyboards],
                     "Define keyboard layouts"};
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));

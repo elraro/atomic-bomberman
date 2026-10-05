@@ -43,6 +43,7 @@ void Settings::parse(const std::string& text) {
         else if (key == "playtime") playTime = n;
         else if (key == "diseases_destroyable") diseasesDestroyable = n != 0;
         else if (key == "disable_game_music") disableGameMusic = n != 0;
+        else if (key == "assign_keyboards") assignKeyboards = n != 0;
         else if (key == "keydef") {
             int set = -1, slot = -1, code = 0;
             if (std::sscanf(value.c_str(), "%d,%d,%d", &set, &slot, &code) == 3 && set >= 0 && set < kKeySets && slot >= 0 &&
@@ -69,7 +70,7 @@ std::string Settings::serialize() const {
         << "\nconveyor_speed=" << conveyorSpeed << "\nteam_play=" << teamPlay << "\nrandom_start=" << randomStart
         << "\nstomped_bombs_detonate=" << stompedBombsDetonate << "\nwin_by_kills=" << winByKills << "\ngoldman=" << goldman
         << "\nschemefilename=" << scheme << ".SCH\nplaytime=" << playTime << "\ndiseases_destroyable=" << diseasesDestroyable
-        << "\ndisable_game_music=" << disableGameMusic << "\n";
+        << "\ndisable_game_music=" << disableGameMusic << "\nassign_keyboards=" << assignKeyboards << "\n";
     for (int set = 0; set < kKeySets; ++set)
         for (int slot = 0; slot < kKeysPerSet; ++slot)
             out << "keydef=" << set << "," << slot << "," << keys[static_cast<std::size_t>(set)][static_cast<std::size_t>(slot)] << "\n";
