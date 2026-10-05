@@ -591,3 +591,7 @@ Confidence: HIGH (static).
 - Result screens (`0x42A779`, `0x42AE28`): Enter, Space or a mouse click continue, Esc leaves the match; they continue by themselves after 6000 ms only when no player is human (`0x42247A`) or `0x4646B4` is set.
 
 Confidence: HIGH (static). Modern: all implemented except Ctrl-R, Ctrl-D and Alt-N; the Adjust Audio screen (two volumes) is this implementation's own.
+
+### Intro movie decoded
+
+`intro/bmintro.exe` carries an Interplay MVE movie from offset 70656 to its end: 839 pictures of 480 × 280 at 15 per second with 22 050 Hz stereo DPCM sound. A decoder was written from the public descriptions of the format; every picture decodes cleanly (checked at pictures 1, 30, 120, 200, 300, 600, 830). The sound decodes to 56.0 s with 13 clipped samples out of 2.47 million; it has not been listened to. Details in `file-formats.md`. The game plays it before the logos.

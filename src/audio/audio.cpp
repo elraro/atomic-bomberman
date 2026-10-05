@@ -18,6 +18,7 @@ constexpr SDL_AudioSpec kRssSpec = {SDL_AUDIO_S16LE, 2, 22050};
 }  // namespace
 
 Audio::~Audio() {
+    endStream();
     if (music_ != nullptr) SDL_DestroyAudioStream(music_);
     for (SDL_AudioStream* v : voices_) SDL_DestroyAudioStream(v);
     if (device_ != 0) SDL_CloseAudioDevice(device_);
@@ -208,6 +209,29 @@ void Audio::playMusic(int id) {
     musicData_ = data;
     SDL_PutAudioStreamData(music_, data->data(), static_cast<int>(data->size()));
     std::fprintf(stderr, "INFO  Music started name=%s\n", it->second.c_str());
+}
+
+bool Audio::beginStream(int sampleRate, int channels) {
+    if (!ready_) return false;
+    endStream();
+    const SDL_AudioSpec spec = {SDL_AUDIO_S16LE, channels, sampleRate};
+    stream_ = SDL_CreateAudioStream(&spec, &kRssSpec);
+    if (stream_ == nullptr || !SDL_BindAudioStream(device_, stream_)) {
+        endStream();
+        return false;
+    }
+    SDL_SetAudioStreamGain(stream_, effectsGain_);
+    return true;
+}
+
+void Audio::pushStream(const std::vector<std::int16_t>& samples) {
+    if (stream_ != nullptr && !samples.empty())
+        SDL_PutAudioStreamData(stream_, samples.data(), static_cast<int>(samples.size() * sizeof(std::int16_t)));
+}
+
+void Audio::endStream() {
+    if (stream_ != nullptr) SDL_DestroyAudioStream(stream_);
+    stream_ = nullptr;
 }
 
 void Audio::stopMusic() {

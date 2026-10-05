@@ -43,6 +43,7 @@ The import reads the original folder and never changes it. It writes about 280 M
 | Pictures, lists and campaigns | `DATA\RES\*.PCX`, `*.RES`, `*.CAM` | `data/res/` |
 | Schemes (maps) | `DATA\SCHEMES\*.SCH` | `data/schemes/` |
 | Sprites | `DATA\ANI\*.ANI`, `MASTER.ALI` | `data/ani/` |
+| Intro movie | `INTRO\BMINTRO.EXE` (only the movie at its end, not the program) | `intro.mve` |
 | Sounds and music | the `.RSS` files named in `SOUNDLST.RES` (raw audio) | `data/sound/*.wav` (standard WAV, 22 050 Hz stereo 16-bit) |
 
 File and folder names in the original may be in any letter case. Only the sounds change format; the other files are copied as they are and are read by the game's own loaders. The installer, DirectX files, demos, movies and unused sounds of the original are not copied.

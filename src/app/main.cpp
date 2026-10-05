@@ -26,6 +26,7 @@
 #include "resources/asset_import.hpp"
 #include "resources/campaign_file.hpp"
 #include "resources/help_file.hpp"
+#include "resources/mve_file.hpp"
 #include "resources/scheme_file.hpp"
 #include "resources/settings.hpp"
 
@@ -53,6 +54,7 @@ struct Options {
     bool rouletteShot = false;  // automated: capture the roulette once it has stopped, then exit
     bool roulette = false;    // the "goldman" roulette between rounds (original option goldman)
     std::string campaign;     // --campaign NAME: start that campaign file (data/res/NAME.cam) at once
+    int movieShot = 0;        // automated: show the intro movie up to picture N, capture, exit
     int introShot = 0;        // automated: start on intro screen N (1-3)
     int attractSeconds = -1;  // --attract-seconds N: idle time on the menu before the demo (default: value 92)
     bool debug = false;       // --debug: the original's debug keys (it used the KWD environment variable)
@@ -85,7 +87,7 @@ Options parseArgs(int argc, char** argv) {
                       "  --campaign NAME      play a campaign file of the game data (simple, ghosts, crouton)\n"
                       "  --attract-seconds N  idle seconds on the menu before a demo round starts (default 30)\n"
                       "  --debug              debug keys in a match: Ctrl-A animation list, Alt-D information, F10 clears a campaign stage\n"
-                      "  --no-intro           skip the logo and title screens\n"
+                      "  --no-intro           skip the intro movie, the logo and the title screens\n"
                       "  --roulette           the round winner spins for a prize before the next round\n"
                       "  --seed N             random seed\n"
                       "  --mute               no sound\n"
@@ -129,6 +131,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--debug") o.debug = true;
         else if (a == "--attract-seconds") o.attractSeconds = std::atoi(next().c_str());
         else if (a == "--intro-shot") o.introShot = std::atoi(next().c_str());
+        else if (a == "--movie-shot") o.movieShot = std::atoi(next().c_str());
         else if (a == "--campaign") o.campaign = next();
         else if (a == "--roulette-shot") o.roulette = o.rouletteShot = true;
         else {
@@ -317,7 +320,7 @@ const char* controlName(Control c) {
 }
 
 constexpr int kOptionRows = 14;
-enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor, AudioAdjust };
+enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor, AudioAdjust, Movie };
 
 // Level names, original messages 150-160.
 const char* const kLevelName[11] = {"Green Acres",   "Classic Green Acres", "The Hockey Rink",  "Ancient Egypt",
@@ -741,6 +744,25 @@ int main(int argc, char** argv) {
         };
         int introStep = 0;
         Uint64 introStart = 0;
+        std::unique_ptr<ab::MveDecoder> movie;
+        Uint64 movieStart = 0;
+        unsigned movieTexture = 0;
+        // The original's intro (0x42B060): the title tune, the two logo pictures, then
+        // an "Atomic Bomberman!" voice line with the title picture.
+        auto startIntro = [&]() {
+            screen = Screen::Intro;
+            introStep = std::clamp(opt.introShot - 1, 0, 2);
+            introStart = SDL_GetTicks();
+            if (sound) audio.playMusic(1000);
+            if (sound && introStep == 2) audio.playRange(2800, 2899);
+        };
+        auto endMovie = [&]() {
+            audio.endStream();
+            renderer.deleteTexture(movieTexture);
+            movieTexture = 0;
+            movie.reset();
+            startIntro();
+        };
         bool running = true;
         // A notice that waits for a key (the original's message boxes).
         std::vector<std::string> messageLines;
@@ -826,14 +848,27 @@ int main(int argc, char** argv) {
             newMatch();
             beginMatch();
             playLevelMusic();
-        } else if (screen == Screen::MainMenu && ((!opt.noIntro && opt.frames <= 0 && opt.script.empty()) || opt.introShot > 0)) {
-            // The original's intro (0x42B060): the title tune, the two logo pictures, then
-            // an "Atomic Bomberman!" voice line with the title picture.
-            screen = Screen::Intro;
-            introStep = std::clamp(opt.introShot - 1, 0, 2);
-            introStart = SDL_GetTicks();
-            if (sound) audio.playMusic(1000);
-            if (sound && introStep == 2) audio.playRange(2800, 2899);
+        } else if (screen == Screen::MainMenu && ((!opt.noIntro && opt.frames <= 0 && opt.script.empty()) || opt.introShot > 0 || opt.movieShot > 0)) {
+            // First the intro movie, if the game data has it: the original ships it inside a
+            // separate player program (intro/bmintro.exe); the import keeps it as intro.mve.
+            if (opt.introShot == 0) {
+                movie = std::make_unique<ab::MveDecoder>();
+                bool found = movie->open(opt.gameDir + "/intro.mve");
+                for (const char* dir : {"intro", "INTRO", "Intro"})
+                    for (const char* file : {"bmintro.exe", "BMINTRO.EXE", "Bmintro.exe"})
+                        if (!found) found = movie->open(opt.gameDir + "/" + dir + "/" + file);
+                if (found && movie->nextFrame()) {
+                    screen = Screen::Movie;
+                    movieStart = SDL_GetTicks();
+                    if (sound) audio.beginStream(movie->sampleRate(), movie->channels());
+                    if (sound) audio.pushStream(movie->takeAudio());
+                    movieTexture = renderer.frameTexture(0, movie->width(), movie->height(), movie->rgba());
+                    std::fprintf(stderr, "INFO  Intro movie %dx%d\n", movie->width(), movie->height());
+                } else {
+                    movie.reset();
+                }
+            }
+            if (screen != Screen::Movie) startIntro();
         } else if (sound) {
             audio.playMusic(1010);  // main menu music
         }
@@ -1034,6 +1069,8 @@ int main(int argc, char** argv) {
                             running = false;
                         }
                     }
+                } else if (screen == Screen::Movie) {
+                    if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_ESCAPE) endMovie();  // skip
                 } else if (screen == Screen::Intro) {
                     if (sound) audio.playRange(20, 20);
                     if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_ESCAPE) {
@@ -1485,6 +1522,28 @@ int main(int argc, char** argv) {
                     }
                 }
                 renderer.end();
+            } else if (screen == Screen::Movie && movie) {
+                // Pictures follow the clock; the sound is queued as it is decoded.
+                const double elapsed = opt.movieShot > 0 ? 1.0e9 : static_cast<double>(SDL_GetTicks() - movieStart) / 1000.0;
+                const int due = opt.movieShot > 0 ? opt.movieShot : static_cast<int>(elapsed / movie->frameSeconds()) + 1;
+                bool more = true, fresh = false;
+                for (int n = 0; more && movie->framesDecoded() < due && n < 30; ++n) {
+                    more = movie->nextFrame();
+                    fresh = fresh || more;
+                    if (more && sound) audio.pushStream(movie->takeAudio());
+                }
+                if (fresh) movieTexture = renderer.frameTexture(movieTexture, movie->width(), movie->height(), movie->rgba());
+                renderer.begin(w, h);
+                renderer.quad(0, 0, 640, 480, 0, 0, 0);
+                const float mh = 640.0f * static_cast<float>(movie->height()) / static_cast<float>(std::max(1, movie->width()));
+                renderer.picture(movieTexture, 0, (480.0f - mh) / 2.0f, 640.0f, mh);
+                renderer.end();
+                if (opt.movieShot > 0 && movie->framesDecoded() >= opt.movieShot) {
+                    if (!opt.screenshot.empty()) writePpm(opt.screenshot, w, h);
+                    running = false;
+                } else if (!more) {
+                    endMovie();
+                }
             } else if (screen == Screen::Intro) {
                 static const char* const kIntroPicture[3] = {"iplogo", "hslogo", "title"};
                 renderer.begin(w, h);

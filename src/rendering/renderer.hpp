@@ -40,6 +40,9 @@ public:
     void image(unsigned texture);  // full-screen picture (dark fill if 0)
     void picture(unsigned texture, float x, float y, float w, float h);  // a picture at a place
     float textWidth(const SpriteBank& bank, const std::string& s) const;
+    // A texture for moving pictures: created on the first call (existing = 0), refilled after.
+    unsigned frameTexture(unsigned existing, int w, int h, const std::vector<std::uint8_t>& rgba);
+    void deleteTexture(unsigned texture);
     // Part of a picture: the source rectangle (in pixels of a texW x texH picture) at (x, y), unscaled.
     void pictureRegion(unsigned texture, int texW, int texH, int sx, int sy, int sw, int sh, float x, float y);
     void text(const SpriteBank& bank, const std::string& s, float x, float y, float r, float g, float b);

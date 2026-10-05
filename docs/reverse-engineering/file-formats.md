@@ -128,3 +128,19 @@ Headerless PCM, 22 050 Hz, stereo, 16-bit signed little-endian, according to the
 ## .pcx
 
 Standard ZSoft PCX version 5, 8 bits per pixel, 640 × 480 for backgrounds.
+
+## Intro movie (`intro/bmintro.exe`, Interplay MVE)
+
+Confidence: HIGH for the container and the pictures (all 839 decode to clean images); MEDIUM for the sound (decoded without clipping or drift, but not listened to).
+
+`bmintro.exe` is a small player program with the movie appended: the signature `Interplay MVE File\x1A\0` followed by the words 0x001A, 0x0100, 0x1133 is at file offset 70656 (an earlier occurrence of the text at 53468 is a string of the program). The movie runs to the end of the file.
+
+| Property | Value |
+|---|---|
+| Pictures | 839, 480 × 280 (60 × 35 blocks of 8 × 8), 8-bit with a palette of 6-bit components |
+| Timing | 8341 µs × 8 = 66.7 ms per picture (15 per second), 56.0 s |
+| Sound | 22 050 Hz, stereo, 16-bit, Interplay DPCM (one step-table byte per sample; each chunk starts with one raw sample per channel) |
+
+Container: chunks of `u16 length, u16 type`; inside, operations of `u16 length, u8 type, u8 version`. Used here: 0x02 timer, 0x03 sound format, 0x05 picture size, 0x0C palette, 0x0F block-code map (4 bits per block), 0x11 picture data (14-byte header), 0x08 sound data (sequence, stream mask, decoded length), 0x07 show the picture, 0x00 end. The sixteen block codes copy a block from the previous or the one-before-previous picture (with or without a displacement), from the picture being built, or paint it with 1, 2, 4 or 64 colours at several resolutions.
+
+The game program (`bm95.exe`) does not play this movie; the original starts the player separately. Modern: `src/resources/mve_file.*` (decoder, tested with a hand-built movie), `tools/diagnostics/mve_dump.cpp`; the importer copies only the movie part to `intro.mve`; the game plays it before the logo screens and any of Enter, Space or Esc skips it.

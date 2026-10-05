@@ -223,6 +223,24 @@ void Renderer::pictureRegion(unsigned texture, int texW, int texH, int sx, int s
     batch_.insert(batch_.end(), v, v + 6);
 }
 
+unsigned Renderer::frameTexture(unsigned existing, int w, int h, const std::vector<std::uint8_t>& rgba) {
+    unsigned tex = existing;
+    if (tex == 0) glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    current_ = 0;  // the bound texture changed behind the batcher's back
+    return tex;
+}
+
+void Renderer::deleteTexture(unsigned texture) {
+    if (texture != 0) glDeleteTextures(1, &texture);
+}
+
 float Renderer::textWidth(const SpriteBank& bank, const std::string& s) const {
     const SpriteBank::Font& f = bank.font();
     float width = 0;

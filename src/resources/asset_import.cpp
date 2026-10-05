@@ -1,5 +1,7 @@
 #include "resources/asset_import.hpp"
 
+#include "resources/mve_file.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -122,6 +124,22 @@ ImportReport importAssets(const std::string& source, const std::string& destinat
     copyByExtension(res, dst / "data" / "res", {".pcx", ".res", ".cam"}, report);  // .cam: campaigns
     copyByExtension(findPath(src, {"data", "schemes"}), dst / "data" / "schemes", {".sch"}, report);
     copyByExtension(findPath(src, {"data", "ani"}), dst / "data" / "ani", {".ani", ".ali"}, report);
+
+    // The intro movie sits at the end of the original's small player program; only the
+    // movie is taken, not the program.
+    if (const fs::path player = findEntry(findEntry(src, "intro"), "bmintro.exe"); !player.empty()) {
+        MveDecoder movie;
+        if (movie.open(player.string())) {
+            const auto& all = movie.fileBytes();
+            std::ofstream out(dst / "intro.mve", std::ios::binary);
+            out.write(reinterpret_cast<const char*>(all.data() + movie.movieOffset()),
+                      static_cast<std::streamsize>(all.size() - movie.movieOffset()));
+            if (out) {
+                ++report.dataFiles;
+                report.bytes += static_cast<long long>(all.size() - movie.movieOffset());
+            }
+        }
+    }
 
     // Sounds named in soundlst.res ("id,name" lines; ';' starts a comment).
     const fs::path soundDir = findPath(src, {"data", "sound"});

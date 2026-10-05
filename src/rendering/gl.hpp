@@ -37,6 +37,7 @@ inline constexpr GLenum GL_RGB = 0x1907;
 inline constexpr GLenum GL_RGBA = 0x1908;
 inline constexpr GLenum GL_VERSION = 0x1F02;
 inline constexpr GLenum GL_NEAREST = 0x2600;
+inline constexpr GLenum GL_LINEAR = 0x2601;
 inline constexpr GLenum GL_TEXTURE_MAG_FILTER = 0x2800;
 inline constexpr GLenum GL_TEXTURE_MIN_FILTER = 0x2801;
 inline constexpr GLenum GL_TEXTURE_WRAP_S = 0x2802;

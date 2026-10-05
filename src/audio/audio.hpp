@@ -37,6 +37,10 @@ public:
     // Starts a looping tune by sound id (stops the previous one). Level music is id 1100 + level.
     void playMusic(int id);
     void stopMusic();
+    // A sound track fed piece by piece (the intro movie): interleaved signed 16-bit samples.
+    bool beginStream(int sampleRate, int channels);
+    void pushStream(const std::vector<std::int16_t>& samples);
+    void endStream();
     // Releases finished voices and keeps the music looping. Call once per frame.
     void update();
 
@@ -50,6 +54,7 @@ private:
     std::unordered_map<std::string, std::vector<std::uint8_t>> cache_;
     std::vector<SDL_AudioStream*> voices_;
     SDL_AudioStream* music_ = nullptr;
+    SDL_AudioStream* stream_ = nullptr;
     const std::vector<std::uint8_t>* musicData_ = nullptr;
     void cull(int firstId, int lastId, int keep);
 
