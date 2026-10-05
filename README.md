@@ -11,12 +11,17 @@
 ![OpenGL 3.3](https://img.shields.io/badge/OpenGL-3.3-5586a4)
 ![platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows-444)
 [![tests](https://img.shields.io/badge/unit%20tests-run%20on%20every%20push-2ea44f)](https://github.com/elraro/atomic-bomberman/actions/workflows/build.yml)
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/NruWuaq56B)
 
 <img src="docs/images/green.png" width="49%" alt="Green Acres: six players, bombs and flames"> <img src="docs/images/egypt.png" width="49%" alt="Ancient Egypt with arrow tiles">
 
 </div>
 
 > **Unofficial fan project.** Not affiliated with Interplay, Hudson Soft or Konami. No original game files are included. It plays out of the box with its own free graphics and sounds; with your own copy of the original you get the original look and sound. See the [disclaimer](#disclaimer).
+
+## 💬 Community
+
+Come and talk about the project, find people to play with, report what breaks and share your arenas: **[join the Discord server](https://discord.gg/NruWuaq56B)**.
 
 ## 🔥 What is this?
 
