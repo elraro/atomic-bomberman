@@ -614,3 +614,14 @@ Ghidra / disassembly: `0x40ABED`, `0x4092A1`, `0x40970B`, `0x409C1F`, `0x4091C9`
 Confidence: HIGH (attack, flood), CONFIRMED (rand).
 
 Modern implication: `src/game/ai.cpp` now implements the flood and the attack as read. With the attack restricted, rounds between computer players last longer and end by the clock more often (figures in `ai.md`). Whether that matches the original's play has still not been measured on the original.
+
+### Discovery: the bomb-stop sound is tied to the motion mode
+
+Disassembly: `0x423752`-`0x42379F` (the stop branch of the sliding-bomb update).
+
+- At a stop the code checks the bomb's motion mode (`OBJ+0x2E`): the sound is played only if it is non-zero, and for a non-jelly bomb the mode is then set to 0 (resting). A bomb resting on a conveyor has mode 0 while it is carried, so being held against a block by the belt is silent.
+- A jelly bomb turns back instead of stopping and plays sound 135 (`0x427ABB`), not the flying-bomb bounce 160.
+
+Confidence: HIGH (read directly). Found from a play-test report: the modern game played the stop sound on every step for a bomb the belt pressed against a block.
+
+Modern implication: stop and bounce events are no longer emitted for a bomb that is only carried; a sliding jelly bomb's bounce has its own event and plays 135.

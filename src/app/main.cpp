@@ -245,6 +245,7 @@ void playEvents(const ab::World& world, const std::vector<ab::Event>& events, ab
             case ab::EventKind::BombStopped: audio.playSeries(130); break;
             case ab::EventKind::BombPunched: audio.playSeries(150); break;
             case ab::EventKind::BombBounced: audio.playSeries(160); break;
+            case ab::EventKind::JellyBounced: audio.playSeries(135); break;  // original 0x423776
             case ab::EventKind::BombGrabbed: audio.playSeries(170); break;
             case ab::EventKind::BombThrown: audio.playSeries(150); break;
             case ab::EventKind::BombExploded: audio.playSeries(200); break;

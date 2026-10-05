@@ -480,7 +480,14 @@ void World::updateBombs(int dt) {
                 b.speed = conveyorSpeed_;
                 b.mode = BombMode::Sliding;
                 b.type = BombType::Regular;  // no jelly bounce while merely carried
+                // Carried is not kicked: the original plays its stop sound only for a bomb whose
+                // motion mode was "sliding" (0x423785), which a bomb resting on a belt never is.
+                // Without this a bomb held against a block by the belt "stopped" on every step.
+                const std::size_t eventsBefore = events_.size();
                 slideBomb(b, dt);
+                events_.erase(std::remove_if(events_.begin() + static_cast<std::ptrdiff_t>(eventsBefore), events_.end(),
+                                             [](const Event& made) { return made.kind == EventKind::BombStopped || made.kind == EventKind::BombBounced; }),
+                              events_.end());
                 b.type = type;
                 if (b.mode == BombMode::Sliding) b.mode = BombMode::Resting;
             }
@@ -562,7 +569,7 @@ void World::slideBomb(Bomb& b, int dt) {
             b.moveAcc = 0;
             if (b.type == BombType::Jelly) {
                 b.dir = opposite(b.dir);
-                emit(EventKind::BombBounced, b.owner);
+                emit(EventKind::JellyBounced, b.owner);
             } else {
                 b.mode = BombMode::Resting;
                 emit(EventKind::BombStopped, b.owner);

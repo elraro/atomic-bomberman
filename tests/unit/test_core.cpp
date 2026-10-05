@@ -2213,6 +2213,41 @@ void testGuessesAboutChanceAreNotShown() {
     CHECK_EQ(othersOff, 0);
 }
 
+// A bomb the belt holds against a block is silent; a kicked bomb that stops is heard once.
+void testConveyorIsQuiet() {
+    Scheme s = Scheme::pillars();
+    World w{Values::defaults(), 9};
+    w.startRound(s, false);
+    w.addPlayer(0);
+    w.addPlayer(1);
+    w.endStartFreeze();
+    // A belt running east along the top row into the field's edge.
+    std::vector<Extra> belt;
+    for (int x = 10; x <= 14; ++x) {
+        Extra e;
+        e.type = ExtraType::Conveyor;
+        e.cell = {x, 0};
+        e.dir = 1;
+        belt.push_back(e);
+    }
+    w.setExtras(belt, 1);
+    CHECK(w.createBomb(0, {11, 0}, BombType::Regular, 2, 2000));  // a long fuse: it only rides
+    int stops = 0, bounces = 0, arrivedAt = -1;
+    Inputs idle{};
+    for (int t = 0; t < 200; ++t) {
+        w.tick(50, idle);
+        for (const Event& e : w.takeEvents()) {
+            stops += e.kind == EventKind::BombStopped ? 1 : 0;
+            bounces += e.kind == EventKind::BombBounced || e.kind == EventKind::JellyBounced ? 1 : 0;
+        }
+        if (arrivedAt < 0 && w.bombAt({14, 0}) != nullptr) arrivedAt = t;
+    }
+    CHECK(arrivedAt > 0);                    // the belt carried it to the edge
+    CHECK(w.bombAt({14, 0}) != nullptr);     // where it is still held
+    CHECK_EQ(stops, 0);
+    CHECK_EQ(bounces, 0);
+}
+
 }  // namespace
 
 int main() {
@@ -2275,6 +2310,7 @@ int main() {
         {"extras file", testExtrasFile},
         {"arrow", testArrowTurnsSlidingBomb},
         {"conveyor", testConveyor},
+        {"conveyor is quiet", testConveyorIsQuiet},
         {"warp", testWarp},
         {"trampoline", testTrampoline},
         {"team play", testTeamPlay},

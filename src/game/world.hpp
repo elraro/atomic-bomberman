@@ -166,6 +166,7 @@ enum class EventKind : std::uint8_t {
     Warped,
     TrampolineJump,
     DeathTaunt,      // 25 frames into a death animation (the front end rolls the chance)
+    JellyBounced,    // a sliding jelly bomb turned back at an obstacle (its own sound, 135)
 };
 
 struct Event {
