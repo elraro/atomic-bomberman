@@ -3,8 +3,8 @@
 // Rules implemented here follow docs/specifications/. Each rule was derived
 // from the original game by static analysis; see docs/reverse-engineering/.
 //
-// Not implemented yet: duds, diseases, level extras (arrows, warps,
-// conveyors, trampolines), team play, campaign, AI, networking.
+// Network play runs this same class on the server and on every client and
+// relies on it being deterministic: integers only, no clock, no global state.
 #pragma once
 
 #include <array>
@@ -412,6 +412,8 @@ private:
     void handleButtons(int i, const PlayerInput& in);
     void dropBomb(int i, Cell cell, int delayFrames);
 
+    // Every member that the course of a round depends on must also be listed in
+    // World::archive (world.cpp), or network clients drift apart from the server.
     Values values_;
     Rng rng_;
     int frameMs_ = kFrameMs;

@@ -122,7 +122,7 @@ To play over a network, one player chooses **Start Network Game** in the menu an
 
 ## Status of these instructions
 
-- The dedicated server and network play were run on Linux on one machine only; see the README for what that means.
+- The dedicated server and network play were run on Linux on one machine only (their automated tests also pass on Windows in CI); see the README for what that means.
 
 - The Linux steps were run as written: import (246 data files, 971 sounds, 281 MB), then starting the game from the imported folder with graphics, level extras, sounds and music loading.
 - The GitHub Actions workflow builds and tests both packages (first run: Linux and Windows both succeeded). The Windows package itself has **not** been started on a Windows machine by the author of these instructions.

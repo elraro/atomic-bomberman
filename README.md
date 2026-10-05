@@ -127,7 +127,7 @@ It reads schemes, tuning values and level extras from the same game data as the 
 
 **Reaching a server.** The host's port must be reachable for **TCP and UDP** (open it in the firewall; behind a home router, forward it). If only TCP gets through the game still works, a little less smoothly. Players need the same version of the program; they do not need the same schemes, because the server sends the arena.
 
-**What to expect.** What you see is always what the server has already computed, so your own moves are delayed by the trip to the server and back (nothing on a LAN, noticeable above roughly 100 ms). This mode has been tested on one machine only: automated tests over the loopback interface, including with 40 % packet loss, and matches against a dedicated server with scripted clients. It has not yet been played between two real computers.
+**What to expect.** What you see is always what the server has already computed, so your own moves are delayed by the trip to the server and back (nothing on a LAN, noticeable above roughly 100 ms). This mode has been tested on one machine at a time only: automated tests over the loopback interface on Linux and Windows, including with 40 % packet loss, and matches against a dedicated server with scripted clients on Linux. It has not yet been played between two real computers.
 
 ## 🔬 How it was made
 
@@ -170,7 +170,7 @@ Not there yet:
 
 - Nobody has play-tested it thoroughly; expect rough edges.
 - The Windows build and the GitHub Actions workflow are new and may need fixes.
-- Network play is a new client-server mode (see above). It passes its automated tests and scripted matches on one machine; it has not been played between two real computers, and the Windows socket code has only been compiled.
+- Network play is a new client-server mode (see above). Its automated tests pass on Linux and Windows (GitHub Actions) and scripted matches ran on one Linux machine; it has not been played between two real computers, and the Windows game window has not been started in this mode.
 - About 30 scenarios of the test matrix have not been observed on the original yet (mostly random ones: diseases, duds, powerup placement).
 - The computer players follow the original's structure, but two of its search routines were approximated.
 

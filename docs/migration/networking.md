@@ -33,12 +33,13 @@ tools/diagnostics/net_bot.cpp   a client without a window that presses random ke
 
 - `ab_tests` "state transfer": a state saved in the middle of a four-player round, loaded into a fresh `World`, stays hash-identical for the rest of the round.
 - `ab_net_tests` (real sockets on 127.0.0.1, simulated clock): message encoding and refusal of truncated or out-of-range data; lobby (password, seats, names, chat, settings, teams, kick, administrator hand-over); a match with two clients and a late joiner until it is decided, over UDP and over TCP only, every client's hash equal to the server's after each round; a client whose state is deliberately broken gets exactly one snapshot; a player leaving mid-round; 40 % of all datagrams dropped; the LAN answer.
+- By scripted keys in unattended runs of the game: typing and sending a chat line in the lobby, changing settings, changing team, starting the match with F2, opening the chat line during the match.
 - By hand, on one machine with the real game data: `atomic_server` with `net_bot` clients (one on UDP, one forced to TCP) over several rounds on random levels: equal hashes, no snapshots; the game itself joining a dedicated server as a player and as a watcher; the join, host, lobby, match and result screens captured from unattended runs.
 
 ## Not checked
 
 - Two different machines, a real LAN, the internet, NAT, real packet loss and delay.
-- A Windows build of the socket code running (it is compiled by CI; nobody has started it).
+- The Windows programs started by a person. (`ab_net_tests` does run on Windows in CI and passes, so the Winsock path of the sockets, server and client is exercised there.)
 - A Linux and a Windows build playing each other. Both use the same integer code, so they should agree, but this is the determinism assumption's first real test.
-- The screens with a person at the keyboard: typing, chat during a match, the administrator's settings rows, the Esc-twice exit.
+- The screens with a person at the keyboard (real key events and text input rather than scripted ones), `/kick`, the Esc-twice exit, how the delay feels.
 - More than three clients at once.

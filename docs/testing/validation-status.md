@@ -83,4 +83,5 @@ The client-server mode of `../specifications/networking.md` is this project's ow
 
 - Automated (`ab_net_tests`, `ab_tests` "state transfer"): encoding, lobby, a whole match with several clients over UDP and over TCP only, repair of a broken client state, a late joiner, a player leaving, 40 % datagram loss. All over the loopback interface with a simulated clock.
 - By hand on one machine with the real game data: dedicated server with scripted clients over several rounds and levels; the game joining as player and as watcher; screens captured from unattended runs.
-- Not done: two real machines, real loss and delay, NAT, Windows sockets at run time, a Linux build against a Windows build, a person typing in the lobby. Details in `../migration/networking.md`.
+- The automated tests also pass on Windows in CI.
+- Not done: two real machines, real loss and delay, NAT, the Windows game started by a person, a Linux build against a Windows build, a person at the keyboard in the lobby. Details in `../migration/networking.md`.
