@@ -1130,7 +1130,8 @@ int main(int argc, char** argv) {
                         playLevelMusic();
                     }
                 } else {
-                    if (key == SDLK_ESCAPE) {
+                    // The original leaves a match with Ctrl-Q (0x42A56F); Esc is this implementation's addition.
+                    if (key == SDLK_ESCAPE || (key == SDLK_Q && (e.key.mod & SDL_KMOD_CTRL) != 0)) {
                         campaignMode = false;
                         if (haveMenu) {
                             screen = Screen::MainMenu;
@@ -1553,7 +1554,7 @@ int main(int argc, char** argv) {
                 const std::string lines[4] = {
                     randomLevel ? "Random Each Game" : kLevelName[level],
                     schemes.empty() ? std::string("(built-in arena)") : "Scheme: " + schemes[static_cast<std::size_t>(schemeIndex)].title,
-                    std::to_string(winsNeeded) + " Wins to win match",
+                    std::to_string(winsNeeded) + (cfg.winByKills ? " Kills" : " Wins") + " to win match",  // messages 211, 208/209
                     std::string("Team play: ") + (teamPlay ? "ON (teams from the scheme)" : "OFF")};
                 for (int r = 0; r < 4; ++r) {
                     // Rows from (55,170) every 24 px (original value 735).

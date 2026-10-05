@@ -564,3 +564,12 @@ Confidence: HIGH (static). All implemented in the application; in attract mode a
 
 - The `-P` lines of scheme files (born-with, has-override, override, forbidden) were known since session 3 (UNKNOWN-015) but the modern game did not apply them. It does now; 66 of the lines in the 68 shipped schemes differ from the defaults.
 - The scheme editor is implemented from the original's `editor.bm` and messages 700-768. `edit.ani` holds the "line draw" tiles as `tile -1 blank/brick/solid`. The original's editor code (around `0x4023A2`-`0x4032D3`, which calls the help routine) was not read. Confidence in matching the original's screen: LOW; in matching its functions and file format: HIGH (first-party description, and files written by this editor read back identically).
+
+### Audit: sounds, score-area cross, match keys, unused sprites
+
+- Sound call sites: see the table in `docs/migration/audio.md`. `0x427961` plays from the run of consecutive ids starting at its argument and does nothing if that id is undefined, which makes the "post-death taunt" (id 700; taunts are 701-982) silent in the shipped game.
+- `0x421111`: sequence `xxx` is drawn over the score label of a player whose object is inactive.
+- Player sprite colour (`0x420761`-`0x4207E4`): random while a disease flickers, the player's own index while the round-start timer `0x4621E8` (value 32 frames) runs, otherwise the display colour (team colour in team play). Already implemented.
+- `kface <dir>` is drawn above the player whose index is in `0x45BE3C`; that is set from a joystick button combination in the input code (`0x41E7D2`) and looks like a developers' joke (the picture is a programmer's face). Not implemented.
+- `teamring%u` is referenced only by the editor code (`0x402B77`).
+- Match keys (`0x42A48E`): Ctrl-Q leaves the match (winner -1, exit code 2); F1 help; Esc and Enter only end the attract demo; F10 and others are debug keys behind `0x413D01`; Alt-W sets `0x4646B4`, Alt-N calls `0x40C678`, Alt-D `0x413D45`, Ctrl-D `0x413BB0` (not read). Modern: Ctrl-Q added; Esc also leaves (kept); P/N/R are modern conveniences.
