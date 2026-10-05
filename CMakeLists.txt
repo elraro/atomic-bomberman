@@ -85,6 +85,7 @@ if(SDL3_FOUND)
         src/app/main.cpp
         src/app/editor.cpp
         src/app/net_ui.cpp
+        src/app/touch.cpp
         src/rendering/gl.cpp
         src/rendering/renderer.cpp
         src/rendering/sprites.cpp

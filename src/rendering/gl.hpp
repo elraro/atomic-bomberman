@@ -95,4 +95,9 @@ namespace ab {
 // Resolves every function above. Call once after the GL context exists.
 // Returns false (and names the missing function on stderr) if any is unavailable.
 bool loadOpenGL();
+// OpenGL ES 3.0 instead of desktop OpenGL 3.3 (phones; also selectable on a desktop for
+// testing). The same calls are used; only the shaders' first lines differ. Set before
+// the Renderer is made.
+void setOpenGLES(bool es);
+bool openGLES();
 }  // namespace ab

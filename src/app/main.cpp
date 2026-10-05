@@ -20,6 +20,7 @@
 #include "app/editor.hpp"
 #include "app/names.hpp"
 #include "app/net_ui.hpp"
+#include "app/touch.hpp"
 #include "audio/audio.hpp"
 #include "free/free_data.hpp"
 #include "game/ai.hpp"
@@ -64,6 +65,13 @@ struct Options {
     int attractSeconds = -1;  // --attract-seconds N: idle time on the menu before the demo (default: value 92)
     bool debug = false;       // --debug: the original's debug keys (it used the KWD environment variable)
     bool noIntro = false;     // --no-intro: go straight to the main menu
+#ifdef __ANDROID__
+    bool gles = true;         // OpenGL ES 3.0 (always on a phone)
+    bool touch = true;        // on-screen controls
+#else
+    bool gles = false;        // --gles: OpenGL ES 3.0 instead of OpenGL 3.3
+    bool touch = false;       // --touch: on-screen controls, worked with the mouse
+#endif
     bool titleOnly = false;   // free asset set: the intro is the title screen and its call alone
     bool freeAssets = false;  // --free: the free asset set even if original game data is installed
     std::string connect;      // --connect ADDRESS: join that network game at once
@@ -111,6 +119,8 @@ Options parseArgs(int argc, char** argv) {
                       "  --seed N             random seed\n"
                       "  --mute               no sound\n"
                       "  --native             640x480 window\n"
+                      "  --gles               OpenGL ES 3.0 instead of OpenGL 3.3 (what phones use)\n"
+                      "  --touch              on-screen controls (as on a phone), worked with the mouse\n"
                       "  --shapes             plain shapes instead of the game's graphics\n"
                       "Testing: --demo --frames N --screenshot FILE --result-shot --menu-shot N --script KEYS");
             std::exit(0);
@@ -149,6 +159,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--native") o.native = true;
         else if (a == "--roulette") o.roulette = true;
         else if (a == "--no-intro") o.noIntro = true;
+        else if (a == "--gles") o.gles = true;
+        else if (a == "--touch") o.touch = true;
         else if (a == "--free") o.freeAssets = true;
         else if (a == "--debug") o.debug = true;
         else if (a == "--attract-seconds") o.attractSeconds = std::atoi(next().c_str());
@@ -286,7 +298,11 @@ void playEvents(const ab::World& world, const std::vector<ab::Event>& events, ab
 void writePpm(const std::string& path, int w, int h) {
     std::vector<unsigned char> px(static_cast<std::size_t>(w * h * 3));
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, px.data());
+    // RGBA is the one format OpenGL ES is sure to give back.
+    std::vector<unsigned char> rgba(static_cast<std::size_t>(w * h * 4));
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    for (std::size_t i = 0; i < px.size() / 3; ++i)
+        for (std::size_t c = 0; c < 3; ++c) px[i * 3 + c] = rgba[i * 4 + c];
     std::ofstream out(path, std::ios::binary);
     out << "P6\n" << w << " " << h << "\n255\n";
     for (int y = h - 1; y >= 0; --y)
@@ -456,13 +472,19 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "ERROR SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
+    // Desktop: OpenGL 3.3. Phones (and --gles, for trying that path on a desktop): OpenGL ES 3.0.
+    ab::setOpenGLES(opt.gles);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, opt.gles ? 0 : 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, opt.gles ? SDL_GL_CONTEXT_PROFILE_ES : SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_Window* window = SDL_CreateWindow(opt.gameDir.empty() ? "Atomic Bomberman (modern) - no game files found: run with --game-dir PATH"
                                                                : "Atomic Bomberman (modern)",
                                           opt.native ? 640 : 960, opt.native ? 480 : 720,
+#ifdef __ANDROID__
+                                          SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN);
+#else
                                           SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+#endif
     if (window == nullptr) {
         std::fprintf(stderr, "ERROR SDL_CreateWindow: %s\n", SDL_GetError());
         SDL_Quit();
@@ -476,7 +498,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!ab::loadOpenGL()) {
-        std::fprintf(stderr, "ERROR OpenGL 3.3 is not available on this system\n");
+        std::fprintf(stderr, "ERROR %s is not available on this system\n", opt.gles ? "OpenGL ES 3.0" : "OpenGL 3.3");
         SDL_GL_DestroyContext(gl);
         SDL_DestroyWindow(window);
         SDL_Quit();
@@ -990,6 +1012,8 @@ int main(int argc, char** argv) {
         };
 
         int netResultFrames = 0;
+        ab::TouchPad touch;  // on-screen controls: always on a phone, --touch elsewhere
+        touch.enable(opt.touch);
         bool paused = false;
         int frame = 0;
         int step = 0;
@@ -1001,7 +1025,17 @@ int main(int argc, char** argv) {
             if (!opt.script.empty() && frame % 10 == 5 && static_cast<std::size_t>(frame / 10) < opt.script.size()) {
                 const std::string& k = opt.script[static_cast<std::size_t>(frame / 10)];
                 SDL_Event press{};
-                if (k.rfind("text=", 0) == 0) {  // typed characters (the string outlives the event)
+                if (k.rfind("tap=", 0) == 0) {
+                    // A tap at X:Y, in thousandths of the window (the mouse standing in for a finger).
+                    int tx = 0, ty = 0, ww = 1, wh = 1;
+                    std::sscanf(k.c_str() + 4, "%d:%d", &tx, &ty);
+                    SDL_GetWindowSize(window, &ww, &wh);
+                    press.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+                    press.button.x = static_cast<float>(tx * ww) / 1000.0f;
+                    press.button.y = static_cast<float>(ty * wh) / 1000.0f;
+                    SDL_PushEvent(&press);
+                    press.type = SDL_EVENT_MOUSE_BUTTON_UP;
+                } else if (k.rfind("text=", 0) == 0) {  // typed characters (the string outlives the event)
                     press.type = SDL_EVENT_TEXT_INPUT;
                     press.text.text = k.c_str() + 5;
                 } else {
@@ -1016,6 +1050,13 @@ int main(int argc, char** argv) {
             bool singleStep = false;
             while (SDL_PollEvent(&e)) {
                 if (e.type == SDL_EVENT_QUIT) running = false;
+                {
+                    int ww = 1, wh = 1;
+                    SDL_GetWindowSize(window, &ww, &wh);
+                    touch.handle(e, ww, wh);
+                }
+                // A phone's back key is Esc.
+                if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_AC_BACK) e.key.key = SDLK_ESCAPE;
                 if (screen == Screen::Editor) {
                     // The editor takes keys, typed text and the mouse (left: brick, right: start position).
                     if (e.type == SDL_EVENT_TEXT_INPUT) editor.text(e.text.text);
@@ -1451,9 +1492,10 @@ int main(int argc, char** argv) {
                 for (std::size_t l = 0; l < locals.size(); ++l) {
                     if (l < 2) locals[l] = keyboardInput(keys, cfg.keys[l]);
                     const ab::PlayerInput pad = gamepadInput(pads[l]);
-                    for (std::size_t d = 0; d < 4; ++d) locals[l].dir[d] = locals[l].dir[d] || pad.dir[d];
-                    locals[l].button1 = locals[l].button1 || pad.button1;
-                    locals[l].button2 = locals[l].button2 || pad.button2;
+                    const ab::PlayerInput screenPad = l == 0 ? touch.input() : ab::PlayerInput{};  // the on-screen controls are the first player's
+                    for (std::size_t d = 0; d < 4; ++d) locals[l].dir[d] = locals[l].dir[d] || pad.dir[d] || screenPad.dir[d];
+                    locals[l].button1 = locals[l].button1 || pad.button1 || screenPad.button1;
+                    locals[l].button2 = locals[l].button2 || pad.button2 || screenPad.button2;
                 }
                 net.update(ab::net::clockMs(), locals);
                 if (opt.frames > 0) SDL_Delay(5);  // automated runs: the network runs on the real clock
@@ -1467,7 +1509,15 @@ int main(int argc, char** argv) {
                     for (int i = 0; i < ab::kMaxPlayers; ++i) {
                         const Control c = control[static_cast<std::size_t>(i)];
                         if (c == Control::Ai) input[static_cast<std::size_t>(i)] = ai[static_cast<std::size_t>(i)].decide(world, i, kStepMs);
-                        if (c == Control::Key0) input[static_cast<std::size_t>(i)] = keyboardInput(keys, cfg.keys[0]);
+                        if (c == Control::Key0) {
+                            // The first key set, and with it the on-screen controls.
+                            ab::PlayerInput& in = input[static_cast<std::size_t>(i)];
+                            in = keyboardInput(keys, cfg.keys[0]);
+                            const ab::PlayerInput pad = touch.input();
+                            for (std::size_t d = 0; d < 4; ++d) in.dir[d] = in.dir[d] || pad.dir[d];
+                            in.button1 = in.button1 || pad.button1;
+                            in.button2 = in.button2 || pad.button2;
+                        }
                         if (c == Control::Key1) input[static_cast<std::size_t>(i)] = keyboardInput(keys, cfg.keys[1]);
                         if (c >= Control::Pad0)
                             input[static_cast<std::size_t>(i)] = gamepadInput(pads[static_cast<std::size_t>(static_cast<int>(c) - static_cast<int>(Control::Pad0))]);
@@ -1977,6 +2027,8 @@ int main(int argc, char** argv) {
                 renderer.end();
             }
 
+            touch.update(SDL_GetTicks());
+            touch.draw(renderer, w, h);
             ++frame;
             if (opt.resultShot && screen == Screen::Match && world.roundOver() && roundOverSteps == 50) {
                 if (!opt.screenshot.empty()) writePpm(opt.screenshot, w, h);

@@ -54,6 +54,12 @@ bool load(F& fn, const char* name) {
 }
 }  // namespace
 
+namespace {
+bool gEs = false;
+}
+void setOpenGLES(bool es) { gEs = es; }
+bool openGLES() { return gEs; }
+
 bool loadOpenGL() {
     bool ok = true;
     ok = load(glActiveTexture, "glActiveTexture") && ok;

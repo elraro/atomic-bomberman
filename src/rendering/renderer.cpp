@@ -16,7 +16,9 @@ namespace {
 constexpr float kScreenW = 640.0f;
 constexpr float kScreenH = 480.0f;
 
-const char* kVertexSrc = R"(#version 330 core
+// The shaders, without their first line: that names the language version, which differs
+// between desktop OpenGL and OpenGL ES.
+const char* kVertexSrc = R"(
 layout(location = 0) in vec2 aPos;
 layout(location = 1) in vec2 aUv;
 layout(location = 2) in vec4 aColor;
@@ -26,7 +28,7 @@ out vec2 vUv;
 void main() { vColor = aColor; vUv = aUv; gl_Position = uProj * vec4(aPos, 0.0, 1.0); }
 )";
 
-const char* kFragmentSrc = R"(#version 330 core
+const char* kFragmentSrc = R"(
 in vec4 vColor;
 in vec2 vUv;
 uniform sampler2D uTex;
@@ -34,8 +36,10 @@ out vec4 oColor;
 void main() { oColor = texture(uTex, vUv) * vColor; }
 )";
 
-unsigned compile(GLenum type, const char* src) {
+unsigned compile(GLenum type, const char* body) {
     const unsigned s = glCreateShader(type);
+    const std::string whole = std::string(openGLES() ? "#version 300 es\nprecision highp float;" : "#version 330 core") + body;
+    const char* src = whole.c_str();
     glShaderSource(s, 1, &src, nullptr);
     glCompileShader(s);
     GLint ok = 0;
@@ -213,6 +217,21 @@ void Renderer::begin(int windowW, int windowH, bool clear) {
     glUniform1i(glGetUniformLocation(program_, "uTex"), 0);
 }
 
+// For things laid over the whole window (the touch controls): window pixels, origin top
+// left, nothing cleared. On a wide phone screen the game sits in the middle and the
+// controls go beside it.
+void Renderer::beginWindow(int windowW, int windowH) {
+    flush();
+    glViewport(0, 0, windowW, windowH);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    const float w = static_cast<float>(std::max(1, windowW)), h = static_cast<float>(std::max(1, windowH));
+    const float proj[16] = {2.0f / w, 0, 0, 0, 0, -2.0f / h, 0, 0, 0, 0, -1, 0, -1, 1, 0, 1};
+    glUseProgram(program_);
+    glUniformMatrix4fv(projLoc_, 1, GL_FALSE, proj);
+    glUniform1i(glGetUniformLocation(program_, "uTex"), 0);
+}
+
 void Renderer::end() { flush(); }
 
 void Renderer::image(unsigned texture) {
@@ -220,6 +239,14 @@ void Renderer::image(unsigned texture) {
         textured(texture, 0, 0, kScreenW, kScreenH);
     else
         quad(0, 0, kScreenW, kScreenH, 0.05f, 0.05f, 0.12f);
+}
+
+void Renderer::tinted(unsigned texture, float x, float y, float w, float h, float r, float g, float b, float a) {
+    if (texture == 0) return;
+    setTexture(texture);
+    const Vertex v[6] = {{x, y, 0, 0, r, g, b, a},     {x + w, y, 1, 0, r, g, b, a},     {x + w, y + h, 1, 1, r, g, b, a},
+                         {x, y, 0, 0, r, g, b, a},     {x + w, y + h, 1, 1, r, g, b, a}, {x, y + h, 0, 1, r, g, b, a}};
+    batch_.insert(batch_.end(), v, v + 6);
 }
 
 void Renderer::picture(unsigned texture, float x, float y, float w, float h) {

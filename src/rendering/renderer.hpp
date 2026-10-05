@@ -43,8 +43,12 @@ public:
     // what follows is drawn over the picture already there (text over the playfield).
     void begin(int windowW, int windowH, bool clear = true);
     void end();
+    // As begin(), but in window pixels over the whole window, and without clearing.
+    void beginWindow(int windowW, int windowH);
     void image(unsigned texture);  // full-screen picture (dark fill if 0)
     void picture(unsigned texture, float x, float y, float w, float h);  // a picture at a place
+    // The same, multiplied by a colour and an opacity.
+    void tinted(unsigned texture, float x, float y, float w, float h, float r, float g, float b, float a);
     float textWidth(const SpriteBank& bank, const std::string& s) const;
     // A texture for moving pictures: created on the first call (existing = 0), refilled after.
     unsigned frameTexture(unsigned existing, int w, int h, const std::vector<std::uint8_t>& rgba);
