@@ -65,7 +65,7 @@ Levels as defined in AGENTS.md §53: 1 static (read from the original's code or 
 
 ## In the modern game without a counterpart check
 
-- Computer players: structure and probabilities follow the original's code; two search routines and playing strength are unverified (`../reverse-engineering/ai.md`).
+- Computer players: behaviours, probabilities and the three searches follow the original's code as read (static analysis); playing strength has not been compared with the original running (`../reverse-engineering/ai.md`).
 - Rendering: one scene compared pixel by pixel (99.46 % identical); animations not compared.
 - Audio: event-to-sound mapping from the sound list and observed file names; not listened to.
 - Menus and result screens: built from the original pictures; layout only partly compared.
