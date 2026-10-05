@@ -12,6 +12,7 @@
 #include "net/client.hpp"
 #include "net/protocol.hpp"
 #include "net/server.hpp"
+#include "resources/settings.hpp"
 
 using namespace ab;
 using namespace ab::net;
@@ -399,6 +400,44 @@ void testLeaveDuringRound() {
     CHECK(h.server.world() == nullptr);
 }
 
+// Four in ten datagrams lost in both directions: every step still arrives, because
+// each message repeats what has not been acknowledged. No snapshot is needed.
+void testUdpLoss() {
+    Harness h;
+    CHECK(h.start("", 3));
+    Client& ann = h.join("Ann");
+    CHECK(h.until([&] { return ann.state() == Client::State::Lobby && ann.udpActive(); }));
+    setTestUdpLoss(40);
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.state() == Client::State::Round; }));
+    PlayerInput in;
+    in.dir[2] = true;
+    ann.setInput(in);
+    const bool finished = playToResult(h, {&ann});
+    setTestUdpLoss(0);
+    CHECK(finished);
+    CHECK(ann.udpActive());
+    CHECK_EQ(ann.snapshotsLoaded(), 0);
+    CHECK_EQ(ann.stepsApplied(), h.server.steps());
+    CHECK_EQ(ann.world()->stateHash(), h.server.world()->stateHash());
+    CHECK(h.server.steps() > 100);
+}
+
+// The network keys of the settings file.
+void testNetSettings() {
+    Settings s;
+    s.parse("net_name=Ann\nnet_address=example.org:1234\nnet_server_name=Ann's game\nnet_port=30000\n");
+    CHECK(s.netName == "Ann");
+    CHECK(s.netAddress == "example.org:1234");
+    CHECK(s.netServerName == "Ann's game");
+    CHECK_EQ(s.netPort, 30000);
+    Settings t;
+    t.parse(s.serialize());
+    CHECK(t.netName == "Ann" && t.netAddress == "example.org:1234" && t.netServerName == "Ann's game" && t.netPort == 30000);
+    t.parse("net_port=99999\n");
+    CHECK_EQ(t.netPort, 30000);
+}
+
 void testLanBrowser() {
     // Only the answer path is checked: a query sent straight to the server's port.
     Server server;
@@ -442,6 +481,8 @@ int main() {
         {"round over udp", [] { testRound(true); }},
         {"round over tcp only", [] { testRound(false); }},
         {"leave during round", testLeaveDuringRound},
+        {"udp loss", testUdpLoss},
+        {"settings keys", testNetSettings},
         {"lan answer", testLanBrowser},
     };
     for (const auto& [name, fn] : tests) {

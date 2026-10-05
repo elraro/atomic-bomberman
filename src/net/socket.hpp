@@ -12,6 +12,9 @@ namespace ab::net {
 // Once per process before any socket is used (Winsock start-up; ignores SIGPIPE elsewhere).
 bool startup();
 
+// For tests: this share (0-100) of all UDP datagrams sent by this process is thrown away.
+void setTestUdpLoss(int percent);
+
 // Milliseconds of a monotonic clock.
 std::uint64_t clockMs();
 

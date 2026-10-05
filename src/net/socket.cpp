@@ -88,6 +88,9 @@ std::intptr_t newSocket(int type) {
     return static_cast<std::intptr_t>(s);
 }
 
+int g_udpLossPercent = 0;
+std::uint32_t g_udpLossState = 12345;
+
 #ifdef MSG_NOSIGNAL
 constexpr int kSendFlags = MSG_NOSIGNAL;
 #else
@@ -108,6 +111,8 @@ bool startup() {
     return true;
 #endif
 }
+
+void setTestUdpLoss(int percent) { g_udpLossPercent = percent; }
 
 std::uint64_t clockMs() {
     using namespace std::chrono;
@@ -369,6 +374,10 @@ bool UdpSocket::open(std::uint16_t port, bool broadcast) {
 
 bool UdpSocket::sendTo(const Address& to, const std::vector<std::uint8_t>& data) {
     if (fd_ == -1) return false;
+    if (g_udpLossPercent > 0) {
+        g_udpLossState = g_udpLossState * 1103515245u + 12345u;
+        if (static_cast<int>((g_udpLossState >> 16) % 100u) < g_udpLossPercent) return true;  // "sent", and lost
+    }
     const sockaddr_in sa = toSockaddr(to);
     const auto n = ::sendto(native(fd_), reinterpret_cast<const char*>(data.data()),
 #ifdef _WIN32

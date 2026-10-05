@@ -329,7 +329,11 @@ void NetUi::key(unsigned key, bool ctrl) {
 void NetUi::update(std::uint64_t nowMs, const PlayerInput& local) {
     now_ = nowMs;
     if (mode_ == Mode::Closed) return;
-    if (mode_ == Mode::Join) browser_.update(nowMs);
+    if (mode_ == Mode::Join) {
+        browser_.update(nowMs);
+        // The list of servers found may have become shorter under the cursor.
+        row_ = std::min(row_, kJoinFields + static_cast<int>(browser_.servers().size()) - 1);
+    }
     if (hosting_) server_.update(nowMs);
     if (mode_ != Mode::Connecting && mode_ != Mode::Session) return;
 
