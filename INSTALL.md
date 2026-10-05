@@ -76,7 +76,7 @@ Start the program with no arguments. It looks for the game data in this order an
 3. an `assets` folder next to the program, then in the current folder, then in the per-user data folder (step 2),
 4. a `game` folder holding a copy of the original itself (current folder, next to the program, or one level above it).
 
-The terminal prints `INFO  Game files: …` with the folder in use. If no data is found, the window title says so.
+The terminal prints `INFO  Game files: …` with the folder in use. If none of these has the original data, the free asset set is used (`--free` chooses it on purpose).
 
 Controls and options are in `README.md`.
 
