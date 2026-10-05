@@ -130,6 +130,7 @@ void NetUi::connectTo(const std::string& address, bool remember) {
         if (hooks_.settingsChanged) hooks_.settingsChanged();
     }
     connectingTo_ = address;
+    client_.setPrediction(cfg_.netPrediction);
     client_.connect(address, playerName(), password_, net::clockMs());
     lastState_ = State::Connecting;
     lastRound_ = 0;
@@ -608,7 +609,7 @@ void NetUi::draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int fr
     const State state = client_.state();
     if (mode_ == Mode::Session && (state == State::Round || state == State::Result) && client_.world() != nullptr) {
         std::array<int, kMaxPlayers> wins = client_.score().wins;
-        r.draw(*client_.world(), previous_, client_.stepAlpha(nowMs), windowW, windowH, &bank, &wins);
+        r.draw(*client_.view(), previous_, client_.stepAlpha(nowMs), windowW, windowH, &bank, &wins);
         r.begin(windowW, windowH, false);
         if (state == State::Result) drawResult(r, bank);
         drawChat(r, bank, nowMs);

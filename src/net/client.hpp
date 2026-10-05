@@ -65,7 +65,19 @@ public:
     void sendKick(std::uint8_t id);
     void sendContinue();
 
-    // The round being played or shown (null in the lobby).
+    // Client-side prediction (on by default): the picture runs a few steps ahead of what the
+    // server has confirmed, with this player's own keys applied at once, so moving does not
+    // wait for the round trip. See view().
+    void setPrediction(bool on) { prediction_ = on; }
+    bool prediction() const { return prediction_; }
+    // How many steps ahead to predict; 0 (the default) works it out from the measured ping.
+    void setPredictionSteps(int steps) { predictionSteps_ = steps; }
+    // What to draw: the predicted state while this player is in a running round with
+    // prediction on, otherwise the confirmed state. Never used for results or scores.
+    const World* view() const { return predicted_ && predictedValid_ ? predicted_.get() : world_.get(); }
+    std::uint32_t viewStep() const { return predicted_ && predictedValid_ ? target_ : applied_; }
+
+    // The round as confirmed by the server (null in the lobby).
     World* world() { return world_.get(); }
     const World* world() const { return world_.get(); }
     const RoundSetup& setup() const { return start_.setup; }
@@ -86,6 +98,8 @@ private:
     void handleSteps(const StepsMsg& m);
     void beginRound(const RoundStartMsg& m, std::uint64_t nowMs);
     void sendInput(std::uint64_t nowMs);
+    void applyStep(const StepInputs& bytes, const std::function<void(World&)>& after);
+    void predict();
 
     State state_ = State::Idle;
     std::string error_;
@@ -121,6 +135,14 @@ private:
     std::uint64_t nextStepAt_ = 0;
     std::uint64_t lastStepAt_ = 0;
     std::uint8_t input_ = 0;
+    bool prediction_ = true;
+    int predictionSteps_ = 0;
+    std::unique_ptr<World> predicted_;
+    bool predictedValid_ = false;
+    std::uint32_t target_ = 0;                        // the step the predicted state stands for
+    std::map<std::uint32_t, std::uint8_t> mine_;      // own input assumed for each step not yet confirmed
+    StepInputs lastInputs_{};                         // everyone's input in the last confirmed step
+    std::uint64_t nextLocalAt_ = 0;
     std::uint8_t inputSent_ = 0;
     std::uint64_t inputSentAt_ = 0;
 };

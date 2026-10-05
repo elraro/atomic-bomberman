@@ -15,6 +15,8 @@ void Client::fail(const std::string& why) {
     socket_.close();
     udp_.close();
     world_.reset();
+    predicted_.reset();
+    predictedValid_ = false;
     queue_.clear();
     udpOn_ = false;
     error_ = why;
@@ -25,6 +27,8 @@ void Client::disconnect() {
     socket_.close();
     udp_.close();
     world_.reset();
+    predicted_.reset();
+    predictedValid_ = false;
     queue_.clear();
     chat_.clear();
     lobby_ = LobbyState{};
@@ -97,6 +101,12 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     lastStepAt_ = nowMs;
     udpStepsAt_ = nowMs;
     inputSentAt_ = 0;
+    predicted_.reset();
+    predictedValid_ = false;
+    target_ = 0;
+    mine_.clear();
+    lastInputs_ = {};
+    nextLocalAt_ = nowMs;
     // The server's tuning table on top of the built-in one: the rules are the server's.
     Values values = Values::defaults();
     for (const auto& [id, value] : m.values) values.set(id, value);
@@ -140,6 +150,8 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             lobby_ = std::move(m);
             if (lobby_.phase == Phase::Lobby && (state_ == State::Round || state_ == State::Result)) {
                 world_.reset();
+                predicted_.reset();
+                predictedValid_ = false;
                 queue_.clear();
                 state_ = State::Lobby;
             }
@@ -177,6 +189,7 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             queue_.clear();
             hashes_.clear();
             applied_ = m.step;
+            mine_.clear();
             awaitingState_ = false;
             ++snapshots_;
             break;
@@ -263,37 +276,103 @@ void Client::update(std::uint64_t nowMs) {
     socket_.pump();
 }
 
+void Client::applyStep(const StepInputs& bytes, const std::function<void(World&)>& after) {
+    std::array<PlayerInput, kMaxPlayers> input{};
+    for (std::size_t i = 0; i < input.size(); ++i) input[i] = unpackInput(bytes[i]);
+    world_->tick(kStepMs, input);
+    lastInputs_ = bytes;
+    ++applied_;
+    if (after) after(*world_);
+    else world_->takeEvents();
+    if (const auto it = hashes_.find(applied_); it != hashes_.end()) {
+        if (it->second != world_->stateHash() && !awaitingState_) {
+            awaitingState_ = true;
+            socket_.send(static_cast<std::uint8_t>(ClientMsg::NeedState), {});
+        }
+        hashes_.erase(hashes_.begin(), std::next(it));
+    }
+}
+
+// The predicted state: a copy of the confirmed one, run forward to the step this player's
+// present input should reach the server for. Own inputs are the ones remembered for each
+// of those steps; everybody else is assumed to keep doing what they did last. It is thrown
+// away and rebuilt on every local step, so a wrong guess lasts until the server's word arrives.
+void Client::predict() {
+    const int mySeat = seat();
+    int ahead = predictionSteps_;
+    if (ahead <= 0) {
+        const ClientInfo* me = lobby_.client(id_);
+        ahead = ((me != nullptr ? me->pingMs : 0) + kStepMs - 1) / kStepMs + 1;  // the round trip, and one step of sampling
+    }
+    ahead = std::clamp(ahead, 1, 10);
+    const std::uint32_t wanted = applied_ + static_cast<std::uint32_t>(ahead);
+    // The target moves on by one per local step, steadily, and is pulled back only when it
+    // has drifted from where the confirmed step and the delay say it should be.
+    ++target_;
+    if (target_ + 2 < wanted || target_ > wanted + 2 || target_ <= applied_) target_ = wanted;
+    mine_[target_] = input_;
+    mine_.erase(mine_.begin(), mine_.upper_bound(applied_));
+    if (!predicted_) predicted_ = std::make_unique<World>(*world_);
+    else *predicted_ = *world_;
+    for (std::uint32_t s = applied_ + 1; s <= target_ && !predicted_->roundOver(); ++s) {
+        std::array<PlayerInput, kMaxPlayers> input{};
+        for (std::size_t i = 0; i < input.size(); ++i) input[i] = unpackInput(lastInputs_[i]);
+        const auto own = mine_.find(s);
+        input[static_cast<std::size_t>(mySeat)] = unpackInput(own != mine_.end() ? own->second : input_);
+        predicted_->tick(kStepMs, input);
+        predicted_->takeEvents();  // sounds come from the confirmed steps, once
+    }
+    predictedValid_ = true;
+}
+
 int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& before, const std::function<void(World&)>& after) {
     if (state_ != State::Round || !world_) return 0;
     int ran = 0;
+    const bool predicting = prediction_ && seat() >= 0;
     try {
-        while (!queue_.empty() && ran < 400 && (nowMs >= nextStepAt_ || queue_.size() > 20)) {
-            std::array<PlayerInput, kMaxPlayers> input{};
-            for (std::size_t i = 0; i < input.size(); ++i) input[i] = unpackInput(queue_.front()[i]);
-            queue_.pop_front();
-            if (before) before(*world_);
-            world_->tick(kStepMs, input);
-            ++applied_;
-            ++ran;
-            if (after) after(*world_);
-            else world_->takeEvents();
-            // Behind by more than a few steps: twice the speed until caught up.
-            const std::uint64_t interval = queue_.size() > 3 ? kStepMs / 2 : kStepMs;
-            nextStepAt_ = std::max(nextStepAt_, nowMs > 100 ? nowMs - 100 : 0) + interval;
-            lastStepAt_ = nowMs;
-            if (const auto it = hashes_.find(applied_); it != hashes_.end()) {
-                if (it->second != world_->stateHash() && !awaitingState_) {
-                    awaitingState_ = true;
-                    socket_.send(static_cast<std::uint8_t>(ClientMsg::NeedState), {});
+        if (predicting) {
+            // Confirmed steps are taken as soon as they arrive; the picture is paced by the local clock.
+            while (!queue_.empty() && ran < 400) {
+                const StepInputs bytes = queue_.front();
+                queue_.pop_front();
+                applyStep(bytes, after);
+                ++ran;
+            }
+            if (world_->roundOver() || ended_) {
+                // Nothing to guess once the round is decided: show the confirmed state.
+                if (predictedValid_ && before) before(*predicted_);
+                predictedValid_ = false;
+            } else {
+                if (nowMs > nextLocalAt_ + 500) nextLocalAt_ = nowMs;  // after a stall: no burst of steps
+                while (nowMs >= nextLocalAt_) {
+                    if (before) before(predictedValid_ ? *predicted_ : *world_);
+                    predict();
+                    nextLocalAt_ += kStepMs;
+                    lastStepAt_ = nowMs;
                 }
-                hashes_.erase(hashes_.begin(), std::next(it));
+            }
+        } else {
+            predictedValid_ = false;
+            while (!queue_.empty() && ran < 400 && (nowMs >= nextStepAt_ || queue_.size() > 20)) {
+                const StepInputs bytes = queue_.front();
+                queue_.pop_front();
+                if (before) before(*world_);
+                applyStep(bytes, after);
+                ++ran;
+                // Behind by more than a few steps: twice the speed until caught up.
+                const std::uint64_t interval = queue_.size() > 3 ? kStepMs / 2 : kStepMs;
+                nextStepAt_ = std::max(nextStepAt_, nowMs > 100 ? nowMs - 100 : 0) + interval;
+                lastStepAt_ = nowMs;
             }
         }
     } catch (const std::exception& e) {
         fail(std::string("The round stopped with an error (") + e.what() + ")");
         return ran;
     }
-    if (ended_ && applied_ >= end_.steps && queue_.empty() && !awaitingState_) state_ = State::Result;
+    if (ended_ && applied_ >= end_.steps && queue_.empty() && !awaitingState_) {
+        predictedValid_ = false;
+        state_ = State::Result;
+    }
     return ran;
 }
 

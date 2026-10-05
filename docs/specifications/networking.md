@@ -20,9 +20,21 @@ The gameplay core is deterministic: integer arithmetic only, its own random gene
 
 Why not send positions: the whole state (10 players, up to 100 bombs, three 15 x 11 grids) is several kilobytes per step; the inputs are 10 bytes. Sounds and animations need no messages at all because each client produces them from its own simulation.
 
-Cost: what the player sees lags by the round trip to the server plus up to one step. There is no client-side prediction. This is fine on a LAN and acceptable on ordinary internet links; it is the first thing to revisit if it is not.
+Cost: the confirmed state lags by the round trip to the server plus up to one step. Client-side prediction (below) hides that delay for the player's own moves.
 
 Computer players run on the server only, so their code need not be deterministic. A player who disconnects during a round is taken over by a computer player until the round ends.
+
+## Client-side prediction
+
+What a player sees is not the confirmed state but a guess at the state a few steps later: the one in which the keys pressed now will take effect.
+
+- The client keeps the confirmed `World` exactly as before; nothing predicted ever enters it. Scores, results, sounds and the state hash come from it alone.
+- Once per 50 ms of its own clock the client copies the confirmed state and runs the copy forward to a target step: the last confirmed step plus the delay, where the delay is the measured round trip in steps plus one (1 to 10 steps). For those steps it uses its own inputs, remembering which input it assumed for which step, and assumes every other player goes on doing what they did in the last confirmed step.
+- The target advances by one per local step and is pulled back to "confirmed + delay" only when it has drifted by more than two, so the picture moves evenly even when the server's steps arrive unevenly.
+- The copy is thrown away and rebuilt every local step, so a wrong guess (another player turned, a bomb was dropped) lasts only until the server's steps say otherwise; the drawing interpolates over one step, which softens the correction.
+- No prediction for watchers, after the round is decided, or when switched off (`net_prediction=0` in the settings file).
+
+Known effects: other players are drawn where they would be if they had not changed direction, so at high delay they visibly jump when they do; sounds follow the confirmed state, so the sound of one's own bomb comes after the picture of it by the round-trip time.
 
 ## Transport
 
@@ -107,7 +119,7 @@ The dedicated server reads the game data (tuning values, schemes, level extras) 
 ## Client
 
 - Sends its input (first keyboard set, or the first gamepad) whenever it changes and at least every 50 ms.
-- Applies one step per 50 ms; with more than 3 steps waiting it applies two per 50 ms, with more than 20 it applies them as fast as it can (after a stall or a snapshot).
+- With prediction: applies confirmed steps as they arrive and paces the picture by its own clock. Without (watchers, or prediction off): applies one step per 50 ms; with more than 3 steps waiting two per 50 ms, with more than 20 as fast as it can.
 - Screens: join (name, address, servers found on the LAN), host (server name, port, password), lobby (seats, settings, chat), match, result.
 - Chat: typed directly in the lobby; in a match `T` opens the line, Enter sends, Esc closes. The last lines stay on screen for 8 s.
 
@@ -119,7 +131,7 @@ The dedicated server reads the game data (tuning values, schemes, level extras) 
 
 ## Limits accepted for now
 
-- No client-side prediction: input delay equals the round trip to the server.
+- Prediction covers the picture only: sounds still arrive with the round-trip delay, and other players' changes of direction appear as small corrections.
 - IPv4 only; no NAT traversal: the host's port must be reachable.
 - LAN search finds servers on the default port only.
 - One player per client; no roulette, no campaign.

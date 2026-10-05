@@ -28,11 +28,12 @@ tools/diagnostics/net_bot.cpp   a client without a window that presses random ke
 - **Clients trust the server.** Round setups are range-checked when decoded, but a snapshot is loaded as it comes: a hostile server could send a state that makes the client misbehave. Servers do not trust clients: all a client can influence is its own input byte, chat text and, for the administrator, the lobby settings.
 - **Finding servers on the LAN** works only for servers on the default port (27410), since the query is a broadcast to that port.
 - Computer players run on the server and are sent as inputs like everyone else's.
+- **Prediction** lives entirely in `Client` (`predict()`, `view()`): a second `World`, copied from the confirmed one and run ahead on every local step. The screens draw `view()`; everything else reads `world()`. Copying a `World` twenty times a second is cheap at this size.
 
 ## Checked
 
 - `ab_tests` "state transfer": a state saved in the middle of a four-player round, loaded into a fresh `World`, stays hash-identical for the rest of the round.
-- `ab_net_tests` (real sockets on 127.0.0.1, simulated clock): message encoding and refusal of truncated or out-of-range data; lobby (password, seats, names, chat, settings, teams, kick, administrator hand-over); a match with two clients and a late joiner until it is decided, over UDP and over TCP only, every client's hash equal to the server's after each round; a client whose state is deliberately broken gets exactly one snapshot; a player leaving mid-round; 40 % of all datagrams dropped; the LAN answer.
+- `ab_net_tests` (real sockets on 127.0.0.1, simulated clock): message encoding and refusal of truncated or out-of-range data; lobby (password, seats, names, chat, settings, teams, kick, administrator hand-over); a match with two clients and a late joiner until it is decided, over UDP and over TCP only, every client's hash equal to the server's after each round; a client whose state is deliberately broken gets exactly one snapshot; a player leaving mid-round; 40 % of all datagrams dropped; the LAN answer; client-side prediction (see below).
 - By scripted keys in unattended runs of the game: typing and sending a chat line in the lobby, changing settings, changing team, starting the match with F2, opening the chat line during the match.
 - By hand, on one machine with the real game data: `atomic_server` with `net_bot` clients (one on UDP, one forced to TCP) over several rounds on random levels: equal hashes, no snapshots; the game itself joining a dedicated server as a player and as a watcher; the join, host, lobby, match and result screens captured from unattended runs.
 
@@ -43,3 +44,4 @@ tools/diagnostics/net_bot.cpp   a client without a window that presses random ke
 - A Linux and a Windows build playing each other. Both use the same integer code, so they should agree, but this is the determinism assumption's first real test.
 - The screens with a person at the keyboard (real key events and text input rather than scripted ones), `/kick`, the Esc-twice exit, how the delay feels.
 - More than three clients at once.
+- Prediction with real delay. The test runs over the loopback interface with the look-ahead forced to four steps: it shows the predicted states are exactly right while inputs are steady, wrong for at most a few steps after a change, and that the confirmed state is never touched. How it feels at 50-200 ms, and how distracting the corrections of other players are, nobody has seen.

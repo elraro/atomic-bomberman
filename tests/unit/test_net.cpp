@@ -4,6 +4,7 @@
 // round runs in well under a second.
 #include <cstdio>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <thread>
@@ -423,6 +424,76 @@ void testUdpLoss() {
     CHECK(h.server.steps() > 100);
 }
 
+// Client-side prediction: the picture runs ahead of the confirmed state, and is right
+// whenever nobody changes what they are doing.
+void testPrediction() {
+    Harness h;
+    CHECK(h.start("", 0));
+    Client& ann = h.join("Ann");
+    Client& bob = h.join("Bob");
+    Client& cat = h.join("Cat");
+    CHECK(h.until([&] { return ann.lobby().clients.size() == 3 && bob.state() == Client::State::Lobby && cat.state() == Client::State::Lobby; }));
+    CHECK(ann.prediction());
+    ann.setPredictionSteps(4);
+    bob.setPrediction(false);
+    PlayerInput east;
+    east.dir[1] = true;
+    ann.setInput(east);
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }));
+
+    std::map<std::uint32_t, std::uint32_t> predicted, confirmed;
+    int ahead = 0, samples = 0;
+    auto watch = [&](int ms) {
+        for (int waited = 0; waited < ms; waited += 5) {
+            h.turn();
+            if (ann.state() != Client::State::Round) break;
+            confirmed[ann.stepsApplied()] = ann.world()->stateHash();
+            if (ann.view() != ann.world()) {
+                predicted[ann.viewStep()] = ann.view()->stateHash();
+                ahead += static_cast<int>(ann.viewStep()) - static_cast<int>(ann.stepsApplied());
+                ++samples;
+            }
+        }
+    };
+    auto wrong = [&](std::uint32_t from, std::uint32_t to) {
+        int count = 0, compared = 0;
+        for (const auto& [step, hash] : predicted)
+            if (step >= from && step < to && confirmed.count(step) != 0) {
+                ++compared;
+                count += confirmed[step] != hash ? 1 : 0;
+            }
+        return compared > 10 ? count : 1000;
+    };
+    // Ann keeps walking east and the others stand still: every predicted state comes true.
+    watch(4000);
+    CHECK(samples > 100);
+    CHECK(ahead >= samples * 3 && ahead <= samples * 5);  // about four steps ahead
+    const std::uint32_t steady = ann.stepsApplied();
+    CHECK(steady > 40);
+    CHECK_EQ(wrong(10, steady), 0);
+    // The picture shows Ann where the server will only put her later.
+    CHECK(ann.view()->player(0).x >= ann.world()->player(0).x);
+    // Ann turns round: the steps already under way were guessed with the old key, the rest are right again.
+    PlayerInput south;
+    south.dir[2] = true;
+    ann.setInput(south);
+    watch(3000);
+    const std::uint32_t later = ann.stepsApplied();
+    CHECK(wrong(steady + 12, later) == 0);
+    // Bob has prediction off and Ann's guesses never touch what is confirmed: all agree with the server.
+    CHECK(bob.view() == bob.world());
+    h.spin(50);
+    if (ann.state() == Client::State::Round && ann.stepsApplied() == h.server.steps()) CHECK_EQ(ann.world()->stateHash(), h.server.world()->stateHash());
+    CHECK_EQ(ann.snapshotsLoaded(), 0);
+    // Somebody else's change of mind is what prediction cannot know: Bob starts walking,
+    // Ann's picture is briefly wrong about him and then right again.
+    bob.setInput(east);
+    watch(3000);
+    CHECK(wrong(ann.stepsApplied() - 30, ann.stepsApplied()) == 0);
+    CHECK_EQ(ann.snapshotsLoaded(), 0);
+}
+
 // The network keys of the settings file.
 void testNetSettings() {
     Settings s;
@@ -482,6 +553,7 @@ int main() {
         {"round over tcp only", [] { testRound(false); }},
         {"leave during round", testLeaveDuringRound},
         {"udp loss", testUdpLoss},
+        {"prediction", testPrediction},
         {"settings keys", testNetSettings},
         {"lan answer", testLanBrowser},
     };
