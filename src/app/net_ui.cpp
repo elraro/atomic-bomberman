@@ -199,6 +199,17 @@ void NetUi::submitChat() {
             if (c.name == who && c.id != client_.id()) ban ? client_.sendBan(c.id) : client_.sendKick(c.id);
         return;
     }
+    // "/admin NAME": the administrator hands the role over. "/login PASSWORD": the server
+    // owner takes it, with the server's administrator password.
+    if (text.rfind("/admin ", 0) == 0) {
+        for (const net::ClientInfo& c : client_.lobby().clients)
+            if (c.name == text.substr(7) && c.id != client_.id()) client_.sendAdmin(c.id);
+        return;
+    }
+    if (text.rfind("/login ", 0) == 0) {
+        client_.sendLogin(text.substr(7));
+        return;
+    }
     if (text.rfind("/unban ", 0) == 0) {
         client_.sendUnban(text.substr(7));
         return;

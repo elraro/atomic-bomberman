@@ -195,6 +195,11 @@ void testCodec() {
     CHECK(resolveHostPort("[::1", 7) == std::nullopt);
     CHECK(resolveHostPort("[::1]x", 7) == std::nullopt);
     CHECK(!resolveHostPort("127.0.0.1", 5)->v6 && resolveHostPort("127.0.0.1", 5)->loopback());
+    // A link-local address keeps its interface; "lo" exists everywhere the tests run on Linux, 1 everywhere.
+    if (const auto local = resolveHostPort("[fe80::1%1]:9", 5)) {
+        CHECK(local->v6 && local->zone == 1 && local->port == 9);
+        CHECK(local->text() == "[fe80::1%1]:9");
+    }
 }
 
 // A server and its clients on one simulated clock.
@@ -316,6 +321,22 @@ void testLobby() {
     CHECK(h.until([&] { return ann2.state() == Client::State::Failed; }));
     CHECK(ann2.error() == "Removed by the administrator");
     CHECK(ann.state() == Client::State::Lobby);
+
+    // The administrator hands the role over; the new one hands it back.
+    bob.sendAdmin(ann.id());  // not the administrator: nothing happens
+    h.spin(200);
+    CHECK(ann.isAdmin());
+    ann.sendAdmin(bob.id());
+    CHECK(h.until([&] { return bob.isAdmin() && !ann.isAdmin(); }));
+    ann.sendOption(Option::Wins, 1);
+    h.spin(200);
+    CHECK_EQ(bob.lobby().settings.winsNeeded, 2);  // Ann's settings no longer count
+    bob.sendAdmin(ann.id());
+    CHECK(h.until([&] { return ann.isAdmin(); }));
+    // No administrator password is set on this server: logging in is refused.
+    bob.sendLogin("letmein");
+    h.spin(200);
+    CHECK(ann.isAdmin());
 
     // When the administrator leaves, the next player takes over.
     ann.disconnect();
@@ -1066,6 +1087,26 @@ void testBansAndLimits() {
         CHECK(few.until([&] { return one.state() == Client::State::Lobby && two.state() == Client::State::Lobby; }));
         CHECK(refused(few, "Three"));
         CHECK_EQ(few.server.players(), 2);
+    }
+    {
+        // The server owner's password makes its holder administrator, whoever came first.
+        Harness h;
+        ServerConfig config;
+        config.port = 0;
+        config.discoverable = false;
+        config.adminPassword = "owner";
+        CHECK(h.server.start(config));
+        Client& first = h.join("First");
+        Client& owner = h.join("Owner");
+        CHECK(h.until([&] { return first.isAdmin() && owner.state() == Client::State::Lobby && owner.lobby().clients.size() == 2; }));
+        owner.sendLogin("guess");
+        h.spin(300);
+        CHECK(first.isAdmin());
+        owner.sendLogin("owner");
+        CHECK(h.until([&] { return owner.isAdmin() && !first.isAdmin(); }));
+        // When the owner leaves, the role goes back to the one who has been there longest.
+        owner.disconnect();
+        CHECK(h.until([&] { return first.isAdmin(); }));
     }
     std::filesystem::remove(banFile);
 }

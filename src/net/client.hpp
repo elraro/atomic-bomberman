@@ -75,6 +75,8 @@ public:
     void sendKick(std::uint8_t id);
     void sendBan(std::uint8_t id);               // administrator: keep that player's address out for good
     void sendUnban(const std::string& address);  // administrator: lift a ban
+    void sendAdmin(std::uint8_t id);             // administrator: hand the role to that player
+    void sendLogin(const std::string& password); // become administrator with the server's administrator password
     void sendContinue();
 
     // Client-side prediction (on by default): the picture runs a few steps ahead of what the

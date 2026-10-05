@@ -120,6 +120,18 @@ void Client::sendUnban(const std::string& address) {
     socket_.send(static_cast<std::uint8_t>(ClientMsg::Unban), w.data());
 }
 
+void Client::sendAdmin(std::uint8_t id) {
+    ByteWriter w;
+    w.u8(id);
+    socket_.send(static_cast<std::uint8_t>(ClientMsg::Admin), w.data());
+}
+
+void Client::sendLogin(const std::string& password) {
+    ByteWriter w;
+    w.text(password);
+    socket_.send(static_cast<std::uint8_t>(ClientMsg::Login), w.data());
+}
+
 void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     start_ = m;
     end_ = RoundEndMsg{};

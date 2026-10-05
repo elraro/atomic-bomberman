@@ -86,6 +86,7 @@ Native toNative(const Address& a, bool socketIsV6) {
     sa->sin6_port = htons(a.port);
     if (a.v6) {
         std::memcpy(&sa->sin6_addr, a.ip6.data(), 16);
+        sa->sin6_scope_id = a.zone;
     } else {
         std::uint8_t mapped[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, static_cast<std::uint8_t>(a.ip >> 24), static_cast<std::uint8_t>(a.ip >> 16),
                                    static_cast<std::uint8_t>(a.ip >> 8), static_cast<std::uint8_t>(a.ip)};
@@ -114,6 +115,7 @@ Address fromNative(const sockaddr_storage& storage) {
         return a;
     }
     a.v6 = true;
+    a.zone = sa->sin6_scope_id;
     std::memcpy(a.ip6.data(), bytes, 16);
     return a;
 }
@@ -195,7 +197,7 @@ std::string Address::text() const {
         in6_addr raw;
         std::memcpy(&raw, ip6.data(), 16);
         inet_ntop(AF_INET6, &raw, buffer, sizeof buffer);
-        return "[" + std::string(buffer) + "]:" + std::to_string(port);
+        return "[" + std::string(buffer) + (zone != 0 ? "%" + std::to_string(zone) : std::string()) + "]:" + std::to_string(port);
     }
     return std::to_string(ip >> 24) + "." + std::to_string((ip >> 16) & 255) + "." + std::to_string((ip >> 8) & 255) + "." +
            std::to_string(ip & 255) + ":" + std::to_string(port);

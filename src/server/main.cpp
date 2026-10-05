@@ -76,6 +76,7 @@ const char* const kUsage =
     "  --hidden           do not answer searches on the local network\n"
     "  --upnp             ask the router to forward the port (UPnP), for a server behind a home router\n"
     "The first player to join is the administrator: changes the settings, starts the match.\n"
+    "  --admin-password TEXT  a player who types /login TEXT in the chat becomes administrator\n"
     "  --ban-file FILE    where banned addresses are kept (default: bans.txt in the per-user folder)\n"
     "Commands on standard input: status, say TEXT, kick NAME, ban NAME, unban ADDRESS, bans, quit.\n";
 
@@ -114,6 +115,7 @@ int main(int argc, char** argv) {
         else if (a == "--hidden") config.discoverable = false;
         else if (a == "--upnp") config.upnp = true;
         else if (a == "--ban-file") config.banFile = next();
+        else if (a == "--admin-password") config.adminPassword = next();
         else {
             std::fprintf(stderr, "ERROR unknown argument %s (see --help)\n", a.c_str());
             return 2;

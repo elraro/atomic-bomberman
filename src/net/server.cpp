@@ -106,6 +106,7 @@ bool Server::start(const ServerConfig& config) {
         }
         std::sort(campaigns_.begin(), campaigns_.end());
     }
+    adminId_ = -1;
     blocked_.clear();
     connects_.clear();
     passwordFails_.clear();
@@ -183,7 +184,17 @@ Server::Peer* Server::peerAtSeat(int seat, int* local) {
     return nullptr;
 }
 
+void Server::makeAdmin(Peer& p, const std::string& how) {
+    adminId_ = p.id;
+    lobbyDirty_ = true;
+    log("INFO  Administrator is now id=" + std::to_string(p.id) + " name=\"" + p.name + "\" (" + how + ")");
+    say(p.name + " is now the administrator");
+}
+
+// The chosen administrator while connected; otherwise whoever has been here longest.
 Server::Peer* Server::admin() {
+    if (adminId_ >= 0)
+        if (Peer* chosen = peerById(static_cast<std::uint8_t>(adminId_))) return chosen;
     Peer* first = nullptr;
     for (auto& p : peers_)
         if (p->joined && !p->gone && (first == nullptr || p->order < first->order)) first = p.get();
@@ -360,6 +371,7 @@ void Server::refreshLobby() {
 void Server::leave(Peer& p) {
     if (!p.joined) return;
     p.joined = false;
+    if (adminId_ == p.id) adminId_ = -1;  // the role falls back to whoever has been here longest
     log("INFO  Left id=" + std::to_string(p.id) + " name=\"" + p.name + "\"");
     say(p.name + " has left");
     if (phase_ == Phase::Lobby) {
@@ -577,6 +589,29 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
             if (&p != admin() || target == nullptr || target == &p) break;
             tell(p, target->name + "'s address is " + hostOf(target->socket.peer()) + " (to lift the ban: /unban " + hostOf(target->socket.peer()) + ")");
             remove(*target, true, "the administrator");
+            break;
+        }
+        case ClientMsg::Admin: {
+            // The administrator hands the role to another player.
+            const std::uint8_t id = r.u8();
+            Peer* target = r.ok() ? peerById(id) : nullptr;
+            if (&p != admin() || target == nullptr || target == &p) break;
+            makeAdmin(*target, "handed over by " + p.name);
+            break;
+        }
+        case ClientMsg::Login: {
+            // The server owner's way in: the administrator password.
+            const std::string given = r.text(128);
+            if (!r.ok()) break;
+            const Key a = sha256(reinterpret_cast<const std::uint8_t*>(given.data()), given.size());
+            const Key b = sha256(reinterpret_cast<const std::uint8_t*>(config_.adminPassword.data()), config_.adminPassword.size());
+            if (config_.adminPassword.empty() || !equalConstantTime(a.data(), b.data(), a.size())) {
+                tell(p, "That is not the administrator password");
+                log("INFO  Refused (administrator password) from " + p.socket.peer().text());
+                passwordFailed(p);
+                break;
+            }
+            if (&p != admin()) makeAdmin(p, "administrator password");
             break;
         }
         case ClientMsg::Unban: {

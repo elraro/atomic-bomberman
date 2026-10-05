@@ -34,6 +34,7 @@ struct ServerConfig {
     bool upnp = false;                  // ask the router to forward the port (UPnP)
     std::string banFile;                // banned addresses, one per line (empty: bans last until the server stops)
     int maxPerAddress = 10;             // connections accepted from one address at a time
+    std::string adminPassword;          // whoever gives it ("/login PASSWORD") becomes administrator; empty: off
     std::function<void(const std::string&)> log;  // one line per event; may be empty
 };
 
@@ -88,6 +89,7 @@ private:
     Peer* peerById(std::uint8_t id);
     Peer* peerAtSeat(int seat, int* local = nullptr);
     Peer* admin();
+    void makeAdmin(Peer& p, const std::string& how);
 
     void loadScheme();
     void rebuildSeats();
@@ -113,6 +115,7 @@ private:
     std::vector<std::unique_ptr<Peer>> peers_;
     std::uint64_t now_ = 0;
     std::uint64_t joinCounter_ = 0;
+    int adminId_ = -1;  // the administrator's client id; -1: whoever has been here longest
     Rng rng_{1};
 
     // Game data.

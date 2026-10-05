@@ -26,6 +26,7 @@ struct Address {
     std::uint16_t port = 0;
     bool v6 = false;
     std::array<std::uint8_t, 16> ip6{};  // IPv6, network byte order
+    std::uint32_t zone = 0;              // IPv6 link-local addresses: the interface ("fe80::1%eth0")
     friend bool operator==(const Address&, const Address&) = default;
     std::string text() const;  // "a.b.c.d:port" or "[x:x::x]:port"
     bool loopback() const;
@@ -34,6 +35,7 @@ struct Address {
 inline constexpr std::uint32_t kLoopback = 0x7F000001u;
 inline constexpr std::uint32_t kBroadcast = 0xFFFFFFFFu;
 
+// Link-local IPv6 addresses carry their interface after a percent sign ("fe80::1%eth0").
 // Name or literal address to an address (the first the system offers, IPv4 or IPv6). May block on a name lookup.
 std::optional<Address> resolve(const std::string& host, std::uint16_t port);
 // "host", "host:port", an IPv6 literal, or "[IPv6 literal]:port".
