@@ -2,6 +2,7 @@
 // encoding, and a server with clients in one process over 127.0.0.1. Time is
 // simulated (the server and clients take the clock as an argument), so a whole
 // round runs in well under a second.
+#include <algorithm>
 #include <cstdio>
 #include <functional>
 #include <map>
@@ -15,6 +16,7 @@
 #include "free/free_data.hpp"
 #include "game/roulette.hpp"
 #include "net/client.hpp"
+#include "net/crypto.hpp"
 #include "net/protocol.hpp"
 #include "net/server.hpp"
 #include "net/upnp.hpp"
@@ -777,6 +779,106 @@ void testNetCampaign() {
     std::filesystem::remove_all(dir);
 }
 
+Bytes fromHex(const std::string& hex) {
+    Bytes out;
+    for (std::size_t i = 0; i + 1 < hex.size(); i += 2) out.push_back(static_cast<std::uint8_t>(std::stoi(hex.substr(i, 2), nullptr, 16)));
+    return out;
+}
+template <class Container>
+std::string toHex(const Container& bytes) {
+    static const char* const kDigits = "0123456789abcdef";
+    std::string out;
+    for (std::uint8_t b : bytes) out += kDigits[b >> 4], out += kDigits[b & 15];
+    return out;
+}
+Key keyFromHex(const std::string& hex) {
+    Key k{};
+    const Bytes b = fromHex(hex);
+    std::copy(b.begin(), b.end(), k.begin());
+    return k;
+}
+
+// The algorithms against the test vectors of their specifications.
+void testCrypto() {
+    // SHA-256 (FIPS 180-4 examples).
+    const std::string abc = "abc";
+    CHECK(toHex(sha256(reinterpret_cast<const std::uint8_t*>(abc.data()), abc.size())) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    CHECK(toHex(sha256(nullptr, 0)) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    const std::string two = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+    CHECK(toHex(sha256(reinterpret_cast<const std::uint8_t*>(two.data()), two.size())) == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+    // HMAC-SHA-256 (RFC 4231, test case 2, with the key padded to 32 bytes as HMAC does).
+    Key jefe{};
+    std::copy_n("Jefe", 4, jefe.begin());
+    const std::string what = "what do ya want for nothing?";
+    CHECK(toHex(hmacSha256(jefe, reinterpret_cast<const std::uint8_t*>(what.data()), what.size())) == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
+
+    // X25519 (RFC 7748, section 5.2 and the key exchange of section 6.1).
+    CHECK(toHex(x25519(keyFromHex("a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4"),
+                       keyFromHex("e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c"))) ==
+          "c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552");
+    const Key alice = keyFromHex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
+    const Key bob = keyFromHex("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb");
+    CHECK(toHex(x25519Base(alice)) == "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a");
+    CHECK(toHex(x25519Base(bob)) == "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f");
+    CHECK(toHex(x25519(alice, x25519Base(bob))) == "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742");
+    CHECK(x25519(bob, x25519Base(alice)) == x25519(alice, x25519Base(bob)));
+
+    // ChaCha20 block (RFC 8439, 2.3.2) and Poly1305 (2.5.2).
+    Key counting;
+    for (std::size_t i = 0; i < 32; ++i) counting[i] = static_cast<std::uint8_t>(i);
+    const std::array<std::uint8_t, 12> blockNonce = {0, 0, 0, 9, 0, 0, 0, 0x4a, 0, 0, 0, 0};
+    CHECK(toHex(chacha20Block(counting, 1, blockNonce)) ==
+          "10f1e7e4d13b5915500fdd1fa32071c4c7d1f4c733c068030422aa9ac3d46c4ed2826446079faa0914c2d705d98b02a2b5129cd1de164eb9cbd083e8a2503c4e");
+    const std::string forum = "Cryptographic Forum Research Group";
+    CHECK(toHex(poly1305(keyFromHex("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b"), reinterpret_cast<const std::uint8_t*>(forum.data()), forum.size())) ==
+          "a8061dc1305136c6c22b8baf0c0127a9");
+
+    // The combined mode (RFC 8439, 2.8.2).
+    Key aeadKey;
+    for (std::size_t i = 0; i < 32; ++i) aeadKey[i] = static_cast<std::uint8_t>(0x80 + i);
+    const std::array<std::uint8_t, 12> aeadNonce = {7, 0, 0, 0, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47};
+    const Bytes aad = fromHex("50515253c0c1c2c3c4c5c6c7");
+    const std::string sunscreen = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+    const Bytes sealed = seal(aeadKey, aeadNonce, aad.data(), aad.size(), reinterpret_cast<const std::uint8_t*>(sunscreen.data()), sunscreen.size());
+    CHECK_EQ(sealed.size(), sunscreen.size() + 16);
+    CHECK(toHex(Bytes(sealed.begin(), sealed.begin() + 16)) == "d31a8d34648e60db7b86afbc53ef7ec2");
+    CHECK(toHex(Bytes(sealed.end() - 16, sealed.end())) == "1ae10b594f09e26a7e902ecbd0600691");
+    Bytes opened;
+    CHECK(open(aeadKey, aeadNonce, aad.data(), aad.size(), sealed.data(), sealed.size(), opened));
+    CHECK(std::string(opened.begin(), opened.end()) == sunscreen);
+    // Any change is noticed: a flipped bit in the text, in the tag, in the associated data, or another nonce.
+    Bytes altered = sealed;
+    altered[5] ^= 1;
+    CHECK(!open(aeadKey, aeadNonce, aad.data(), aad.size(), altered.data(), altered.size(), opened));
+    altered = sealed;
+    altered.back() ^= 0x80;
+    CHECK(!open(aeadKey, aeadNonce, aad.data(), aad.size(), altered.data(), altered.size(), opened));
+    Bytes otherAad = aad;
+    otherAad[0] ^= 1;
+    CHECK(!open(aeadKey, aeadNonce, otherAad.data(), otherAad.size(), sealed.data(), sealed.size(), opened));
+    CHECK(!open(aeadKey, counterNonce(7), aad.data(), aad.size(), sealed.data(), sealed.size(), opened));
+    CHECK(!open(aeadKey, aeadNonce, aad.data(), aad.size(), sealed.data(), 10, opened));
+
+    // Both ends of a connection derive the same keys; the password proof depends on the
+    // password and on the connection.
+    Key a{}, b{};
+    randomBytes(a.data(), 32);
+    randomBytes(b.data(), 32);
+    CHECK(a != b);
+    SessionKeys client, server;
+    CHECK(deriveSession(a, x25519Base(b), x25519Base(a), x25519Base(b), client));
+    CHECK(deriveSession(b, x25519Base(a), x25519Base(a), x25519Base(b), server));
+    CHECK(client.master == server.master && client.toServer == server.toServer && client.udpToClient == server.udpToClient);
+    CHECK(client.toServer != client.toClient && client.udpToServer != client.toServer);
+    CHECK(passwordProof("secret", client.master) == passwordProof("secret", server.master));
+    CHECK(passwordProof("secret", client.master) != passwordProof("Secret", client.master));
+    SessionKeys other;
+    CHECK(deriveSession(a, x25519Base(a), x25519Base(a), x25519Base(a), other));
+    CHECK(passwordProof("secret", other.master) != passwordProof("secret", client.master));
+    SessionKeys bad;
+    CHECK(!deriveSession(a, Key{}, x25519Base(a), Key{}, bad));  // a public key of zeros gives no secret
+}
+
 // The network keys of the settings file.
 void testNetSettings() {
     Settings s;
@@ -842,6 +944,7 @@ void testLanBrowser() {
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"codec", testCodec},
+        {"cryptography test vectors", testCrypto},
         {"lobby", testLobby},
         {"round over udp", [] { testRound(true); }},
         {"round over tcp only", [] { testRound(false); }},
