@@ -239,6 +239,9 @@ void playEvents(ab::World& world, ab::Audio& audio) {
                 // 1 in 3: the line for that disease (3000 + 50 per disease); else a general one.
                 audio.playSeries(std::rand() % 3 == 0 ? 3000 + 50 * e.value : 2300);
                 break;
+            case ab::EventKind::DeathTaunt:
+                if (std::rand() % 5 == 0) audio.playSeries(700);  // 1 in value 95
+                break;
             case ab::EventKind::Warped: audio.playSeries(1330); break;
             case ab::EventKind::TrampolineJump: audio.playSeries(350); break;
         }
@@ -483,7 +486,7 @@ int main(int argc, char** argv) {
             if (useSettings && !cfg.save(settingsPath)) std::fprintf(stderr, "WARN  Could not write %s\n", settingsPath.c_str());
         };
         ab::Audio audio;
-        const bool sound = !opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir);
+        const bool sound = !opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir, cfg.smallMemory);
         // Up to four gamepads, opened once at start.
         std::array<SDL_Gamepad*, 4> pads{};
         int padCount = 0;
@@ -627,6 +630,12 @@ int main(int argc, char** argv) {
             world.setValue(ab::vid::kWallsDetonateBombs, cfg.stompedBombsDetonate ? 1 : 0);
             world.setValue(ab::vid::kDiseasesDestroyable, cfg.diseasesDestroyable ? 1 : 0);
             world.setValue(ab::vid::kRoundSeconds, cfg.playTime);
+            // The original flushes its sound cache and picks a new selection of voice lines
+            // every value 7 seconds (value 9 in the normal memory model), between rounds.
+            if (sound && values.get(cfg.smallMemory ? 9 : 7) > 0 && audio.selectionAge() > values.get(cfg.smallMemory ? 9 : 7)) {
+                audio.chooseSounds();
+                std::fprintf(stderr, "INFO  Sound selection renewed\n");
+            }
             world.setWinByKills(cfg.winByKills);
             world.setLevelRules(values.get(450 + level), values.get(340 + level));
             // Scheme powerup rules (original 0x404630): a born-with above zero replaces the

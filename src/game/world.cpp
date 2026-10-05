@@ -907,6 +907,7 @@ void World::updatePlayers(int dt, const std::array<PlayerInput, kMaxPlayers>& in
             while (p.dyingAcc > 0) {
                 ++p.dyingFrames;
                 p.dyingAcc -= frameMs_;
+                if (p.dyingFrames == 25) emit(EventKind::DeathTaunt, i);  // original 0x41F4EB
             }
             // When the death animation has run, everything the player held beyond the
             // starting amounts goes back onto the field as collectable powerups (original

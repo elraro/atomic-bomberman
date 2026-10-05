@@ -1248,6 +1248,11 @@ void testSettings() {
     CHECK(s.scheme == "TESTLAB");
     CHECK_EQ(s.playTime, 60);          // below a minute becomes a minute
     CHECK(!s.diseasesDestroyable && s.disableGameMusic);
+    CHECK(!s.smallMemory);             // "smallmemory=0" in the text above
+    s.parse("smallmemory=1\nmusic_volume=250\nsound_volume=40\n");
+    CHECK(s.smallMemory);
+    CHECK_EQ(s.musicVolume, 100);      // clamped
+    CHECK_EQ(s.soundVolume, 40);
     CHECK_EQ(s.keys[0][4], 0x39);      // defaults: Space is action 1 of the first set
     CHECK_EQ(s.keys[1][0], 0x13);      // R is "up" of the second set
     s.parse("keydef=1,5,16\nkeydef=0,0,17\nkeydef=2,0,30\nkeydef=0,9,30\n");

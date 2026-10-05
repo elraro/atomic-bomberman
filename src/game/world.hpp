@@ -127,6 +127,7 @@ enum class EventKind : std::uint8_t {
     BombString,      // the last bomb of a capacity of value 651 or more was laid
     Warped,
     TrampolineJump,
+    DeathTaunt,      // 25 frames into a death animation (the front end rolls the chance)
 };
 
 struct Event {

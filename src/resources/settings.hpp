@@ -21,6 +21,9 @@ struct Settings {
     int playTime = 150;               // playtime in seconds; kInfiniteTime = no limit
     bool diseasesDestroyable = true;  // diseases_destroyable
     bool disableGameMusic = false;    // disable_game_music
+    bool smallMemory = false;         // smallmemory: the original's "normal" (not enhanced) memory model
+    int musicVolume = 100;            // music_volume, sound_volume: 0-100 (not in the original, whose
+    int soundVolume = 100;            // "Adjust Audio" screen was never made)
     bool assignKeyboards = true;      // assign_keyboards: a keyboard player in the default player list
     // keydef=set,index,code: two keyboard sets of six keys (up, right, down, left,
     // action 1, action 2) as DirectInput key codes, which are PC scan codes. Defaults

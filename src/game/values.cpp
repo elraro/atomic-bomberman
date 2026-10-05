@@ -25,7 +25,10 @@ Values Values::defaults() {
     v.set(42, 923);
     const int start[15] = {1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     for (int i = 0; i < 15; ++i) v.set(50 + i, start[i]);
+    v.set(7, 1800);
+    v.set(9, 100);
     v.set(90, 150);
+    v.set(95, 5);
     v.set(92, 30);
     v.set(91, 150);
     v.set(102, 40);

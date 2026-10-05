@@ -66,4 +66,8 @@ The original's sound call (`0x427961`) takes one id and plays one sound out of t
 | Warp | 1330 | 1330-1332 |
 | Trampoline | 350 | 350-353 |
 
-The original also asks for sound 700 as a "post-death taunt" (1 in value 95, 25 frames into a death animation, `0x41F4EB`), but id 700 is not defined (the taunts start at 701), so by the rule above nothing plays; this implementation plays nothing there either. Confidence: HIGH for the ids and conditions (static); the "not played recently" preference is simplified to "not the previous one".
+A post-death taunt (id 700) is asked for 25 frames into a death animation with 1 chance in value 95 (5) (`0x41F4EB`).
+
+### Selection of sounds per session
+
+After reading `soundlst.res` the original runs `0x427F1B` over each voice series (`0x42858E`): the defined sounds of the id range are moved to the front of the range, then sounds are removed at random until a fixed number is left. So a session hears only a few lines of each kind, and gaps in the numbering (such as the taunts starting at 701, or the missing 451) do not matter. Kept per series, enhanced / normal memory model: explosions 200-299: 3 / 1; pickups 400-499: 7 / 1; taunts 700-999: 7 / 1; bomb strings 1200-1299: 2 / 1; "awesome" 1400-1699: 7 / 1; diseases 2300-2599: 8 / 1; hurry 2700-2799: 5 / 1; each disease's own 3000 + 50k … 3049 + 50k: 4 / 1. The selection is made again when the sound cache is flushed, every value 7 (1800) seconds, or value 9 (100) in the normal memory model. `Audio::chooseSounds` does this. An earlier version of this page said the taunts never play; that was wrong, it overlooked the closing-up step.

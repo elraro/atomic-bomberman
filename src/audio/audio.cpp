@@ -23,14 +23,26 @@ Audio::~Audio() {
     if (device_ != 0) SDL_CloseAudioDevice(device_);
 }
 
-bool Audio::init(const std::string& gameDir) {
-    soundDir_ = gameDir + "/data/sound/";
-    rng_ ^= static_cast<std::uint32_t>(SDL_GetPerformanceCounter());  // a different pick each run
-    std::ifstream in(gameDir + "/data/res/soundlst.res", std::ios::binary);
-    if (!in) {
-        std::fprintf(stderr, "WARN  soundlst.res not found, audio disabled\n");
-        return false;
+// The original, after reading the list (0x42858E): each voice series is closed up
+// (defined sounds moved to the front of its id range) and then thinned at random
+// to a fixed number, so a session uses only a few lines of each kind.
+void Audio::cull(int firstId, int lastId, int keep) {
+    std::vector<std::string> kept;
+    for (auto it = names_.lower_bound(firstId); it != names_.end() && it->first <= lastId;) {
+        kept.push_back(it->second);
+        it = names_.erase(it);
     }
+    while (static_cast<int>(kept.size()) > keep) {
+        rng_ = rng_ * 1664525u + 1013904223u;
+        kept.erase(kept.begin() + static_cast<std::ptrdiff_t>((rng_ >> 16) % kept.size()));
+    }
+    for (std::size_t i = 0; i < kept.size(); ++i) names_[firstId + static_cast<int>(i)] = kept[i];
+}
+
+void Audio::chooseSounds() {
+    names_.clear();
+    lastOfSeries_.clear();
+    std::ifstream in(gameDir_ + "/data/res/soundlst.res", std::ios::binary);
     // Lines of "id,name"; ';' starts a comment.
     std::string line;
     while (std::getline(in, line)) {
@@ -46,6 +58,46 @@ bool Audio::init(const std::string& gameDir) {
         std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) { return std::tolower(ch); });
         if (!name.empty()) names_[static_cast<int>(id)] = name;
     }
+    // Series and how many of each are kept: enhanced memory model / normal (small) model 1.
+    const bool s = smallMemory_;
+    cull(200, 299, s ? 1 : 3);    // explosions
+    cull(400, 499, s ? 1 : 7);    // powerup pickups
+    cull(700, 999, s ? 1 : 7);    // taunts after a death
+    cull(1200, 1299, s ? 1 : 2);  // strings of bombs
+    cull(1400, 1699, s ? 1 : 7);  // "awesome"
+    cull(2300, 2599, s ? 1 : 8);  // diseases in general
+    cull(2700, 2799, s ? 1 : 5);  // hurry
+    for (int d = 0; d < 9; ++d) cull(3000 + 50 * d, 3049 + 50 * d, s ? 1 : 4);  // each disease
+    // The music keeps its data; the effects cache is dropped (the "flush").
+    for (auto it = cache_.begin(); it != cache_.end();)
+        it = &it->second == musicData_ ? std::next(it) : cache_.erase(it);
+    chosenAt_ = SDL_GetTicks();
+}
+
+double Audio::selectionAge() const { return static_cast<double>(SDL_GetTicks() - chosenAt_) / 1000.0; }
+
+std::size_t Audio::cachedBytes() const {
+    std::size_t total = 0;
+    for (const auto& [name, data] : cache_) total += data.size();
+    return total;
+}
+
+void Audio::setVolumes(int music, int effects) {
+    musicGain_ = 0.5f * static_cast<float>(std::clamp(music, 0, 100)) / 100.0f;
+    effectsGain_ = static_cast<float>(std::clamp(effects, 0, 100)) / 100.0f;
+    if (music_ != nullptr) SDL_SetAudioStreamGain(music_, musicGain_);
+}
+
+bool Audio::init(const std::string& gameDir, bool smallMemory) {
+    gameDir_ = gameDir;
+    smallMemory_ = smallMemory;
+    soundDir_ = gameDir + "/data/sound/";
+    rng_ ^= static_cast<std::uint32_t>(SDL_GetPerformanceCounter());  // a different pick each run
+    if (!std::ifstream(gameDir + "/data/res/soundlst.res", std::ios::binary)) {
+        std::fprintf(stderr, "WARN  soundlst.res not found, audio disabled\n");
+        return false;
+    }
+    chooseSounds();
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "WARN  SDL audio init failed (%s), audio disabled\n", SDL_GetError());
         return false;
@@ -62,7 +114,11 @@ bool Audio::init(const std::string& gameDir) {
 
 const std::vector<std::uint8_t>* Audio::load(const std::string& name) {
     auto it = cache_.find(name);
-    if (it != cache_.end()) return &it->second;
+    ++loads_;
+    if (it != cache_.end()) {
+        ++hits_;
+        return &it->second;
+    }
     // An imported asset folder holds .wav files; an original game folder holds raw .rss.
     std::ifstream in(soundDir_ + name + ".wav", std::ios::binary);
     const bool wav = static_cast<bool>(in);
@@ -128,6 +184,7 @@ void Audio::playRange(int firstId, int lastId) {
         if (stream != nullptr) SDL_DestroyAudioStream(stream);
         return;
     }
+    SDL_SetAudioStreamGain(stream, effectsGain_);
     SDL_PutAudioStreamData(stream, data->data(), static_cast<int>(data->size()));
     SDL_FlushAudioStream(stream);
     voices_.push_back(stream);
@@ -147,7 +204,7 @@ void Audio::playMusic(int id) {
         musicData_ = nullptr;
         return;
     }
-    SDL_SetAudioStreamGain(music_, 0.5f);  // keep effects audible over the tune
+    SDL_SetAudioStreamGain(music_, musicGain_);  // at full volume still half gain: effects stay audible
     musicData_ = data;
     SDL_PutAudioStreamData(music_, data->data(), static_cast<int>(data->size()));
     std::fprintf(stderr, "INFO  Music started name=%s\n", it->second.c_str());
