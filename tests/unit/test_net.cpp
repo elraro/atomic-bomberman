@@ -226,10 +226,19 @@ struct Harness {
         return server.start(config);
     }
     Client& join(const std::string& name, const std::string& password = "", bool udp = true) {
+        // The tests count on seats and the administrator role going in the order of the
+        // joins. Two connections opened in the same instant may reach the server in either
+        // order (seen on macOS), so the ones before are let in first.
+        for (int waited = 0; waited < 1000 && connecting(); waited += 5) turn();
         clients.push_back(std::make_unique<Client>());
         if (!udp) clients.back()->disableUdp();
         clients.back()->connect("127.0.0.1:" + std::to_string(server.port()), name, password, now);
         return *clients.back();
+    }
+    bool connecting() const {
+        for (const auto& c : clients)
+            if (c->state() == Client::State::Connecting) return true;
+        return false;
     }
     void turn() {
         server.update(now);
