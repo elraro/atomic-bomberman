@@ -634,3 +634,11 @@ Decompiled again after play-test reports: `0x406AA3` (sample arena) and `0x41302
 - Help viewer: a picture is centred on its text line and **clipped** to the text area: rows above y 34 or below 34 + 344 are not copied, columns beyond the 532 px text width neither. The modern viewer had left a picture out altogether unless it fitted whole, so photos vanished and reappeared while scrolling.
 
 Confidence: HIGH (read directly).
+
+### Modern: original data on Android from a folder (2026-10-05)
+
+Not a discovery about the original; a record of what was built and seen.
+
+- The importer (`src/resources/asset_import.*`) lists its work first, reports progress per file, can be stopped, and counts files it could not write. `importForRelease` converts beside the target and swaps on success; the converted folder carries the release in `converted-by.txt`.
+- The app (`src/app/import_screen.*`) looks into `<external files>/original` on Android (`--import-folder DIR` elsewhere) on every start: first-start note with the path, conversion with a progress bar when a copy is there and the converted files are missing or from another release.
+- Validation: unit tests on a made-up original (Level 4 for the importer's rules); the screens seen on the desktop and on the Android emulator (API 34) with the real data: 260 data files, 971 sounds, 297 MB, then the original intro and menu. Not run on a real device.

@@ -78,7 +78,7 @@ Full instructions, folder locations and troubleshooting: **[INSTALL.md](INSTALL.
 
 ## 📱 Android
 
-There is an Android build (an APK among the downloads): the same game with on-screen controls, playing with the free asset set. It is new and has only been run on an emulator so far. How it works, how to build it and what it cannot do yet: [`android/README.md`](android/README.md).
+There is an Android build (an APK among the downloads): the same game with on-screen controls. It plays with the free asset set, or with the original game's data if you copy your copy of the game into the folder the app names on its first start (it converts it by itself, and again with each new release). It is new and was built and checked on an emulator. How it works, how to build it and what it cannot do yet: [`android/README.md`](android/README.md).
 
 ## 🛠️ Build from source
 
