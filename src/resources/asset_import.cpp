@@ -58,20 +58,6 @@ bool copyFile(const fs::path& from, const fs::path& to, ImportReport& report) {
     return true;
 }
 
-// Copies every file of `dir` with one of the extensions, lower-casing the names.
-void copyByExtension(const fs::path& dir, const fs::path& to, std::initializer_list<const char*> extensions,
-                     ImportReport& report) {
-    if (dir.empty()) return;
-    std::error_code ec;
-    for (const auto& e : fs::directory_iterator(dir, ec)) {
-        if (!e.is_regular_file(ec)) continue;
-        const std::string ext = lower(e.path().extension().string());
-        if (std::find_if(extensions.begin(), extensions.end(), [&](const char* x) { return ext == x; }) == extensions.end())
-            continue;
-        copyFile(e.path(), to / lower(e.path().filename().string()), report);
-    }
-}
-
 void put32(std::vector<char>& v, std::uint32_t x) {
     for (int k = 0; k < 4; ++k) v.push_back(static_cast<char>((x >> (8 * k)) & 0xFF));
 }
@@ -105,6 +91,8 @@ bool convertRssToWav(const fs::path& from, const fs::path& to, ImportReport& rep
     if (!out) return false;
     out.write(h.data(), static_cast<std::streamsize>(h.size()));
     out.write(pcm.data(), static_cast<std::streamsize>(pcm.size()));
+    out.flush();
+    if (!out) return false;
     ++report.sounds;
     report.bytes += static_cast<long long>(h.size() + pcm.size());
     return static_cast<bool>(out);
@@ -112,7 +100,23 @@ bool convertRssToWav(const fs::path& from, const fs::path& to, ImportReport& rep
 
 }  // namespace
 
-ImportReport importAssets(const std::string& source, const std::string& destination, bool allSounds) {
+bool looksLikeOriginalGame(const std::string& folder) {
+    const fs::path src(folder);
+    const fs::path res = findPath(src, {"data", "res"});
+    return !findEntry(src, "color.pal").empty() && !res.empty() && !findEntry(res, "valuelst.res").empty();
+}
+
+std::string findOriginalGame(const std::string& folder) {
+    if (folder.empty()) return {};
+    if (looksLikeOriginalGame(folder)) return folder;
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator(folder, ec))
+        if (e.is_directory(ec) && looksLikeOriginalGame(e.path().string())) return e.path().string();
+    return {};
+}
+
+ImportReport importAssets(const std::string& source, const std::string& destination, bool allSounds,
+                          const std::function<bool(const ImportProgress&)>& progress) {
     ImportReport report;
     const fs::path src(source);
     const fs::path dst(destination);
@@ -129,13 +133,89 @@ ImportReport importAssets(const std::string& source, const std::string& destinat
         return report;
     }
 
-    copyByExtension(src, dst, {".pal", ".rmp", ".fon", ".bm"}, report);  // .bm: help pages
-    copyByExtension(res, dst / "data" / "res", {".pcx", ".res", ".cam"}, report);  // .cam: campaigns
-    copyByExtension(findPath(src, {"data", "schemes"}), dst / "data" / "schemes", {".sch"}, report);
-    copyByExtension(findPath(src, {"data", "ani"}), dst / "data" / "ani", {".ani", ".ali"}, report);
+    // First the list of everything there is to do, so that progress can be told; then the work.
+    struct Copy {
+        fs::path from, to;
+    };
+    std::vector<Copy> copies;
+    auto collect = [&](const fs::path& dir, const fs::path& to, std::initializer_list<const char*> extensions) {
+        if (dir.empty()) return;
+        std::error_code scan;
+        for (const auto& e : fs::directory_iterator(dir, scan)) {
+            if (!e.is_regular_file(scan)) continue;
+            const std::string ext = lower(e.path().extension().string());
+            if (std::find_if(extensions.begin(), extensions.end(), [&](const char* x) { return ext == x; }) == extensions.end()) continue;
+            copies.push_back({e.path(), to / lower(e.path().filename().string())});
+        }
+    };
+    collect(src, dst, {".pal", ".rmp", ".fon", ".bm"});                       // .bm: help pages
+    collect(res, dst / "data" / "res", {".pcx", ".res", ".cam"});             // .cam: campaigns
+    collect(findPath(src, {"data", "schemes"}), dst / "data" / "schemes", {".sch"});
+    collect(findPath(src, {"data", "ani"}), dst / "data" / "ani", {".ani", ".ali"});
+
+    // Sounds named in soundlst.res ("id,name" lines; ';' starts a comment), and with
+    // `allSounds` the other sound files of the folder too.
+    struct Sound {
+        std::string name;
+        fs::path rss;   // empty: listed but not on the disc
+        bool extra;
+    };
+    std::vector<Sound> sounds;
+    const fs::path soundDir = findPath(src, {"data", "sound"});
+    std::vector<std::string> done;
+    {
+        // One look at the folder instead of one per sound (a slow memory card makes the difference).
+        std::vector<std::pair<std::string, fs::path>> onDisc;
+        std::error_code scan;
+        if (!soundDir.empty())
+            for (const auto& e : fs::directory_iterator(soundDir, scan))
+                if (e.is_regular_file(scan) && lower(e.path().extension().string()) == ".rss") onDisc.emplace_back(lower(e.path().stem().string()), e.path());
+        std::sort(onDisc.begin(), onDisc.end());
+        auto find = [&](const std::string& name) -> fs::path {
+            const auto it = std::lower_bound(onDisc.begin(), onDisc.end(), std::make_pair(name, fs::path()));
+            return it != onDisc.end() && it->first == name ? it->second : fs::path();
+        };
+        std::ifstream list(findEntry(res, "soundlst.res"), std::ios::binary);
+        std::string line;
+        while (!soundDir.empty() && std::getline(list, line)) {
+            if (auto semi = line.find(';'); semi != std::string::npos) line.erase(semi);
+            const auto comma = line.find(',');
+            if (comma == std::string::npos) continue;
+            std::string name = line.substr(comma + 1);
+            name.erase(std::remove_if(name.begin(), name.end(), [](unsigned char c) { return std::isspace(c) != 0; }), name.end());
+            name = lower(name);
+            if (name.empty() || std::find(done.begin(), done.end(), name) != done.end()) continue;
+            done.push_back(name);
+            sounds.push_back({name, find(name), false});
+        }
+        if (allSounds)
+            for (const auto& [name, path] : onDisc)
+                if (std::find(done.begin(), done.end(), name) == done.end()) sounds.push_back({name, path, true});
+    }
+
+    ImportProgress state;
+    state.total = static_cast<int>(copies.size() + sounds.size()) + 1;
+    // False: the caller wants the work stopped.
+    auto tell = [&](const std::string& item, bool isSound) {
+        state.item = item;
+        state.sounds = isSound;
+        if (progress && !progress(state)) {
+            report.cancelled = true;
+            report.error = "stopped before the end";
+            return false;
+        }
+        ++state.done;
+        return true;
+    };
+
+    for (const Copy& c : copies) {
+        if (!tell(c.to.filename().string(), false)) return report;
+        if (!copyFile(c.from, c.to, report)) ++report.failed;
+    }
 
     // The intro movie sits at the end of the original's small player program; only the
     // movie is taken, not the program.
+    if (!tell("intro.mve", false)) return report;
     if (const fs::path player = findEntry(findEntry(src, "intro"), "bmintro.exe"); !player.empty()) {
         MveDecoder movie;
         if (movie.open(player.string())) {
@@ -143,6 +223,8 @@ ImportReport importAssets(const std::string& source, const std::string& destinat
             std::ofstream out(dst / "intro.mve", std::ios::binary);
             out.write(reinterpret_cast<const char*>(all.data() + movie.movieOffset()),
                       static_cast<std::streamsize>(all.size() - movie.movieOffset()));
+            out.flush();
+            if (!out) ++report.failed;
             if (out) {
                 ++report.dataFiles;
                 report.bytes += static_cast<long long>(all.size() - movie.movieOffset());
@@ -150,39 +232,24 @@ ImportReport importAssets(const std::string& source, const std::string& destinat
         }
     }
 
-    // Sounds named in soundlst.res ("id,name" lines; ';' starts a comment).
-    const fs::path soundDir = findPath(src, {"data", "sound"});
-    std::ifstream list(findEntry(res, "soundlst.res"), std::ios::binary);
-    std::string line;
-    std::vector<std::string> done;
-    while (!soundDir.empty() && std::getline(list, line)) {
-        if (auto semi = line.find(';'); semi != std::string::npos) line.erase(semi);
-        const auto comma = line.find(',');
-        if (comma == std::string::npos) continue;
-        std::string name = line.substr(comma + 1);
-        name.erase(std::remove_if(name.begin(), name.end(), [](unsigned char c) { return std::isspace(c) != 0; }), name.end());
-        name = lower(name);
-        if (name.empty() || std::find(done.begin(), done.end(), name) != done.end()) continue;
-        done.push_back(name);
-        const fs::path rss = findEntry(soundDir, name + ".rss");
-        if (rss.empty() || !convertRssToWav(rss, dst / "data" / "sound" / (name + ".wav"), report)) {
+    for (const Sound& snd : sounds) {
+        if (!tell(snd.name + ".wav", true)) return report;
+        const int before = report.sounds;
+        const bool ok = !snd.rss.empty() && convertRssToWav(snd.rss, dst / "data" / "sound" / (snd.name + ".wav"), report);
+        if (snd.extra) {
+            report.sounds = before;  // counted apart
+            report.extraSounds += ok ? 1 : 0;
+        } else if (snd.rss.empty()) {
             ++report.missingSounds;
-            report.missing.push_back(name);
+            report.missing.push_back(snd.name);
         }
+        if (!ok && !snd.rss.empty()) ++report.failed;
     }
-
-    if (allSounds && !soundDir.empty()) {
-        std::error_code scan;
-        for (const auto& e : fs::directory_iterator(soundDir, scan)) {
-            if (!e.is_regular_file(scan) || lower(e.path().extension().string()) != ".rss") continue;
-            const std::string name = lower(e.path().stem().string());
-            if (std::find(done.begin(), done.end(), name) != done.end()) continue;
-            const int before = report.sounds;
-            if (convertRssToWav(e.path(), dst / "data" / "sound" / (name + ".wav"), report)) {
-                report.sounds = before;  // counted apart
-                ++report.extraSounds;
-            }
-        }
+    state.item.clear();
+    if (progress) progress(state);
+    if (report.failed > 0) {
+        report.error = std::to_string(report.failed) + " files could not be written (is the storage full?)";
+        return report;
     }
 
     std::ofstream note(dst / "ABOUT-THESE-FILES.txt");
@@ -191,6 +258,52 @@ ImportReport importAssets(const std::string& source, const std::string& destinat
             "modern reimplementation's --import-assets command.\n"
             "They are copyrighted material of their owners. Do not redistribute them.\n";
     report.ok = true;
+    return report;
+}
+
+namespace {
+const char* const kStampFile = "converted-by.txt";
+}
+
+std::string importStamp(const std::string& converted) {
+    std::ifstream in(fs::path(converted) / kStampFile);
+    std::string release;
+    std::getline(in, release);
+    while (!release.empty() && std::isspace(static_cast<unsigned char>(release.back())) != 0) release.pop_back();
+    return release;
+}
+
+bool importIsDue(const std::string& converted, const std::string& release) {
+    return importStamp(converted) != release;
+}
+
+ImportReport importForRelease(const std::string& source, const std::string& converted, const std::string& release,
+                              const std::function<bool(const ImportProgress&)>& progress) {
+    const fs::path target(converted);
+    fs::path work = target;
+    work += ".new";
+    std::error_code ec;
+    fs::remove_all(work, ec);  // what an interrupted conversion left behind
+    ImportReport report = importAssets(source, work.string(), false, progress);
+    if (report.ok) {
+        std::ofstream stamp(work / kStampFile);
+        stamp << release << "\n";
+        stamp.flush();
+        if (!stamp) {
+            report.ok = false;
+            report.error = "cannot write into " + work.string();
+        }
+    }
+    if (report.ok) {
+        fs::remove_all(target, ec);
+        ec.clear();
+        fs::rename(work, target, ec);
+        if (ec) {
+            report.ok = false;
+            report.error = "cannot put the converted files in place: " + ec.message();
+        }
+    }
+    if (!report.ok) fs::remove_all(work, ec);
     return report;
 }
 

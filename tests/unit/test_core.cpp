@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <functional>
 #include <string>
 #include <vector>
@@ -22,6 +23,7 @@
 #include "resources/settings.hpp"
 #include "rendering/glyphs.hpp"
 #include "resources/ani_file.hpp"
+#include "resources/asset_import.hpp"
 #include "resources/scheme_file.hpp"
 
 using namespace ab;
@@ -2293,9 +2295,94 @@ void testTypedText() {
 
 }  // namespace
 
+// The importer on a made-up "original": names in capitals as on the CD, a sound that the
+// list names but the disc lacks, and the release-stamped conversion used by the Android app.
+void testAssetImport() {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "ab-import-test";
+    fs::remove_all(root);
+    const fs::path cd = root / "drop" / "ATOMIC";
+    fs::create_directories(cd / "DATA" / "RES");
+    fs::create_directories(cd / "DATA" / "SOUND");
+    fs::create_directories(cd / "DATA" / "SCHEMES");
+    auto put = [](const fs::path& path, const std::string& bytes) { std::ofstream(path, std::ios::binary) << bytes; };
+    put(cd / "COLOR.PAL", "palette");
+    put(cd / "BM95.EXE", "not taken");
+    put(cd / "DATA" / "RES" / "VALUELST.RES", "1,2\n");
+    put(cd / "DATA" / "RES" / "SOUNDLST.RES", "; comment\n100,BOOM\n101,gone\n102,boom ; twice\n");
+    put(cd / "DATA" / "SOUND" / "BOOM.RSS", std::string(400, '\x01'));
+    put(cd / "DATA" / "SOUND" / "OTHER.RSS", std::string(40, '\x02'));
+    put(cd / "DATA" / "SCHEMES" / "BASIC.SCH", "-V,2\n");
+
+    CHECK(!looksLikeOriginalGame((root / "drop").string()));
+    CHECK(looksLikeOriginalGame(cd.string()));
+    CHECK(findOriginalGame((root / "drop").string()) == cd.string());  // one folder below
+    CHECK(findOriginalGame(cd.string()) == cd.string());
+    CHECK(findOriginalGame((root / "nothing").string()).empty());
+    CHECK(findOriginalGame("").empty());
+
+    // Progress: told before each file, counting up to the total, data files before sounds.
+    const std::string out = (root / "out").string();
+    std::vector<ImportProgress> seen;
+    ImportReport r = importAssets(cd.string(), out, false, [&](const ImportProgress& p) {
+        seen.push_back(p);
+        return true;
+    });
+    CHECK(r.ok && !r.cancelled && r.failed == 0);
+    CHECK_EQ(r.dataFiles, 4);  // palette, value list, sound list, scheme (no intro movie in this one)
+    CHECK_EQ(r.sounds, 1);
+    CHECK_EQ(r.missingSounds, 1);
+    CHECK(r.missing == std::vector<std::string>{"gone"});
+    CHECK(fs::exists(out + "/color.pal") && fs::exists(out + "/data/res/valuelst.res") && fs::exists(out + "/data/schemes/basic.sch"));
+    CHECK(!fs::exists(out + "/bm95.exe"));
+    CHECK_EQ(fs::file_size(out + "/data/sound/boom.wav"), 444u);  // the samples behind a 44-byte header
+    CHECK(!fs::exists(out + "/data/sound/other.wav"));
+    CHECK_EQ(seen.size(), 8u);  // 4 files, the movie, 2 sounds, and the end
+    for (std::size_t i = 0; i < seen.size(); ++i) {
+        CHECK_EQ(seen[i].total, 7);
+        CHECK_EQ(seen[i].done, static_cast<int>(i));
+        if (i > 0) CHECK(seen[i].sounds || !seen[i - 1].sounds);
+    }
+    CHECK(seen[5].sounds && seen[5].item == "boom.wav" && !seen[4].sounds);
+    r = importAssets(cd.string(), (root / "all").string(), true);
+    CHECK(r.ok && r.sounds == 1 && r.extraSounds == 1);
+    r = importAssets((root / "drop").string(), (root / "bad").string());
+    CHECK(!r.ok && !r.error.empty());
+
+    // Stopped half way: said so, and not passed off as done.
+    int calls = 0;
+    r = importAssets(cd.string(), (root / "stopped").string(), false, [&](const ImportProgress&) { return ++calls < 3; });
+    CHECK(!r.ok && r.cancelled);
+    CHECK_EQ(calls, 3);
+
+    // For a release: due until made, not again for the same release, again for the next one.
+    const std::string conv = (root / "converted").string();
+    CHECK(importStamp(conv).empty());
+    CHECK(importIsDue(conv, "1.0"));
+    r = importForRelease(cd.string(), conv, "1.0");
+    CHECK(r.ok);
+    CHECK(importStamp(conv) == "1.0");
+    CHECK(!importIsDue(conv, "1.0"));
+    CHECK(importIsDue(conv, "1.1"));
+    CHECK(fs::exists(conv + "/data/sound/boom.wav"));
+    CHECK(!fs::exists(conv + ".new"));
+    // A conversion that is stopped leaves the earlier one as it was...
+    put(fs::path(conv) / "kept.txt", "from before");
+    r = importForRelease(cd.string(), conv, "1.1", [](const ImportProgress& p) { return p.done < 2; });
+    CHECK(!r.ok && r.cancelled);
+    CHECK(importStamp(conv) == "1.0" && fs::exists(conv + "/kept.txt") && !fs::exists(conv + ".new"));
+    // ...and one that goes through replaces it whole.
+    r = importForRelease(cd.string(), conv, "1.1");
+    CHECK(r.ok && importStamp(conv) == "1.1" && !fs::exists(conv + "/kept.txt") && !fs::exists(conv + ".new"));
+    // A folder made by --import-assets carries no stamp: the folder flow makes its own.
+    CHECK(importStamp(out).empty());
+    fs::remove_all(root);
+}
+
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"geometry", testGeometry},
+        {"asset import", testAssetImport},
         {"values parser", testValuesParser},
         {"scheme file", testSchemeFile},
         {"ani parser", testAniParser},
