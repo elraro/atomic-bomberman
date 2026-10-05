@@ -2,6 +2,7 @@
 // docs/specifications/ (ids in comments refer to docs/testing/original-behaviour.md).
 // Expected values are predictions from static analysis of the original.
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -1955,6 +1956,33 @@ void testFreeAssets() {
     }
     CHECK_EQ(unknown, 0);
     CHECK_EQ(silent, 0);
+    // The voice lines exist for each kind of moment, and the vowels are where they should be:
+    // "see you" (ee, oo) has far less sound around 1100 Hz, where "ah" and "aw" resonate,
+    // than "draw" has, relative to the band around 2300 Hz where "ee" resonates.
+    for (int id : {700, 701, 702, 703, 704, 1200, 1401, 1402, 1700, 1701, 2000, 2001, 2002, 2301, 2302, 2601, 2602}) {
+        bool found = false;
+        for (const auto& [have, name] : sounds.ids) found = found || have == id;
+        CHECK(found);
+    }
+    auto band = [](const std::vector<std::int16_t>& samples, double hz) {
+        // Energy at one frequency (Goertzel), summed over a few neighbours.
+        double total = 0;
+        for (double f = hz - 150; f <= hz + 150; f += 50) {
+            const double k = 2.0 * std::cos(2.0 * 3.14159265358979 * f / 22050.0);
+            double a = 0, b = 0;
+            for (std::int16_t v : samples) {
+                const double c = v + k * a - b;
+                b = a;
+                a = c;
+            }
+            total += a * a + b * b - k * a * b;
+        }
+        return total;
+    };
+    const auto& draw = sounds.samples.at("say_draw");
+    const auto& seeYou = sounds.samples.at("say_seeyou");
+    CHECK(band(draw, 800) / band(draw, 2300) > 10.0 * band(seeYou, 800) / band(seeYou, 2300));
+    CHECK(sounds.samples.at("say_winner").size() > 22050 / 4 && sounds.samples.at("say_winner").size() < 22050 * 2);
 
     // On disk: a folder the game and the server can use as their game data.
     const std::string dir = (std::filesystem::temp_directory_path() / "ab-free-assets-test").string();

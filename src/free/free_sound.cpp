@@ -94,6 +94,153 @@ Wave tune(std::uint32_t seed, float bpm, int root, bool minor, bool drums) {
     return out;
 }
 
+// --- a robot voice -----------------------------------------------------------
+// Speech from first principles: a buzzing source (the vocal cords) or noise (breath)
+// passed through three resonances whose frequencies, the "formants", make the vowel.
+// Consonants are noise bands, short bursts after a silence, or weaker resonances.
+// The formant values are the textbook averages for a man's voice.
+struct Phone {
+    const char* name;
+    float f1, f2, f3;   // formants, Hz (0: take those of the next sound)
+    float voice;        // buzz level
+    float breath;       // noise through the formants (h)
+    float hiss;         // noise beside the formants (s, sh, f)
+    float hissHz;
+    float ms;
+    bool stop;          // a silence, then a burst of the hiss
+};
+
+const Phone kPhones[] = {
+    {"IY", 270, 2290, 3010, 1, 0, 0, 0, 150, false}, {"IH", 390, 1990, 2550, 1, 0, 0, 0, 110, false},
+    {"EH", 530, 1840, 2480, 1, 0, 0, 0, 130, false}, {"AE", 660, 1720, 2410, 1, 0, 0, 0, 150, false},
+    {"AA", 730, 1090, 2440, 1, 0, 0, 0, 160, false}, {"AO", 570, 840, 2410, 1, 0, 0, 0, 160, false},
+    {"OH", 500, 900, 2400, 1, 0, 0, 0, 140, false},  {"UH", 440, 1020, 2240, 1, 0, 0, 0, 110, false},
+    {"UW", 300, 870, 2240, 1, 0, 0, 0, 150, false},  {"AH", 640, 1190, 2390, 1, 0, 0, 0, 120, false},
+    {"ER", 490, 1350, 1690, 1, 0, 0, 0, 140, false},
+    {"W", 290, 610, 2150, 0.7f, 0, 0, 0, 70, false}, {"Y", 260, 2070, 3020, 0.7f, 0, 0, 0, 70, false},
+    {"R", 310, 1060, 1380, 0.7f, 0, 0, 0, 80, false}, {"L", 310, 1050, 2880, 0.7f, 0, 0, 0, 80, false},
+    {"M", 250, 1100, 2200, 0.4f, 0, 0, 0, 90, false}, {"N", 250, 1700, 2600, 0.4f, 0, 0, 0, 90, false},
+    {"H", 0, 0, 0, 0, 0.9f, 0, 0, 80, false},
+    {"S", 0, 0, 0, 0, 0, 0.55f, 5500, 120, false},   {"SH", 0, 0, 0, 0, 0, 0.6f, 2800, 120, false},
+    {"F", 0, 0, 0, 0, 0, 0.25f, 3800, 100, false},   {"Z", 0, 0, 0, 0.4f, 0, 0.4f, 5500, 100, false},
+    {"P", 0, 0, 0, 0, 0, 0.6f, 700, 70, true},       {"T", 0, 0, 0, 0, 0, 0.6f, 4500, 70, true},
+    {"K", 0, 0, 0, 0, 0, 0.6f, 2000, 70, true},      {"B", 0, 0, 0, 0.15f, 0, 0.35f, 600, 60, true},
+    {"D", 0, 0, 0, 0.15f, 0, 0.35f, 3500, 60, true}, {"G", 0, 0, 0, 0.15f, 0, 0.35f, 1800, 60, true},
+    {"_", 0, 0, 0, 0, 0, 0, 0, 90, false},
+};
+
+// One resonance (a two-pole filter) whose frequency may change from sample to sample.
+struct Resonator {
+    float y1 = 0, y2 = 0;
+    float run(float x, float hz, float bandwidth) {
+        const float c = -std::exp(-kTwoPi * bandwidth / kRate);
+        const float b = 2.0f * std::exp(-kTwoPi / 2.0f * bandwidth / kRate) * std::cos(kTwoPi * hz / kRate);
+        const float y = (1.0f - b - c) * x + b * y1 + c * y2;
+        y2 = y1;
+        y1 = y;
+        return y;
+    }
+};
+
+// Speaks a line written as sounds separated by spaces, e.g. "H ER R IY" (hurry). Two-part
+// vowels: AY (as in bye), AW (ow), OW (oh), EY (hey). The pitch glides from f0 to f1.
+Wave speak(const std::string& line, float f0, float f1, float speed = 1.0f) {
+    struct Segment {
+        Phone phone;
+        float seconds;
+    };
+    std::vector<Segment> segments;
+    auto push = [&](const std::string& name, float scale) {
+        for (const Phone& ph : kPhones)
+            if (name == ph.name) segments.push_back({ph, ph.ms / 1000.0f * scale / speed});
+    };
+    std::string word;
+    for (const char ch : line + " ") {
+        if (ch != ' ') {
+            word += ch;
+            continue;
+        }
+        if (word == "AY") push("AA", 0.8f), push("IY", 0.6f);
+        else if (word == "AW") push("AA", 0.8f), push("UW", 0.6f);
+        else if (word == "OW") push("OH", 0.9f), push("UW", 0.45f);
+        else if (word == "EY") push("EH", 0.8f), push("IY", 0.55f);
+        else if (!word.empty()) push(word, 1.0f);
+        word.clear();
+    }
+    // Sounds without formants of their own borrow the next sound's (the mouth is already shaped for it).
+    for (std::size_t i = segments.size(); i-- > 0;)
+        if (segments[i].phone.f1 == 0) {
+            const Phone* from = i + 1 < segments.size() ? &segments[i + 1].phone : nullptr;
+            segments[i].phone.f1 = from != nullptr && from->f1 > 0 ? from->f1 : 500;
+            segments[i].phone.f2 = from != nullptr && from->f1 > 0 ? from->f2 : 1500;
+            segments[i].phone.f3 = from != nullptr && from->f1 > 0 ? from->f3 : 2500;
+        }
+    float total = 0.03f;
+    for (const Segment& seg : segments) total += seg.seconds;
+    Wave out(static_cast<std::size_t>(total * kRate), 0.0f);
+    Resonator r1, r2, r3, hissBand;
+    Random rnd{static_cast<std::uint32_t>(line.size()) * 2654435761u + 99u};
+    float phase = 0.0f;
+    std::size_t at = 0;
+    Phone previous = segments.empty() ? kPhones[0] : segments[0].phone;
+    previous.voice = previous.breath = previous.hiss = 0;
+    for (const Segment& seg : segments) {
+        const Phone& ph = seg.phone;
+        const auto count = static_cast<std::size_t>(seg.seconds * kRate);
+        const float glide = std::min(0.045f, seg.seconds * 0.5f);  // time to move from the last sound to this one
+        for (std::size_t i = 0; i < count && at < out.size(); ++i, ++at) {
+            const float t = static_cast<float>(i) / kRate;
+            float k = std::min(1.0f, t / glide);
+            k = k * k * (3.0f - 2.0f * k);
+            const float whole = static_cast<float>(at) / static_cast<float>(out.size());
+            const float hz = (f0 + (f1 - f0) * whole) * (1.0f + 0.012f * std::sin(kTwoPi * 5.5f * static_cast<float>(at) / kRate));
+            phase += hz / kRate;
+            phase -= std::floor(phase);
+            const float noise = rnd.next() * 2.0f - 1.0f;
+            float voice = previous.voice + (ph.voice - previous.voice) * k;
+            float breath = previous.breath + (ph.breath - previous.breath) * k;
+            float hiss = previous.hiss + (ph.hiss - previous.hiss) * k;
+            if (ph.stop) {
+                // Closed for most of its time, then the burst.
+                const bool burst = seg.seconds - t < 0.014f;
+                voice = burst ? 0.0f : ph.voice;
+                breath = 0.0f;
+                hiss = burst ? ph.hiss : 0.0f;
+            }
+            const float source = voice * (2.0f * phase - 1.0f) + breath * noise * 0.35f;
+            const float a = r1.run(source, previous.f1 + (ph.f1 - previous.f1) * k, 70.0f);
+            const float b = r2.run(a, previous.f2 + (ph.f2 - previous.f2) * k, 100.0f);
+            const float c = r3.run(b, previous.f3 + (ph.f3 - previous.f3) * k, 160.0f);
+            const float side = hissBand.run(noise, ph.hissHz > 0 ? ph.hissHz : 4000.0f, 1800.0f) * hiss;
+            out[at] = c + side * 0.5f;
+        }
+        previous = ph;
+        if (ph.stop) previous.voice = previous.hiss = 0;
+    }
+    // Soft start and end.
+    const auto edge = static_cast<std::size_t>(0.012f * kRate);
+    for (std::size_t i = 0; i < edge && i < out.size(); ++i) {
+        const float k = static_cast<float>(i) / static_cast<float>(edge);
+        out[i] *= k;
+        out[out.size() - 1 - i] *= k;
+    }
+    return out;
+}
+
+Wave joined(const Wave& a, const Wave& b, float gap) {
+    Wave out = a;
+    out.resize(out.size() + static_cast<std::size_t>(gap * kRate), 0.0f);
+    out.insert(out.end(), b.begin(), b.end());
+    return out;
+}
+
+Wave level(Wave w, float peakTo) {
+    float peak = 0.0001f;
+    for (float v : w) peak = std::max(peak, std::abs(v));
+    for (float& v : w) v *= peakTo / peak;
+    return w;
+}
+
 std::vector<std::int16_t> finish(const Wave& w, float gain = 1.0f) {
     float peak = 0.0001f;
     for (float v : w) peak = std::max(peak, std::abs(v));
@@ -172,7 +319,8 @@ FreeSounds makeFreeSounds() {
     add("warp", {1330}, w, 0.6f);
     w.clear();
     for (int n = 0; n < 6; ++n) note(w, 0.16f * static_cast<float>(n), 0.11f, n % 2 == 0 ? 880.0f : 660.0f, n % 2 == 0 ? 880.0f : 660.0f, Shape::Square, 0.3f, 0.003f, 0.4f);
-    add("hurry", {2700}, w, 0.6f);
+    // The alarm, then "Hurry up!", in one sound so the warning always has both.
+    add("hurry", {2700}, joined(level(w, 0.6f), level(speak("H ER R IY _ AH P", 150, 175, 1.1f), 0.9f), 0.05f), 0.8f);
     // The bonus wheel.
     w.clear(), note(w, 0, 0.03f, 1500, 1500, Shape::Square, 0.3f, 0.001f, 2.0f);
     add("tick", {1300}, w, 0.5f);
@@ -185,6 +333,23 @@ FreeSounds makeFreeSounds() {
     w.clear();
     for (int n = 0; n < 4; ++n) note(w, 0.22f * static_cast<float>(n), n == 3 ? 0.8f : 0.2f, pitch(76 - n * 3 - (n == 3 ? 3 : 0)), pitch(76 - n * 3 - (n == 3 ? 3 : 0)), Shape::Triangle, 0.5f, 0.006f, 1.0f);
     add("goodbye", {2600}, w, 0.7f);
+    // Voices: short lines in a robot voice, one series per kind of moment.
+    add("say_haha", {700}, speak("H AE _ H AE _ H AE", 150, 110, 1.3f), 0.8f);
+    add("say_ohno", {701}, speak("OW _ N OW", 140, 90), 0.8f);
+    add("say_byebye", {702, 2601}, speak("B AY _ B AY", 150, 100), 0.8f);
+    add("say_ow", {703}, speak("AA AA UW", 170, 90, 0.8f), 0.8f);
+    add("say_yeah", {704}, speak("Y EH AE AE", 120, 150), 0.8f);
+    add("say_whoa", {1200}, speak("W OH OH UW", 110, 140, 0.8f), 0.8f);
+    add("say_wow", {1401}, speak("W AA AA UW", 120, 170, 0.8f), 0.8f);
+    add("say_awesome", {1402}, speak("AO S AH M", 150, 110), 0.8f);
+    add("say_draw", {1700}, speak("D R AO AO", 120, 90, 0.9f), 0.8f);
+    add("say_nowinner", {1701}, speak("N OW _ W IH N ER", 130, 95), 0.8f);
+    add("say_winner", {2000}, speak("W IH N ER", 130, 160), 0.8f);
+    add("say_youwin", {2001}, speak("Y UW _ W IH N", 120, 160), 0.8f);
+    add("say_hooray", {2002}, speak("H UH R EY EY", 120, 180, 0.9f), 0.8f);
+    add("say_uhoh", {2301}, speak("AH _ OW", 150, 95), 0.8f);
+    add("say_eww", {2302}, speak("IY IY UW UW", 150, 100, 0.8f), 0.8f);
+    add("say_seeyou", {2602}, speak("S IY _ Y UW", 140, 100), 0.8f);
     // Music: looping tunes, each from its own seed, tempo and key.
     add("tune_menu", {1000, 1010}, tune(11, 112, 60, false, true), 0.75f);
     add("tune_setup", {1020}, tune(23, 96, 57, true, false), 0.7f);
