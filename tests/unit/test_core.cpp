@@ -2178,7 +2178,7 @@ void testGuessesAboutChanceAreNotShown() {
             }
         return n;
     };
-    int scatterGuessed = 0, deathsGuessed = 0, leftOver = 0, deathsShown = 0;
+    int scatterGuessed = 0, deathsGuessed = 0, leftOver = 0, deathsShown = 0, ownMoved = 0, othersOff = 0;
     for (int t = 0; t < 8000 && !confirmed.roundOver(); ++t) {
         Inputs in{};
         for (int i = 0; i < 6; ++i) in[static_cast<std::size_t>(i)] = ai[static_cast<std::size_t>(i)].decide(confirmed, i, 50);
@@ -2193,14 +2193,24 @@ void testGuessesAboutChanceAreNotShown() {
         for (int i = 0; i < 6; ++i) died = died || (!guess.player(i).alive && confirmed.player(i).alive);
         scatterGuessed += extraPowerups(guess) > 0 ? 1 : 0;
         deathsGuessed += died ? 1 : 0;
-        guess.keepToConfirmed(confirmed);
+        // As the player in seat 0 would see it.
+        const int ownX = guess.player(0).x, ownY = guess.player(0).y;
+        const bool ownAlive = guess.player(0).alive;
+        std::array<bool, kMaxPlayers> own{};
+        own[0] = true;
+        guess.keepToConfirmed(confirmed, own);
         leftOver += extraPowerups(guess);
         for (int i = 0; i < 6; ++i) deathsShown += !guess.player(i).alive && confirmed.player(i).alive ? 1 : 0;
+        // The own player keeps its guessed place; everybody else stands where confirmed.
+        if (ownAlive) ownMoved += guess.player(0).x == ownX && guess.player(0).y == ownY ? 0 : 1;
+        for (int i = 1; i < 6; ++i) othersOff += guess.player(i).x != confirmed.player(i).x || guess.player(i).y != confirmed.player(i).y ? 1 : 0;
     }
     CHECK(scatterGuessed > 0);  // the situation of the bug report did come up,
     CHECK(deathsGuessed > 0);
     CHECK_EQ(leftOver, 0);      // and none of it would have been drawn
     CHECK_EQ(deathsShown, 0);
+    CHECK_EQ(ownMoved, 0);
+    CHECK_EQ(othersOff, 0);
 }
 
 }  // namespace

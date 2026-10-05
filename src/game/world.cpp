@@ -1516,7 +1516,7 @@ void World::ownRandom(std::uint32_t seed) {
     rng_.setState(seed);
 }
 
-void World::keepToConfirmed(const World& confirmed) {
+void World::keepToConfirmed(const World& confirmed, const std::array<bool, kMaxPlayers>& own) {
     for (std::size_t i = 0; i < powerups_.size(); ++i) {
         const Powerup& real = confirmed.powerups_[i];
         Powerup& guess = powerups_[i];
@@ -1525,7 +1525,7 @@ void World::keepToConfirmed(const World& confirmed) {
         if (tiles_[i] == Tile::Brick && confirmed.tiles_[i] == Tile::Blank) tiles_[i] = Tile::Blank;
     }
     for (std::size_t i = 0; i < players_.size(); ++i)
-        if (players_[i].present && !players_[i].alive && confirmed.players_[i].alive) players_[i] = confirmed.players_[i];
+        if (players_[i].present && (!own[i] || (!players_[i].alive && confirmed.players_[i].alive))) players_[i] = confirmed.players_[i];
     aliens_ = confirmed.aliens_;
 }
 

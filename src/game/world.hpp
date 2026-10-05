@@ -426,7 +426,10 @@ public:
     // shown and then corrected. Powerups and bricks that only the guess has are removed; a
     // player who died only in the guess is shown as confirmed (which death animation plays
     // is chance); campaign enemies, who turn by chance, stay where they are confirmed.
-    void keepToConfirmed(const World& confirmed);
+    // Players other than `own` are shown as confirmed too: what they will do next is not
+    // known, and carrying their last movement on made anyone who turns about (a cornered
+    // computer player above all) seem to dart to and fro at speed.
+    void keepToConfirmed(const World& confirmed, const std::array<bool, kMaxPlayers>& own);
 
 private:
     template <class A>

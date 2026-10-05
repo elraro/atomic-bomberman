@@ -43,13 +43,14 @@ What a player sees is not the confirmed state but a guess at the state a few ste
 
 - The client keeps the confirmed `World` exactly as before; nothing predicted ever enters it. Scores, results, sounds and the state hash come from it alone.
 - Once per 50 ms of its own clock the client copies the confirmed state and runs the copy forward to a target step: the last confirmed step plus the delay, where the delay is the measured round trip in steps plus one (1 to 10 steps). For those steps it uses its own inputs, remembering which input it assumed for which step, and assumes every other player goes on doing what they did in the last confirmed step.
+- Other players are **drawn where the server last confirmed them**, not where their last movement would carry them: nobody knows their next move, and carrying the last one on made a player who turns about (a cornered computer player above all) seem to dart to and fro at speed.
 - The target advances by one per local step and is pulled back to "confirmed + delay" only when it has drifted by more than two, so the picture moves evenly even when the server's steps arrive unevenly.
 - The copy is thrown away and rebuilt every local step, so a wrong guess (another player turned, a bomb was dropped) lasts only until the server's steps say otherwise; the drawing interpolates over one step, which softens the correction.
 - No prediction for watchers, after the round is decided, or when switched off (Options, "Network: Show Own Moves At Once"; `net_prediction` in the settings file).
 
 Sounds follow the confirmed state, with one exception: the player's own actions (dropping, punching, grabbing or throwing a bomb, picking up a powerup, a trampoline, a warp) are heard from the predicted step, at once, and are left out when the server confirms them. A predicted action that never comes true has been heard for nothing; it is forgotten after 1.5 s.
 
-Known effect: other players are drawn where they would be if they had not changed direction, so at high delay they visibly jump when they do.
+Known effect: other players are seen a little in the past (by the round trip) while one's own player, the bombs and the flames are seen in the present, so at high delay an opponent can seem to stand in a flame for a moment before falling. An earlier version carried other players' last movement forward instead; a player who kept turning about (a cornered computer player above all) then seemed to dart to and fro at speed.
 
 ## Transport
 

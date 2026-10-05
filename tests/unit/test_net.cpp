@@ -498,9 +498,12 @@ void testPrediction() {
         for (int waited = 0; waited < ms; waited += 5) {
             h.turn();
             if (ann.state() != Client::State::Round) break;
-            confirmed[ann.stepsApplied()] = ann.world()->stateHash(true);
+            // What is predicted is the own player (and the bombs and flames around it); other
+            // players are drawn as confirmed. So the own player is what must come true.
+            auto own = [](const World& w) { return static_cast<std::uint32_t>(w.player(0).x * 100000 + w.player(0).y * 10 + w.player(0).facing); };
+            confirmed[ann.stepsApplied()] = own(*ann.world());
             if (ann.view() != ann.world()) {
-                predicted[ann.viewStep()] = ann.view()->stateHash(true);
+                predicted[ann.viewStep()] = own(*ann.view());
                 ahead += static_cast<int>(ann.viewStep()) - static_cast<int>(ann.stepsApplied());
                 ++samples;
             }
@@ -515,7 +518,7 @@ void testPrediction() {
             }
         return compared > 10 ? count : 1000;
     };
-    // Ann keeps walking east and the others stand still: every predicted state comes true.
+    // Ann keeps walking east: every predicted place of hers comes true.
     watch(4000);
     CHECK(samples > 100);
     CHECK(ahead >= samples * 3 && ahead <= samples * 5);  // about four steps ahead
@@ -557,11 +560,15 @@ void testPrediction() {
     }
     CHECK_EQ(dropsHeard, 1);
     CHECK_EQ(h.server.world()->bombsOwnedBy(0), 1);
-    // Somebody else's change of mind is what prediction cannot know: Bob starts walking,
-    // Ann's picture is briefly wrong about him and then right again.
+    // Somebody else's next move is what prediction cannot know.
     bob.setInput(east);
-    watch(3000);
-    CHECK(wrong(ann.stepsApplied() - 30, ann.stepsApplied()) == 0);
+    for (int waited = 0; waited < 3000 && ann.state() == Client::State::Round; waited += 5) {
+        h.turn();
+        // Other players are drawn where the server has confirmed them, not where their last
+        // movement would carry them: Bob in Ann's picture is Bob in Ann's confirmed state.
+        if (ann.view() != ann.world()) CHECK(ann.view()->player(1).x == ann.world()->player(1).x && ann.view()->player(1).y == ann.world()->player(1).y);
+    }
+    CHECK(h.server.world()->player(1).x > cellToPixelX(0) || h.server.world()->player(1).facing == 1);
     CHECK_EQ(ann.snapshotsLoaded(), 0);
 }
 

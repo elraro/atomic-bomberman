@@ -512,7 +512,11 @@ void Client::predict(const EventSink& events) {
         for (const Event& e : happened) heard_.push_back({e.kind, e.player, now_});
         if (events && !happened.empty()) events(*predicted_, happened);
     }
-    predicted_->keepToConfirmed(*world_);  // nothing decided by chance is shown before the server has decided it
+    // Nothing decided by chance, and nobody else's next move, is shown before the server has decided it.
+    std::array<bool, kMaxPlayers> own{};
+    for (int seat : mySeats)
+        if (seat >= 0) own[static_cast<std::size_t>(seat)] = true;
+    predicted_->keepToConfirmed(*world_, own);
     predictedValid_ = true;
 }
 
