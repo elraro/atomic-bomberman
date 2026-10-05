@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -247,7 +248,18 @@ struct Harness {
             c->advance(now, nullptr, nullptr);
         }
         now += 5;
+        pause();
+    }
+    // The clock here is made up (5 ms a turn) but the sockets are real. On Linux and Windows
+    // a datagram sent over the loopback interface can be read at once; on macOS it is handed
+    // over a moment later, which at full speed is many made-up milliseconds. A short real
+    // pause per turn keeps the two clocks close enough there.
+    static void pause() {
+#ifdef __APPLE__
+        std::this_thread::sleep_for(std::chrono::microseconds(150));
+#else
         std::this_thread::yield();
+#endif
     }
     bool until(const std::function<bool()>& done, int maxMs = 20000) {
         for (int waited = 0; waited < maxMs; waited += 5) {
