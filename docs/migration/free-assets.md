@@ -10,7 +10,7 @@ People without a copy of the original game can play: when no original data is fo
 | Full-screen pictures: main menu, backgrounds, playfields, results, draw, victory, team | Drawn when first shown | `makeFreePicture()` |
 | Text font | The classic 5 x 7 dot-matrix character shapes, stretched to the 8 pixels a character the screens were laid out for | `makeFreeFont()` |
 | Sound effects and six looping tunes | Synthesised (oscillators, noise, envelopes; a small tune generator with fixed seeds) and written once as `.wav` | `free_sound.cpp` |
-| Sixteen voice lines in a robot voice ("ha ha ha", "oh no", "winner", "hurry up", ...) | A small speech synthesiser: a buzz or noise source through three moving resonances (formants), with noise bands and bursts for consonants | `speak()` in `free_sound.cpp` |
+| Twenty-six voice lines in a robot voice ("ha ha ha", "oh no", "winner", "hurry up", ...) | A small speech synthesiser: a buzz or noise source through three moving resonances (formants), with noise bands and bursts for consonants | `speak()` in `free_sound.cpp` |
 | Eight arenas, level extras for seven levels, the tuning table, a manual and an about page | Written once as files in the formats the game already reads | `free_data.cpp` |
 
 The files go to `free-assets` in the per-user data folder (Linux: `~/.local/share/atomic-bomberman-modern/atomic/free-assets`, about 10 MB, mostly the tunes). A marker file names the set's version; when the program is updated and the version differs, the folder is rewritten. The game then treats that folder like any game data folder, which is why almost nothing else in the program had to change: only the sprite bank knows that pictures come from code instead of `.ani` and `.pcx` files. The dedicated server uses the same folder (without sounds) for its arenas.
@@ -22,8 +22,9 @@ The tuning table written there is the program's built-in defaults, i.e. the numb
 - **Its own look.** The player figure is a small robot with a visor, deliberately not the helmeted character of the original series. Level themes keep the original's level numbers (because levels carry rules: ice, regenerating bricks) but the tiles are new.
 - **The same names.** The renderer asks for sprites by the sequence names of the original's animation files ("walk north", "flame tipeast green", ...). The free set answers to the same names, so there is one renderer.
 - **Player colours** are applied to marked pixels at upload time, in place of the original's palette remap tables.
-- **Voices** are synthetic and few: one to five lines for each kind of moment (a death, a string of bombs, a good pickup, a disease, a draw, a match win, the hurry warning, leaving). The original has hundreds of recorded lines; a line for each single disease and the title call have no counterpart and stay silent.
-- **Not included:** the intro movie and logos (skipped), campaign files.
+- **Voices** are synthetic and few: one to five lines for each kind of moment (a death, a string of bombs, a good pickup, a disease, a draw, a match win, the hurry warning, leaving). Each of the nine diseases has its own line ("so slow", "too fast", "no bombs", "oops", "tiny", "run run run", "watch out", "where am I", "wrong way"), played one time in three as in the original. The original has hundreds of recorded lines; here each series has one to five.
+- **The intro** is the title screen alone, with the title call; the original's movie and logo screens have no counterpart.
+- **Not included:** campaign files.
 
 ## Checked
 

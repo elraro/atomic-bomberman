@@ -63,6 +63,7 @@ struct Options {
     int attractSeconds = -1;  // --attract-seconds N: idle time on the menu before the demo (default: value 92)
     bool debug = false;       // --debug: the original's debug keys (it used the KWD environment variable)
     bool noIntro = false;     // --no-intro: go straight to the main menu
+    bool titleOnly = false;   // free asset set: the intro is the title screen and its call alone
     bool freeAssets = false;  // --free: the free asset set even if original game data is installed
     std::string connect;      // --connect ADDRESS: join that network game at once
     int host = 0;             // --host [PORT]: host a network game at once
@@ -381,7 +382,7 @@ int main(int argc, char** argv) {
     }
     if (!opt.gameDir.empty()) {
         std::fprintf(stderr, "INFO  Game files: %s%s\n", opt.gameDir.c_str(), ab::isFreeAssetDir(opt.gameDir) ? " (free asset set)" : "");
-        if (ab::isFreeAssetDir(opt.gameDir)) opt.noIntro = true;  // the intro movie and logos are the original's
+        opt.titleOnly = ab::isFreeAssetDir(opt.gameDir);  // the intro movie and logos are the original's: only the title screen
     }
 
     // Saved settings (the original's options.ini keys). Automated runs ignore the file so
@@ -795,7 +796,7 @@ int main(int argc, char** argv) {
         // an "Atomic Bomberman!" voice line with the title picture.
         auto startIntro = [&]() {
             screen = Screen::Intro;
-            introStep = std::clamp(opt.introShot - 1, 0, 2);
+            introStep = opt.titleOnly ? 2 : std::clamp(opt.introShot - 1, 0, 2);
             introStart = SDL_GetTicks();
             if (sound) audio.playMusic(1000);
             if (sound && introStep == 2) audio.playRange(2800, 2899);
@@ -895,7 +896,7 @@ int main(int argc, char** argv) {
         } else if (screen == Screen::MainMenu && ((!opt.noIntro && opt.frames <= 0 && opt.script.empty()) || opt.introShot > 0 || opt.movieShot > 0)) {
             // First the intro movie, if the game data has it: the original ships it inside a
             // separate player program (intro/bmintro.exe); the import keeps it as intro.mve.
-            if (opt.introShot == 0) {
+            if (opt.introShot == 0 && !opt.titleOnly) {
                 movie = std::make_unique<ab::MveDecoder>();
                 bool found = movie->open(opt.gameDir + "/intro.mve");
                 for (const char* dir : {"intro", "INTRO", "Intro"})

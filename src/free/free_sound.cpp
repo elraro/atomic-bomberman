@@ -349,6 +349,19 @@ FreeSounds makeFreeSounds() {
     add("say_hooray", {2002}, speak("H UH R EY EY", 120, 180, 0.9f), 0.8f);
     add("say_uhoh", {2301}, speak("AH _ OW", 150, 95), 0.8f);
     add("say_eww", {2302}, speak("IY IY UW UW", 150, 100, 0.8f), 0.8f);
+    // One line for each disease (3000 + 50 per disease: slow, fast, no bombs, dropping bombs,
+    // short flames, fast and dropping, short fuses, swapped places, reversed keys).
+    add("say_slow", {3000}, speak("S OH _ S L OW", 120, 80, 0.75f), 0.8f);
+    add("say_toofast", {3050}, speak("T UW _ F AE S T", 170, 190, 1.3f), 0.8f);
+    add("say_nobombs", {3100}, speak("N OW _ B AA M Z", 140, 100), 0.8f);
+    add("say_oops", {3150}, speak("UW UW P S", 160, 120), 0.8f);
+    add("say_tiny", {3200}, speak("T AY N IY", 190, 170), 0.8f);
+    add("say_runrun", {3250}, speak("R AH N _ R AH N _ R AH N", 160, 190, 1.4f), 0.8f);
+    add("say_watchout", {3300}, speak("W AA T SH _ AW T", 150, 180, 1.1f), 0.8f);
+    add("say_whereami", {3350}, speak("W EH R _ AE M _ AY", 130, 170), 0.8f);
+    add("say_wrongway", {3400}, speak("R AO N _ W EY", 140, 100), 0.8f);
+    // The title call.
+    add("say_title", {2800}, speak("AH T AA M IH K _ B AA M ER M AE N", 130, 110, 0.95f), 0.85f);
     add("say_seeyou", {2602}, speak("S IY _ Y UW", 140, 100), 0.8f);
     // Music: looping tunes, each from its own seed, tempo and key.
     add("tune_menu", {1000, 1010}, tune(11, 112, 60, false, true), 0.75f);

@@ -1959,7 +1959,8 @@ void testFreeAssets() {
     // The voice lines exist for each kind of moment, and the vowels are where they should be:
     // "see you" (ee, oo) has far less sound around 1100 Hz, where "ah" and "aw" resonate,
     // than "draw" has, relative to the band around 2300 Hz where "ee" resonates.
-    for (int id : {700, 701, 702, 703, 704, 1200, 1401, 1402, 1700, 1701, 2000, 2001, 2002, 2301, 2302, 2601, 2602}) {
+    for (int id : {700, 701, 702, 703, 704, 1200, 1401, 1402, 1700, 1701, 2000, 2001, 2002, 2301, 2302, 2601, 2602, 2800,
+                   3000, 3050, 3100, 3150, 3200, 3250, 3300, 3350, 3400}) {
         bool found = false;
         for (const auto& [have, name] : sounds.ids) found = found || have == id;
         CHECK(found);

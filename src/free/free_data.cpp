@@ -12,7 +12,7 @@ namespace ab {
 namespace {
 
 // Raised whenever the written files change, so an older folder is renewed.
-const char* const kMarker = "atomic-bomberman-modern free asset set, version 2\n"
+const char* const kMarker = "atomic-bomberman-modern free asset set, version 3\n"
                             "Made by the program itself; contains nothing from the original game.\n"
                             "This folder is rewritten when the program is updated: do not keep your own files here.\n";
 
