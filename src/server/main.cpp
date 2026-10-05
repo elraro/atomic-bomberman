@@ -76,7 +76,8 @@ const char* const kUsage =
     "  --hidden           do not answer searches on the local network\n"
     "  --upnp             ask the router to forward the port (UPnP), for a server behind a home router\n"
     "The first player to join is the administrator: changes the settings, starts the match.\n"
-    "Commands on standard input: status, say TEXT, quit.\n";
+    "  --ban-file FILE    where banned addresses are kept (default: bans.txt in the per-user folder)\n"
+    "Commands on standard input: status, say TEXT, kick NAME, ban NAME, unban ADDRESS, bans, quit.\n";
 
 }  // namespace
 
@@ -112,6 +113,7 @@ int main(int argc, char** argv) {
         } else if (a == "--team-play") config.settings.teamPlay = true;
         else if (a == "--hidden") config.discoverable = false;
         else if (a == "--upnp") config.upnp = true;
+        else if (a == "--ban-file") config.banFile = next();
         else {
             std::fprintf(stderr, "ERROR unknown argument %s (see --help)\n", a.c_str());
             return 2;
@@ -121,6 +123,7 @@ int main(int argc, char** argv) {
     config.gameDir = findGameDir(requested);
     if (!schemesDirGiven)
         if (const std::string user = userDataDir(); !user.empty()) config.userSchemesDir = user + "schemes";
+    if (config.banFile.empty() && !userDataDir().empty()) config.banFile = userDataDir() + "bans.txt";
     config.log = logLine;
     if (config.gameDir.empty()) {
         // No original game data: the arenas and level extras of the free asset set.
@@ -174,8 +177,16 @@ int main(int argc, char** argv) {
                 for (const ab::net::ClientInfo& c : lobby.clients)
                     logLine("INFO    id=" + std::to_string(c.id) + " name=\"" + c.name + "\" seat=" + std::to_string(c.seat) + " ping=" +
                             std::to_string(c.pingMs) + "ms" + (c.id == lobby.admin ? " administrator" : ""));
+            } else if (line.rfind("kick ", 0) == 0 || line.rfind("ban ", 0) == 0) {
+                const bool ban = line[0] == 'b';
+                if (!server.kick(line.substr(ban ? 4 : 5), ban)) logLine("INFO  Nobody of that name is connected");
+            } else if (line.rfind("unban ", 0) == 0) {
+                if (!server.unban(line.substr(6))) logLine("INFO  That address is not banned");
+            } else if (line == "bans") {
+                for (const std::string& host : server.bans()) logLine("INFO    banned " + host);
+                if (server.bans().empty()) logLine("INFO  Nobody is banned");
             } else if (!line.empty()) {
-                logLine("INFO  Commands: status, say TEXT, quit");
+                logLine("INFO  Commands: status, say TEXT, kick NAME, ban NAME, unban ADDRESS, bans, quit");
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));

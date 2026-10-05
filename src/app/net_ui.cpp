@@ -168,7 +168,8 @@ void NetUi::startHost() {
     config.settings.winByKills = cfg_.winByKills;
     config.settings.diseasesDestroyable = cfg_.diseasesDestroyable;
     config.settings.computers = 1;
-    config.upnp = true;  // a hosted game tries to open the router's port; the lobby says how it went
+    config.upnp = true;
+    if (!userSchemesDir_.empty()) config.banFile = userSchemesDir_ + "/../bans.txt";  // beside the settings file  // a hosted game tries to open the router's port; the lobby says how it went
     config.log = [](const std::string& line) { std::fprintf(stderr, "%s\n", line.c_str()); };
     if (!server_.start(config)) {
         error_ = server_.error() + " (is a server already running on it?)";
@@ -189,11 +190,17 @@ void NetUi::submitChat() {
     const std::string text = net::cleanText(chatText_, net::kMaxChat);
     chatText_.clear();
     if (text.empty()) return;
-    // "/kick NAME": the administrator removes a player.
-    if (text.rfind("/kick ", 0) == 0) {
-        const std::string who = text.substr(6);
+    // The administrator's commands: "/kick NAME" (back in five minutes at the earliest),
+    // "/ban NAME" (the address stays out), "/unban ADDRESS".
+    if (text.rfind("/kick ", 0) == 0 || text.rfind("/ban ", 0) == 0) {
+        const bool ban = text[1] == 'b';
+        const std::string who = text.substr(ban ? 5 : 6);
         for (const net::ClientInfo& c : client_.lobby().clients)
-            if (c.name == who && c.id != client_.id()) client_.sendKick(c.id);
+            if (c.name == who && c.id != client_.id()) ban ? client_.sendBan(c.id) : client_.sendKick(c.id);
+        return;
+    }
+    if (text.rfind("/unban ", 0) == 0) {
+        client_.sendUnban(text.substr(7));
         return;
     }
     client_.sendChat(text);

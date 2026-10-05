@@ -879,6 +879,197 @@ void testCrypto() {
     CHECK(!deriveSession(a, Key{}, x25519Base(a), Key{}, bad));  // a public key of zeros gives no secret
 }
 
+// Someone in the middle who passes every message on: sees only noise, and cannot change
+// a message without ending the connection.
+void testEncryptionOnTheWire() {
+    Harness h;
+    CHECK(h.start("open sesame", 1));
+    // The relay: accepts the client, connects to the server, copies frames both ways.
+    TcpListener listener;
+    CHECK(listener.listen(0));
+    TcpSocket toServer, toClient;
+    std::string seen;        // every byte that passed, both directions
+    int frames = 0, tamperAt = -1;
+    bool linked = false;
+    auto relay = [&]() {
+        if (!toClient.open()) {
+            if (auto accepted = listener.accept()) {
+                toClient = std::move(*accepted);
+                toServer.connect({kLoopback, h.server.port()});
+            }
+            return;
+        }
+        std::uint8_t type = 0;
+        Bytes payload;
+        toClient.pump();
+        toServer.pump();
+        if (linked && !toServer.open()) toClient.close();  // the server hung up: so does the relay
+        linked = linked || toServer.connected();
+        while (toClient.receive(type, payload)) {
+            ++frames;
+            seen += static_cast<char>(type);
+            seen.append(payload.begin(), payload.end());
+            if (frames == tamperAt && !payload.empty()) payload[payload.size() / 2] ^= 0x01;
+            toServer.send(type, payload);
+        }
+        while (toServer.receive(type, payload)) {
+            seen += static_cast<char>(type);
+            seen.append(payload.begin(), payload.end());
+            toClient.send(type, payload);
+        }
+        toClient.pump();
+        toServer.pump();
+    };
+    auto spin = [&](const std::function<bool()>& done, int maxMs = 20000) {
+        for (int waited = 0; waited < maxMs && !done(); waited += 5) {
+            relay();
+            h.turn();
+        }
+        return done();
+    };
+    h.clients.push_back(std::make_unique<Client>());
+    Client& ann = *h.clients.back();
+    ann.connect("127.0.0.1:" + std::to_string(listener.port()), "Annabel Lee", "open sesame", h.now);
+    CHECK(spin([&] { return ann.state() == Client::State::Lobby && !ann.lobby().clients.empty(); }));
+    CHECK(ann.encrypted());
+    ann.sendChat("attack at dawn by the old mill");
+    CHECK(spin([&] {
+        for (const ChatLine& line : ann.chat())
+            if (line.text == "attack at dawn by the old mill") return true;
+        return false;
+    }));
+    CHECK(seen.size() > 300);
+    CHECK(seen.find("attack at dawn") == std::string::npos);   // the chat
+    CHECK(seen.find("open sesame") == std::string::npos);      // the password
+    CHECK(seen.find("Annabel") == std::string::npos);          // the name
+    CHECK(seen.find("has joined") == std::string::npos);       // what the server says
+    // The password is not even sent in disguise: its proof differs for every connection.
+    const std::string firstSession = seen;
+    // One flipped bit in a later message: the server ends the connection rather than act on it.
+    tamperAt = frames + 1;
+    ann.sendChat("this one is altered on the way");
+    CHECK(spin([&] { return ann.state() == Client::State::Failed; }));
+    CHECK_EQ(h.server.players(), 0);
+    bool arrived = false;
+    for (const std::string& line : h.log) arrived = arrived || line.find("altered on the way") != std::string::npos;
+    CHECK(!arrived);
+
+    // Speaking without the key exchange, or in the clear after it, gets nowhere.
+    TcpSocket raw;
+    CHECK(raw.connect({kLoopback, h.server.port()}));
+    HelloMsg hello;
+    hello.name = "Plain";
+    for (int i = 0; i < 200 && !raw.connected(); ++i) raw.pump(), h.turn();
+    raw.send(static_cast<std::uint8_t>(ClientMsg::Hello), encoded(hello));
+    bool dropped = false;
+    for (int i = 0; i < 400 && !dropped; ++i) {
+        dropped = !raw.pump();
+        h.turn();
+    }
+    CHECK(dropped);
+    CHECK_EQ(h.server.players(), 0);
+}
+
+// Kicks, bans and the limits against guessing and flooding.
+void testBansAndLimits() {
+    const std::string banFile = (std::filesystem::temp_directory_path() / "ab-net-bans-test.txt").string();
+    std::filesystem::remove(banFile);
+    auto refused = [](Harness& h, const std::string& name, const std::string& password = "") {
+        Client& c = h.join(name, password);
+        h.until([&] { return c.state() == Client::State::Failed || c.state() == Client::State::Lobby; }, 12000);
+        const bool out = c.state() == Client::State::Failed;
+        c.disconnect();
+        return out;
+    };
+    {
+        // Kicked: the address stays out for five minutes, then may return.
+        Harness h;
+        CHECK(h.start());
+        Client& ann = h.join("Ann");
+        Client& bob = h.join("Bob");
+        CHECK(h.until([&] { return ann.lobby().clients.size() == 2 && bob.state() == Client::State::Lobby; }));
+        ann.sendKick(bob.id());
+        CHECK(h.until([&] { return bob.state() == Client::State::Failed; }));
+        CHECK(bob.error() == "Removed by the administrator");
+        CHECK(refused(h, "Bob"));
+        h.now += 5 * 60 * 1000 + 1000;
+        CHECK(!refused(h, "Bob"));
+    }
+    {
+        // Banned: out until the ban is lifted, and the ban outlives the server.
+        Harness h;
+        ServerConfig config;
+        config.port = 0;
+        config.discoverable = false;
+        config.banFile = banFile;
+        config.log = [&h](const std::string& line) { h.log.push_back(line); };
+        CHECK(h.server.start(config));
+        Client& ann = h.join("Ann");
+        Client& bob = h.join("Bob");
+        CHECK(h.until([&] { return ann.lobby().clients.size() == 2 && bob.state() == Client::State::Lobby; }));
+        bob.sendBan(ann.id());  // not the administrator: nothing happens
+        h.spin(300);
+        CHECK(ann.state() == Client::State::Lobby);
+        ann.sendBan(bob.id());
+        CHECK(h.until([&] { return bob.state() == Client::State::Failed; }));
+        CHECK(bob.error() == "Banned by the administrator");
+        CHECK_EQ(h.server.bans().size(), 1u);
+        CHECK(h.server.bans()[0] == "127.0.0.1");
+        h.now += 24 * 60 * 60 * 1000;  // a day later: still banned
+        CHECK(refused(h, "Bob"));
+        // The administrator is told the address, to be able to lift the ban.
+        bool told = false;
+        for (const ChatLine& line : ann.chat()) told = told || line.text.find("/unban 127.0.0.1") != std::string::npos;
+        CHECK(told);
+        h.server.stop();
+        // A new server with the same file knows the ban; lifting it lets the address in again.
+        Harness again;
+        config.log = [&again](const std::string& line) { again.log.push_back(line); };
+        CHECK(again.server.start(config));
+        CHECK_EQ(again.server.bans().size(), 1u);
+        CHECK(refused(again, "Bob"));
+        CHECK(!again.server.unban("10.0.0.1"));
+        CHECK(again.server.unban("127.0.0.1"));
+        CHECK(!refused(again, "Bob"));
+    }
+    {
+        // Five wrong passwords in a minute: the address is shut out, the right password included.
+        Harness h;
+        CHECK(h.start("right"));
+        for (int i = 0; i < 5; ++i) CHECK(refused(h, "Guess", "wrong" + std::to_string(i)));
+        CHECK(refused(h, "Owner", "right"));
+        h.now += 5 * 60 * 1000 + 1000;
+        CHECK(!refused(h, "Owner", "right"));
+    }
+    {
+        // A flood of messages: that connection is dropped, the others play on.
+        Harness h;
+        CHECK(h.start());
+        Client& ann = h.join("Ann");
+        CHECK(h.until([&] { return ann.state() == Client::State::Lobby; }));
+        Client& flood = h.join("Flood");
+        CHECK(h.until([&] { return flood.state() == Client::State::Lobby; }));
+        for (int i = 0; i < 1000; ++i) flood.sendOption(Option::Wins, 1);
+        CHECK(h.until([&] { return flood.state() == Client::State::Failed; }));
+        CHECK(ann.state() == Client::State::Lobby);
+        CHECK(h.until([&] { return ann.lobby().clients.size() == 1; }));
+        // Too many connections at once from one address are not all accepted.
+        h.now += 120000;
+        ServerConfig small;
+        small.port = 0;
+        small.discoverable = false;
+        small.maxPerAddress = 2;
+        Harness few;
+        CHECK(few.server.start(small));
+        Client& one = few.join("One");
+        Client& two = few.join("Two");
+        CHECK(few.until([&] { return one.state() == Client::State::Lobby && two.state() == Client::State::Lobby; }));
+        CHECK(refused(few, "Three"));
+        CHECK_EQ(few.server.players(), 2);
+    }
+    std::filesystem::remove(banFile);
+}
+
 // The network keys of the settings file.
 void testNetSettings() {
     Settings s;
@@ -946,6 +1137,8 @@ int main() {
         {"codec", testCodec},
         {"cryptography test vectors", testCrypto},
         {"lobby", testLobby},
+        {"encryption on the wire", testEncryptionOnTheWire},
+        {"bans and limits", testBansAndLimits},
         {"round over udp", [] { testRound(true); }},
         {"round over tcp only", [] { testRound(false); }},
         {"leave during round", testLeaveDuringRound},

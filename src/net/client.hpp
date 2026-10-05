@@ -63,6 +63,7 @@ public:
     const LobbyState& lobby() const { return lobby_; }
     const std::deque<ChatLine>& chat() const { return chat_; }
     bool udpActive() const { return udpOn_; }
+    bool encrypted() const { return keyed_ && socket_.encrypted(); }
 
     void setInput(const PlayerInput& in) { input_[0] = packInput(in); }
     void setInput(int local, const PlayerInput& in) { input_[static_cast<std::size_t>(local)] = packInput(in); }
@@ -72,6 +73,8 @@ public:
     void sendTeam(int local = 0);
     void sendLocalPlayers(int count);  // 1-4 players at this computer (in the lobby)
     void sendKick(std::uint8_t id);
+    void sendBan(std::uint8_t id);               // administrator: keep that player's address out for good
+    void sendUnban(const std::string& address);  // administrator: lift a ban
     void sendContinue();
 
     // Client-side prediction (on by default): the picture runs a few steps ahead of what the
@@ -120,7 +123,11 @@ private:
     std::string name_;
     std::string password_;
     std::uint64_t connectAt_ = 0;
-    bool helloSent_ = false;
+    bool helloSent_ = false;   // the key exchange was started
+    bool keyed_ = false;       // both sides hold the connection's keys
+    Key secret_{}, public_{};
+    SessionKeys keys_;
+    std::uint64_t udpSent_ = 0, udpReceived_ = 0;  // datagram counters, one per direction
     bool welcomed_ = false;
     std::uint8_t id_ = 0;
     std::uint32_t token_ = 0;

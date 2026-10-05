@@ -43,6 +43,8 @@ void Client::connect(const std::string& address, const std::string& name, const 
     password_ = password;
     connectAt_ = nowMs;
     helloSent_ = false;
+    keyed_ = false;
+    udpSent_ = udpReceived_ = 0;
     welcomed_ = false;
     probes_ = 0;
     probeAt_ = 0;
@@ -106,6 +108,18 @@ void Client::sendKick(std::uint8_t id) {
     socket_.send(static_cast<std::uint8_t>(ClientMsg::Kick), w.data());
 }
 
+void Client::sendBan(std::uint8_t id) {
+    ByteWriter w;
+    w.u8(id);
+    socket_.send(static_cast<std::uint8_t>(ClientMsg::Ban), w.data());
+}
+
+void Client::sendUnban(const std::string& address) {
+    ByteWriter w;
+    w.text(address);
+    socket_.send(static_cast<std::uint8_t>(ClientMsg::Unban), w.data());
+}
+
 void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     start_ = m;
     end_ = RoundEndMsg{};
@@ -150,7 +164,25 @@ void Client::handleSteps(const StepsMsg& m) {
 
 void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& payload, std::uint64_t nowMs) {
     ByteReader r(payload);
+    // Until the keys are agreed only the server's key (or a refusal) is listened to; after
+    // that, a second key message means nothing.
+    if (!keyed_ && static_cast<ServerMsg>(type) != ServerMsg::KeyExchange && static_cast<ServerMsg>(type) != ServerMsg::Reject) return fail("Bad answer from the server");
     switch (static_cast<ServerMsg>(type)) {
+        case ServerMsg::KeyExchange: {
+            if (keyed_) break;
+            Key theirs{};
+            for (std::uint8_t& b : theirs) b = r.u8();
+            if (!r.ok() || !deriveSession(secret_, theirs, public_, theirs, keys_)) return fail("Bad answer from the server");
+            socket_.setKeys(keys_.toServer, keys_.toClient);
+            keyed_ = true;
+            secret_ = {};
+            HelloMsg hello;
+            hello.name = name_;
+            // Not the password itself: a value that shows we know it, good for this connection only.
+            if (!password_.empty()) hello.proof = passwordProof(password_, keys_.master);
+            socket_.send(static_cast<std::uint8_t>(ClientMsg::Hello), encoded(hello));
+            break;
+        }
         case ServerMsg::Welcome: {
             WelcomeMsg m;
             if (!decode(r, m)) return fail("Bad answer from the server");
@@ -226,7 +258,7 @@ void Client::sendInput(std::uint64_t nowMs) {
     m.roundId = start_.roundId;
     m.haveStep = applied_ + static_cast<std::uint32_t>(queue_.size());
     m.input = input_;
-    if (udpOn_) udp_.sendTo(server_, datagram(UdpMsg::Input, m));
+    if (udpOn_) udp_.sendTo(server_, sealDatagram(token_, ++udpSent_, keys_.udpToServer, datagram(UdpMsg::Input, m)));
     else socket_.send(static_cast<std::uint8_t>(ClientMsg::Input), encoded(m));
     inputSent_ = input_;
     inputSentAt_ = nowMs;
@@ -237,10 +269,15 @@ void Client::update(std::uint64_t nowMs) {
 
     const bool alive = socket_.pump();
     if (socket_.connected() && !helloSent_) {
-        HelloMsg hello;
-        hello.name = name_;
-        hello.password = password_;
-        socket_.send(static_cast<std::uint8_t>(ClientMsg::Hello), encoded(hello));
+        // The only thing sent in the clear: a fresh public key. Everything after the
+        // server's answer is encrypted with keys both sides derive from the exchange.
+        randomBytes(secret_.data(), secret_.size());
+        public_ = x25519Base(secret_);
+        ByteWriter w;
+        w.u32(kTcpMagic);
+        w.u16(kProtocolVersion);
+        for (std::uint8_t b : public_) w.u8(b);
+        socket_.send(static_cast<std::uint8_t>(ClientMsg::KeyExchange), w.data());
         helloSent_ = true;
     }
     std::uint8_t type = 0;
@@ -257,7 +294,7 @@ void Client::update(std::uint64_t nowMs) {
             w.u32(kUdpMagic);
             w.u8(static_cast<std::uint8_t>(UdpMsg::Probe));
             w.u32(token_);
-            udp_.sendTo(server_, w.data());
+            udp_.sendTo(server_, sealDatagram(token_, ++udpSent_, keys_.udpToServer, w.data()));
             probeAt_ = nowMs;
             ++probes_;
         }
@@ -265,7 +302,13 @@ void Client::update(std::uint64_t nowMs) {
         std::vector<std::uint8_t> data;
         for (int n = 0; n < 256 && udp_.receiveFrom(from, data); ++n) {
             if (!(from == server_)) continue;
-            ByteReader r(data);
+            // Only datagrams sealed with this connection's key, and never an old one again.
+            std::uint32_t session = 0;
+            std::uint64_t counter = 0;
+            std::vector<std::uint8_t> inner;
+            if (!peekSealed(data, &session, &counter) || session != token_ || counter <= udpReceived_ || !openSealed(data, keys_.udpToClient, inner)) continue;
+            udpReceived_ = counter;
+            ByteReader r(inner);
             if (r.u32() != kUdpMagic) continue;
             const auto kind = static_cast<UdpMsg>(r.u8());
             if (kind == UdpMsg::ProbeAck && !udpOn_ && probes_ <= kMaxProbes) {

@@ -362,7 +362,8 @@ std::optional<std::string> blockingExchange(const std::string& host, int port, c
 TcpSocket::~TcpSocket() { close(); }
 
 TcpSocket::TcpSocket(TcpSocket&& o) noexcept
-    : fd_(o.fd_), connected_(o.connected_), peer_(o.peer_), in_(std::move(o.in_)), out_(std::move(o.out_)) {
+    : fd_(o.fd_), connected_(o.connected_), peer_(o.peer_), in_(std::move(o.in_)), out_(std::move(o.out_)), encrypted_(o.encrypted_),
+      sendKey_(o.sendKey_), receiveKey_(o.receiveKey_), sent_(o.sent_), received_(o.received_) {
     o.fd_ = kNone;
     o.connected_ = false;
 }
@@ -375,6 +376,11 @@ TcpSocket& TcpSocket::operator=(TcpSocket&& o) noexcept {
         peer_ = o.peer_;
         in_ = std::move(o.in_);
         out_ = std::move(o.out_);
+        encrypted_ = o.encrypted_;
+        sendKey_ = o.sendKey_;
+        receiveKey_ = o.receiveKey_;
+        sent_ = o.sent_;
+        received_ = o.received_;
         o.fd_ = kNone;
         o.connected_ = false;
     }
@@ -387,6 +393,15 @@ void TcpSocket::close() {
     connected_ = false;
     in_.clear();
     out_.clear();
+    encrypted_ = false;
+    sent_ = received_ = 0;
+}
+
+void TcpSocket::setKeys(const Key& sendKey, const Key& receiveKey) {
+    sendKey_ = sendKey;
+    receiveKey_ = receiveKey;
+    encrypted_ = true;
+    sent_ = received_ = 0;
 }
 
 bool TcpSocket::connect(const Address& to) {
@@ -409,6 +424,17 @@ bool TcpSocket::connect(const Address& to) {
 
 void TcpSocket::send(std::uint8_t type, const std::vector<std::uint8_t>& payload) {
     if (fd_ == kNone) return;
+    if (encrypted_) {
+        std::vector<std::uint8_t> plain;
+        plain.reserve(payload.size() + 1);
+        plain.push_back(type);
+        plain.insert(plain.end(), payload.begin(), payload.end());
+        const std::vector<std::uint8_t> sealed = seal(sendKey_, counterNonce(++sent_), nullptr, 0, plain.data(), plain.size());
+        const auto length = static_cast<std::uint32_t>(sealed.size());
+        for (int i = 0; i < 4; ++i) out_.push_back(static_cast<std::uint8_t>(length >> (8 * i)));
+        out_.insert(out_.end(), sealed.begin(), sealed.end());
+        return;
+    }
     const auto length = static_cast<std::uint32_t>(payload.size() + 1);
     for (int i = 0; i < 4; ++i) out_.push_back(static_cast<std::uint8_t>(length >> (8 * i)));
     out_.push_back(type);
@@ -493,11 +519,23 @@ bool TcpSocket::receive(std::uint8_t& type, std::vector<std::uint8_t>& payload) 
     if (in_.size() < 5) return false;
     const std::uint32_t length = static_cast<std::uint32_t>(in_[0]) | (static_cast<std::uint32_t>(in_[1]) << 8) |
                                  (static_cast<std::uint32_t>(in_[2]) << 16) | (static_cast<std::uint32_t>(in_[3]) << 24);
-    if (length == 0 || length > kMaxFrame) {  // not our protocol
+    if (length == 0 || length > kMaxFrame + 64) {  // not our protocol
         close();
         return false;
     }
     if (in_.size() < 4 + static_cast<std::size_t>(length)) return false;
+    if (encrypted_) {
+        std::vector<std::uint8_t> plain;
+        const bool genuine = ab::net::open(receiveKey_, counterNonce(++received_), nullptr, 0, in_.data() + 4, length, plain) && !plain.empty();
+        if (!genuine) {  // altered, replayed, out of order or not encrypted with our key
+            close();
+            return false;
+        }
+        in_.erase(in_.begin(), in_.begin() + 4 + static_cast<std::ptrdiff_t>(length));
+        type = plain[0];
+        payload.assign(plain.begin() + 1, plain.end());
+        return true;
+    }
     type = in_[4];
     payload.assign(in_.begin() + 5, in_.begin() + 4 + static_cast<std::ptrdiff_t>(length));
     in_.erase(in_.begin(), in_.begin() + 4 + static_cast<std::ptrdiff_t>(length));

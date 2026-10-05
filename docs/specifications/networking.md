@@ -53,7 +53,34 @@ UDP is optional. After joining, the client sends UDP probes carrying the token i
 
 IPv4 and IPv6: a server listens for both on one port where the system allows it (IPv4 alone otherwise); a client uses whichever the address it was given resolves to. An IPv6 literal with a port is written `[address]:port`. Link-local IPv6 addresses (which need a zone) are not supported.
 
-Protocol version 2 (version 1 had one player per client and no prizes or campaign stages).
+Protocol version 3 (1: one player per client; 2: several players, prizes, campaign stages; 3: encryption).
+
+## Encryption and the password
+
+Everything a connection carries is encrypted and authenticated, except the two key messages that set it up and searches on the local network.
+
+1. The client's first frame, in the clear: `ABMN`, the protocol version, and a fresh X25519 public key.
+2. The server answers in the clear with its own fresh public key (or with Reject if the versions differ).
+3. Both compute the shared secret and from it, with both public keys, a master value (SHA-256) and four keys: TCP to server, TCP to client, UDP to server, UDP to client.
+4. From then on every TCP frame is `u32 length` + ChaCha20-Poly1305 of (type, payload), with the frame's number in its direction as the nonce. A frame that fails to open ends the connection: nothing can be altered, dropped, repeated or reordered unnoticed.
+5. A connection's datagrams are `ABMU`, `0x80`, the session number, a counter, then ChaCha20-Poly1305 of the datagram under the UDP key of its direction (header authenticated). A receiver accepts a counter only if it is higher than the last one accepted, so a recorded datagram cannot be replayed. The session number only names the connection; knowing it gives nothing.
+6. **Password.** The client never sends it. Hello carries HMAC-SHA-256 keyed with a hash of the password over the connection's master value: proof of knowing the password that is useless on any other connection. The server compares it in constant time.
+
+What this gives: someone who can read the traffic learns nothing (not the chat, not the names, not the password) and cannot later decrypt a recording even with the password, because the keys exist only for that connection. Someone who can alter the traffic can only break the connection.
+
+What it does not give: the keys are not tied to an identity. Without a password, an attacker who can intercept the connection at its start can sit in the middle. With a password that attacker cannot join the two halves, but can run the client's half and then test password guesses against the proof it received, so a guessable password falls to such an attacker. The server has no certificate and clients do not remember servers. The algorithms are implemented in this project (`src/net/crypto.*`) and pass their specifications' test vectors; the code has not been audited.
+
+## Bans and limits
+
+- **Kick**: the player's address may not connect for five minutes.
+- **Ban** (administrator: `/ban NAME`; dedicated server console: `ban NAME`): the address stays out until `unban ADDRESS`. Bans are kept in the server's ban file and survive a restart. The administrator is told the address when banning.
+- At most 10 connections from one address at a time (`maxPerAddress`).
+- More than 20 connection attempts from one address in ten seconds: blocked for a minute.
+- Five wrong passwords from one address in a minute: blocked for five minutes.
+- More than 400 messages a second on a connection (a client sends about 40): dropped, and the address blocked for a minute.
+- At most 30 answers a second to LAN searches.
+
+All of these go by address, so players behind one router share them, and an address is not a person: a banned player with a new address is back.
 
 ### TCP framing
 
@@ -63,7 +90,10 @@ Client to server:
 
 | Type | Payload | Meaning |
 |---|---|---|
-| Hello | magic `ABMN`, `u16` protocol version, name, password | First message. Answered by Welcome or Reject. |
+| KeyExchange | magic `ABMN`, `u16` protocol version, 32-byte public key | First message, in the clear. Answered by KeyExchange or Reject. |
+| Hello | name, 32-byte password proof | First encrypted message. Answered by Welcome or Reject. |
+| Ban | `u8` client id | Administrator. |
+| Unban | address | Administrator. |
 | Chat | text | |
 | Option | `u8` option, `i8` direction | Administrator: change a match setting one step left or right. The server knows the choices (e.g. the scheme list). |
 | Start | | Administrator: start the match. |
@@ -80,7 +110,8 @@ Server to client:
 
 | Type | Payload | Meaning |
 |---|---|---|
-| Welcome | client id, UDP token, server name | |
+| KeyExchange | 32-byte public key | In the clear. |
+| Welcome | client id, session number, server name | |
 | Reject | reason text | Wrong version, wrong password, server full, kicked. |
 | Lobby | phase, administrator, settings, ten seats, client list | Sent whenever any of it changes. |
 | Chat | sender id (255 = server), sender name, text | |
@@ -96,7 +127,7 @@ Server to client:
 
 | Type | Direction | Payload |
 |---|---|---|
-| Probe | C to S | token |
+| Probe | C to S | session number |
 | ProbeAck | S to C | |
 | Input | C to S | token, round id, last step held, four input bytes (one per player at that computer) |
 | Steps | S to C | as the TCP message |
@@ -143,6 +174,7 @@ The dedicated server reads the game data (tuning values, schemes, level extras) 
 - The roulette's wheel is not shown in network games; only its result is.
 - Port opening needs a router with UPnP switched on; it was tested against a simulated router only.
 - Clients trust the server's snapshots (see `../migration/networking.md`).
+- Encryption without identities: see "Encryption and the password" for what an attacker in the middle can still do.
 - Different versions of the program must not be mixed: the protocol version is raised whenever the simulation changes.
 
 Not covered by automated tests: behaviour on real links with loss and delay, NAT traversal (the host must be reachable on the port), more than a handful of clients.

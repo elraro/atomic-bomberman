@@ -4,6 +4,7 @@
 #include <cctype>
 
 #include <filesystem>
+#include <fstream>
 
 #include "game/roulette.hpp"
 #include "resources/settings.hpp"
@@ -18,6 +19,18 @@ constexpr std::uint64_t kRoundLeadMs = 1000;    // between RoundStart and the fi
 constexpr int kStepsAfterDecision = 20;         // the field stays on screen for a second
 constexpr std::uint64_t kResultMinMs = 1500;
 constexpr std::uint64_t kResultMaxMs = 10000;
+// Limits against misuse.
+constexpr std::uint64_t kForever = ~0ull;
+constexpr std::uint64_t kKickBlockMs = 5 * 60 * 1000;       // a kicked player's address stays out this long
+constexpr std::size_t kConnectsPerTenSeconds = 20;          // more from one address: blocked for a minute
+constexpr std::size_t kPasswordTriesPerMinute = 5;          // more wrong passwords: blocked for five minutes
+constexpr int kFramesPerSecond = 400;                       // a client sends about 40
+
+// "a.b.c.d" or "[x::y]" without the port: what bans and limits go by.
+std::string hostOf(const Address& a) {
+    const std::string text = a.text();
+    return text.substr(0, text.rfind(':'));
+}
 }  // namespace
 
 struct Server::Peer {
@@ -26,12 +39,17 @@ struct Server::Peer {
     bool joined = false;
     bool gone = false;
     std::string name;
-    std::uint32_t token = 0;
+    std::uint32_t token = 0;       // session number: names the connection in its datagrams (not a secret)
+    bool keyed = false;            // the key exchange is done
+    SessionKeys keys;
+    std::uint64_t udpSent = 0, udpReceived = 0;
     std::uint64_t order = 0;       // join order: the lowest is the administrator
     std::uint64_t connectedAt = 0;
     std::uint64_t lastHeard = 0;
     std::uint64_t lastChat = 0;
     std::uint64_t lastSnapshot = 0;
+    std::uint64_t frameWindowAt = 0;
+    int frames = 0;
     std::array<int, kMaxLocalPlayers> seats{-1, -1, -1, -1};  // one per player at that computer
     int wanted = 1;                // players at that computer
     bool seated() const { return seats[0] >= 0 || seats[1] >= 0 || seats[2] >= 0 || seats[3] >= 0; }
@@ -87,6 +105,19 @@ bool Server::start(const ServerConfig& config) {
             if (ext == ".cam") campaigns_.emplace_back(entry.path().stem().string(), entry.path().string());
         }
         std::sort(campaigns_.begin(), campaigns_.end());
+    }
+    blocked_.clear();
+    connects_.clear();
+    passwordFails_.clear();
+    if (!config.banFile.empty()) {
+        std::ifstream in(config.banFile);
+        std::string line;
+        while (std::getline(in, line)) {
+            if (auto semi = line.find(';'); semi != std::string::npos) line.erase(semi);
+            line = cleanText(line, 64);
+            if (!line.empty()) blocked_[line] = kForever;
+        }
+        if (!bans().empty()) log("INFO  Banned addresses: " + std::to_string(bans().size()));
     }
     rng_ = Rng(config.seed != 0 ? config.seed : static_cast<std::uint32_t>(clockMs() * 2654435761u + 12345u));
     settings_ = config.settings;
@@ -167,6 +198,71 @@ void Server::broadcast(ServerMsg type, const std::vector<std::uint8_t>& payload)
 void Server::say(const std::string& text) {
     broadcast(ServerMsg::Chat, encoded(ChatMsg{kServerSender, "", text}));
     log("CHAT  * " + text);
+}
+
+void Server::block(const std::string& host, std::uint64_t untilMs) {
+    std::uint64_t& until = blocked_[host];
+    until = std::max(until, untilMs);
+}
+
+bool Server::blocked(const std::string& host) const {
+    const auto it = blocked_.find(host);
+    return it != blocked_.end() && it->second > now_;
+}
+
+std::vector<std::string> Server::bans() const {
+    std::vector<std::string> out;
+    for (const auto& [host, until] : blocked_)
+        if (until == kForever) out.push_back(host);
+    return out;
+}
+
+void Server::saveBans() const {
+    if (config_.banFile.empty()) return;
+    std::ofstream out(config_.banFile, std::ios::binary);
+    out << "; Addresses banned from this Atomic Bomberman server, one per line.\n";
+    for (const std::string& host : bans()) out << host << "\n";
+    if (!out) log("WARN  Cannot write the ban file " + config_.banFile);
+}
+
+bool Server::unban(const std::string& address) {
+    const auto it = blocked_.find(address);
+    if (it == blocked_.end() || it->second != kForever) return false;
+    blocked_.erase(it);
+    saveBans();
+    log("INFO  Unbanned " + address);
+    return true;
+}
+
+// Sends a player away. Kicked: the address may come back in five minutes. Banned: not until unbanned.
+void Server::remove(Peer& p, bool ban, const std::string& by) {
+    const std::string host = hostOf(p.socket.peer());
+    block(host, ban ? kForever : now_ + kKickBlockMs);
+    if (ban) saveBans();
+    log(std::string("INFO  ") + (ban ? "Banned" : "Kicked") + " name=\"" + p.name + "\" address=" + host + " by " + by);
+    say(p.name + (ban ? " was banned by " : " was removed by ") + by);
+    reject(p, ban ? "Banned by " + by : "Removed by " + by);
+}
+
+bool Server::kick(const std::string& name, bool ban) {
+    for (auto& p : peers_)
+        if (p->joined && !p->gone && p->name == name) {
+            remove(*p, ban, "the server");
+            return true;
+        }
+    return false;
+}
+
+void Server::passwordFailed(Peer& p) {
+    const std::string host = hostOf(p.socket.peer());
+    std::deque<std::uint64_t>& tries = passwordFails_[host];
+    tries.push_back(now_);
+    while (!tries.empty() && now_ - tries.front() > 60000) tries.pop_front();
+    if (tries.size() >= kPasswordTriesPerMinute) {
+        block(host, now_ + kKickBlockMs);
+        tries.clear();
+        log("WARN  Too many wrong passwords from " + host + ": blocked for five minutes");
+    }
 }
 
 void Server::tell(Peer& p, const std::string& text) {
@@ -322,15 +418,15 @@ void Server::handleHello(Peer& p, const std::vector<std::uint8_t>& payload) {
         p.gone = true;  // not one of ours
         return;
     }
-    if (hello.version != kProtocolVersion) {
-        reject(p, "Different game version (server protocol " + std::to_string(kProtocolVersion) + ", yours " +
-                      std::to_string(hello.version) + ")");
-        return;
-    }
-    if (!config_.password.empty() && hello.password != config_.password) {
-        reject(p, hello.password.empty() ? "This server needs a password" : "Wrong password");
-        log("INFO  Refused (password) from " + p.socket.peer().text());
-        return;
+    if (!config_.password.empty()) {
+        const Key expected = passwordProof(config_.password, p.keys.master);
+        if (!equalConstantTime(expected.data(), hello.proof.data(), expected.size())) {
+            const bool none = hello.proof == Key{};
+            reject(p, none ? "This server needs a password" : "Wrong password");
+            log("INFO  Refused (password) from " + p.socket.peer().text());
+            passwordFailed(p);
+            return;
+        }
     }
     // A free id and a name nobody else has.
     for (int id = 0; id < 255; ++id)
@@ -347,7 +443,13 @@ void Server::handleHello(Peer& p, const std::vector<std::uint8_t>& payload) {
     };
     for (int n = 2; taken(name); ++n) name = cleanText(hello.name.empty() ? "Player" : hello.name, kMaxName - 2) + " " + std::to_string(n);
     p.name = name;
-    p.token = static_cast<std::uint32_t>(rng_.next()) << 17 ^ static_cast<std::uint32_t>(rng_.next()) << 2 ^ static_cast<std::uint32_t>(now_);
+    for (bool unique = false; !unique;) {
+        std::uint8_t raw[4];
+        randomBytes(raw, 4);
+        p.token = static_cast<std::uint32_t>(raw[0]) | (static_cast<std::uint32_t>(raw[1]) << 8) | (static_cast<std::uint32_t>(raw[2]) << 16) | (static_cast<std::uint32_t>(raw[3]) << 24);
+        unique = true;
+        for (auto& q : peers_) unique = unique && (q.get() == &p || !q->joined || q->token != p.token);
+    }
     p.order = ++joinCounter_;
     p.joined = true;
     p.seats = {-1, -1, -1, -1};
@@ -379,6 +481,45 @@ void Server::applyInput(Peer& p, const InputMsg& m) {
 
 void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint8_t>& payload) {
     p.lastHeard = now_;
+    // Far more messages than a game client ever sends: not a game client.
+    if (now_ - p.frameWindowAt >= 1000) p.frameWindowAt = now_, p.frames = 0;
+    if (++p.frames > kFramesPerSecond) {
+        const std::string host = hostOf(p.socket.peer());
+        log("WARN  Flood of messages from " + host + ": dropped and blocked for a minute");
+        block(host, now_ + 60000);
+        p.gone = true;
+        return;
+    }
+    if (!p.keyed) {
+        // The first message, in the clear: the client's public key. Ours goes back the same
+        // way, and from then on both directions are encrypted.
+        ByteReader r(payload);
+        const std::uint32_t magic = r.u32();
+        const std::uint16_t version = r.u16();
+        Key theirs{};
+        for (std::uint8_t& b : theirs) b = r.u8();
+        if (static_cast<ClientMsg>(type) != ClientMsg::KeyExchange || magic != kTcpMagic || !r.ok()) {
+            p.gone = true;  // not one of ours
+            return;
+        }
+        if (version != kProtocolVersion) {
+            reject(p, "Different game version (server protocol " + std::to_string(kProtocolVersion) + ", yours " + std::to_string(version) + ")");
+            return;
+        }
+        Key secret{};
+        randomBytes(secret.data(), secret.size());
+        const Key ours = x25519Base(secret);
+        if (!deriveSession(secret, theirs, theirs, ours, p.keys)) {
+            p.gone = true;
+            return;
+        }
+        ByteWriter w;
+        for (std::uint8_t b : ours) w.u8(b);
+        p.socket.send(static_cast<std::uint8_t>(ServerMsg::KeyExchange), w.data());
+        p.socket.setKeys(p.keys.toClient, p.keys.toServer);
+        p.keyed = true;
+        return;
+    }
     if (!p.joined) {
         if (static_cast<ClientMsg>(type) == ClientMsg::Hello) handleHello(p, payload);
         else p.gone = true;
@@ -427,8 +568,21 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
             const std::uint8_t id = r.u8();
             Peer* target = r.ok() ? peerById(id) : nullptr;
             if (&p != admin() || target == nullptr || target == &p) break;
-            say(target->name + " was removed by the administrator");
-            reject(*target, "Removed by the administrator");
+            remove(*target, false, "the administrator");
+            break;
+        }
+        case ClientMsg::Ban: {
+            const std::uint8_t id = r.u8();
+            Peer* target = r.ok() ? peerById(id) : nullptr;
+            if (&p != admin() || target == nullptr || target == &p) break;
+            tell(p, target->name + "'s address is " + hostOf(target->socket.peer()) + " (to lift the ban: /unban " + hostOf(target->socket.peer()) + ")");
+            remove(*target, true, "the administrator");
+            break;
+        }
+        case ClientMsg::Unban: {
+            const std::string address = cleanText(r.text(128), 64);
+            if (!r.ok() || &p != admin()) break;
+            tell(p, unban(address) ? address + " may join again" : "No ban on " + address);
             break;
         }
         case ClientMsg::Input: {
@@ -466,45 +620,45 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
 }
 
 void Server::handleDatagram(const Address& from, const std::vector<std::uint8_t>& data, bool viaDiscovery) {
+    // A connection's datagram: sealed with that connection's key and numbered. Whatever does
+    // not open, or repeats an old number, is dropped without an answer.
+    std::uint32_t session = 0;
+    std::uint64_t counter = 0;
+    if (peekSealed(data, &session, &counter)) {
+        if (viaDiscovery) return;
+        for (auto& p : peers_) {
+            if (!p->joined || p->gone || p->token != session) continue;
+            std::vector<std::uint8_t> inner;
+            if (counter <= p->udpReceived || !openSealed(data, p->keys.udpToServer, inner)) return;
+            p->udpReceived = counter;
+            p->udpKnown = true;
+            p->udpAddress = from;  // follows a changed NAT mapping; only the key holder can cause this
+            p->lastHeard = now_;
+            ByteReader r(inner);
+            if (r.u32() != kUdpMagic) return;
+            const auto type = static_cast<UdpMsg>(r.u8());
+            if (type == UdpMsg::Probe) {
+                udp_.sendTo(from, sealDatagram(p->token, ++p->udpSent, p->keys.udpToClient, datagram(UdpMsg::ProbeAck)));
+            } else if (type == UdpMsg::Input) {
+                InputMsg m;
+                if (decode(r, m)) applyInput(*p, m);
+            }
+            return;
+        }
+        return;
+    }
+    // In the clear: only a search for servers.
     ByteReader r(data);
-    if (r.u32() != kUdpMagic) return;
-    const auto type = static_cast<UdpMsg>(r.u8());
-    if (!r.ok()) return;
-    if (type == UdpMsg::Query) {
-        if (!config_.discoverable) return;
-        ServerInfo info;
-        info.port = listener_.port();
-        info.name = config_.name;
-        info.players = players();
-        info.phase = phase_;
-        info.password = !config_.password.empty();
-        // Answered from the socket the question came to.
-        (viaDiscovery ? discovery_ : udp_).sendTo(from, datagram(UdpMsg::Info, info));
-        return;
-    }
-    if (type == UdpMsg::Probe) {
-        const std::uint32_t token = r.u32();
-        if (!r.ok()) return;
-        for (auto& p : peers_)
-            if (p->joined && !p->gone && p->token == token) {
-                p->udpKnown = true;
-                p->udpAddress = from;
-                p->lastHeard = now_;
-                udp_.sendTo(from, datagram(UdpMsg::ProbeAck));
-            }
-        return;
-    }
-    if (type == UdpMsg::Input) {
-        InputMsg m;
-        if (!decode(r, m)) return;
-        for (auto& p : peers_)
-            if (p->joined && !p->gone && p->token == m.token) {
-                p->udpAddress = from;  // follows a changed NAT mapping
-                p->udpKnown = true;
-                p->lastHeard = now_;
-                applyInput(*p, m);
-            }
-    }
+    if (r.u32() != kUdpMagic || static_cast<UdpMsg>(r.u8()) != UdpMsg::Query || !r.ok() || !config_.discoverable) return;
+    if (now_ - infoWindowAt_ >= 1000) infoWindowAt_ = now_, infoSent_ = 0;
+    if (++infoSent_ > 30) return;  // a flood of searches gets no more answers this second
+    ServerInfo info;
+    info.port = listener_.port();
+    info.name = config_.name;
+    info.players = players();
+    info.phase = phase_;
+    info.password = !config_.password.empty();
+    (viaDiscovery ? discovery_ : udp_).sendTo(from, datagram(UdpMsg::Info, info));
 }
 
 std::string Server::startMatch() {
@@ -702,7 +856,7 @@ void Server::sendSteps(Peer& p) {
         // Everything the client has not acknowledged, so a lost datagram needs no request.
         const std::uint32_t from = p.ackRound == roundId_ ? std::min(p.ackStep, total) : 0;
         const std::uint32_t count = std::min<std::uint32_t>(total - from, kMaxStepsPerMessage);
-        if (count > 0) udp_.sendTo(p.udpAddress, datagram(UdpMsg::Steps, message(from, count)));
+        if (count > 0) udp_.sendTo(p.udpAddress, sealDatagram(p.token, ++p.udpSent, p.keys.udpToClient, datagram(UdpMsg::Steps, message(from, count))));
         return;
     }
     while (p.sentStep < total) {
@@ -765,6 +919,19 @@ void Server::update(std::uint64_t nowMs) {
 
     while (auto socket = listener_.accept()) {
         if (peers_.size() >= kMaxConnections) continue;  // dropped: the socket closes here
+        const std::string host = hostOf(socket->peer());
+        if (blocked(host)) continue;
+        std::deque<std::uint64_t>& recent = connects_[host];
+        recent.push_back(now_);
+        while (!recent.empty() && now_ - recent.front() > 10000) recent.pop_front();
+        if (recent.size() > kConnectsPerTenSeconds) {
+            block(host, now_ + 60000);
+            log("WARN  Too many connections from " + host + ": blocked for a minute");
+            continue;
+        }
+        int same = 0;
+        for (const auto& q : peers_) same += !q->gone && hostOf(q->socket.peer()) == host ? 1 : 0;
+        if (same >= config_.maxPerAddress) continue;
         auto p = std::make_unique<Peer>();
         p->socket = std::move(*socket);
         p->connectedAt = p->lastHeard = now_;

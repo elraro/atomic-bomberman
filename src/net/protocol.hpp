@@ -11,12 +11,13 @@
 
 #include "game/match.hpp"
 #include "game/world.hpp"
+#include "net/crypto.hpp"
 
 namespace ab::net {
 
 inline constexpr std::uint32_t kTcpMagic = 0x4E4D4241u;  // "ABMN"
 inline constexpr std::uint32_t kUdpMagic = 0x554D4241u;  // "ABMU"
-inline constexpr std::uint16_t kProtocolVersion = 2;
+inline constexpr std::uint16_t kProtocolVersion = 3;
 inline constexpr std::uint16_t kDefaultPort = 27410;
 // Every server also listens here for searches on the local network, whatever its own port.
 inline constexpr std::uint16_t kDiscoveryPort = 27409;
@@ -27,8 +28,11 @@ inline constexpr std::size_t kMaxChat = 120;
 inline constexpr std::uint8_t kServerSender = 255;
 inline constexpr int kMaxLocalPlayers = 4;  // players at one computer
 
-enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, UdpState, NeedState, Continue, Pong, Locals };
-enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Steps, RoundEnd, Snapshot, Ping };
+// Key is the one message sent unencrypted in each direction (and Reject, when the versions differ).
+enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, UdpState, NeedState, Continue, Pong, Locals, Ban, Unban, KeyExchange = 100 };
+enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Steps, RoundEnd, Snapshot, Ping, KeyExchange = 100 };
+// A datagram of a connection: its contents are encrypted. Searches on the LAN stay in the clear.
+inline constexpr std::uint8_t kSealedDatagram = 0x80;
 enum class UdpMsg : std::uint8_t { Probe = 1, ProbeAck, Input, Steps, Query, Info };
 
 enum class Phase : std::uint8_t { Lobby = 0, Round = 1, Result = 2 };
@@ -58,6 +62,7 @@ public:
     void u8(std::uint8_t v) { out_.push_back(v); }
     void u16(std::uint16_t v);
     void u32(std::uint32_t v);
+    void u64(std::uint64_t v) { u32(static_cast<std::uint32_t>(v)), u32(static_cast<std::uint32_t>(v >> 32)); }
     void i8(int v) { u8(static_cast<std::uint8_t>(static_cast<std::int8_t>(v))); }
     void i16(int v) { u16(static_cast<std::uint16_t>(static_cast<std::int16_t>(v))); }
     void i32(int v) { u32(static_cast<std::uint32_t>(v)); }
@@ -78,6 +83,10 @@ public:
     std::uint8_t u8();
     std::uint16_t u16();
     std::uint32_t u32();
+    std::uint64_t u64() {
+        const std::uint64_t lo = u32();
+        return lo | (static_cast<std::uint64_t>(u32()) << 32);
+    }
     int i8() { return static_cast<std::int8_t>(u8()); }
     int i16() { return static_cast<std::int16_t>(u16()); }
     int i32() { return static_cast<std::int32_t>(u32()); }
@@ -148,7 +157,7 @@ struct LobbyState {
 struct HelloMsg {
     std::uint16_t version = kProtocolVersion;
     std::string name;
-    std::string password;
+    Key proof{};  // passwordProof() for this connection; zeros when no password was given
 };
 
 struct WelcomeMsg {
@@ -258,6 +267,13 @@ std::vector<std::uint8_t> datagram(UdpMsg type, const M& m) {
     return std::move(w.data());
 }
 std::vector<std::uint8_t> datagram(UdpMsg type);
+
+// A connection's datagram: magic, kSealedDatagram, session number, message counter (these in
+// the clear but authenticated), then the encrypted inner datagram.
+std::vector<std::uint8_t> sealDatagram(std::uint32_t session, std::uint64_t counter, const Key& key, const std::vector<std::uint8_t>& inner);
+// The header of a sealed datagram; false if it is not one.
+bool peekSealed(const std::vector<std::uint8_t>& data, std::uint32_t* session, std::uint64_t* counter);
+bool openSealed(const std::vector<std::uint8_t>& data, const Key& key, std::vector<std::uint8_t>& inner);
 
 // Printable text of at most maxLength bytes: control characters removed, cut at a character boundary.
 std::string cleanText(const std::string& s, std::size_t maxLength);

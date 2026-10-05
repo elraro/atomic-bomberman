@@ -4,7 +4,9 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -30,6 +32,8 @@ struct ServerConfig {
     std::uint32_t seed = 0;             // 0: taken from the clock
     bool discoverable = true;           // answer LAN queries
     bool upnp = false;                  // ask the router to forward the port (UPnP)
+    std::string banFile;                // banned addresses, one per line (empty: bans last until the server stops)
+    int maxPerAddress = 10;             // connections accepted from one address at a time
     std::function<void(const std::string&)> log;  // one line per event; may be empty
 };
 
@@ -58,6 +62,11 @@ public:
     const MatchScore& score() const { return score_; }
     // A line in everyone's chat, from the server.
     void say(const std::string& text);
+    // For the server's own console. Kicking keeps the address out for five minutes; a ban
+    // keeps it out until it is lifted. False if nobody has that name / the address is not banned.
+    bool kick(const std::string& name, bool ban);
+    bool unban(const std::string& address);
+    std::vector<std::string> bans() const;
 
 private:
     struct Peer;
@@ -65,6 +74,11 @@ private:
     void log(const std::string& line) const;
     void handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint8_t>& payload);
     void handleHello(Peer& p, const std::vector<std::uint8_t>& payload);
+    void passwordFailed(Peer& p);
+    void remove(Peer& p, bool ban, const std::string& by);
+    void block(const std::string& host, std::uint64_t untilMs);
+    bool blocked(const std::string& host) const;
+    void saveBans() const;
     void handleDatagram(const Address& from, const std::vector<std::uint8_t>& data, bool viaDiscovery);
     void applyInput(Peer& p, const InputMsg& m);
     void changeOption(Option option, int direction);
@@ -124,6 +138,12 @@ private:
     bool lobbyDirty_ = true;
     std::uint64_t lobbySentAt_ = 0;
     std::uint64_t pingSentAt_ = 0;
+    std::uint64_t infoWindowAt_ = 0;
+    int infoSent_ = 0;
+    // Addresses kept out: until a time, or for good (kForever, written to the ban file).
+    std::map<std::string, std::uint64_t> blocked_;
+    std::map<std::string, std::deque<std::uint64_t>> connects_;        // recent connection times per address
+    std::map<std::string, std::deque<std::uint64_t>> passwordFails_;   // recent wrong passwords per address
 
     // Match and round.
     MatchScore score_;

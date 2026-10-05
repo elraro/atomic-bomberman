@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "net/crypto.hpp"
+
 namespace ab::net {
 
 // Once per process before any socket is used (Winsock start-up; ignores SIGPIPE elsewhere).
@@ -62,6 +64,12 @@ public:
     bool connected() const { return connected_; }
     const Address& peer() const { return peer_; }
 
+    // From now on every frame sent is encrypted with one key and every frame received must
+    // decrypt with the other (ChaCha20-Poly1305, numbered per direction). A frame that does
+    // not is the end of the connection.
+    void setKeys(const Key& sendKey, const Key& receiveKey);
+    bool encrypted() const { return encrypted_; }
+
     // Queues a frame. Sent by pump().
     void send(std::uint8_t type, const std::vector<std::uint8_t>& payload);
     // Reads what has arrived and writes what is queued. False once the connection is gone
@@ -81,6 +89,9 @@ private:
     Address peer_{};
     std::vector<std::uint8_t> in_;
     std::vector<std::uint8_t> out_;
+    bool encrypted_ = false;
+    Key sendKey_{}, receiveKey_{};
+    std::uint64_t sent_ = 0, received_ = 0;
 };
 
 class TcpListener {

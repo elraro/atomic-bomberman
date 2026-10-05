@@ -121,20 +121,51 @@ std::vector<std::uint8_t> datagram(UdpMsg type) {
     return std::move(w.data());
 }
 
+namespace {
+constexpr std::size_t kSealedHeader = 4 + 1 + 4 + 8;
+}
+
+std::vector<std::uint8_t> sealDatagram(std::uint32_t session, std::uint64_t counter, const Key& key, const std::vector<std::uint8_t>& inner) {
+    ByteWriter w;
+    w.u32(kUdpMagic);
+    w.u8(kSealedDatagram);
+    w.u32(session);
+    w.u64(counter);
+    const std::vector<std::uint8_t> sealed = seal(key, counterNonce(counter), w.data().data(), kSealedHeader, inner.data(), inner.size());
+    w.data().insert(w.data().end(), sealed.begin(), sealed.end());
+    return std::move(w.data());
+}
+
+bool peekSealed(const std::vector<std::uint8_t>& data, std::uint32_t* session, std::uint64_t* counter) {
+    if (data.size() < kSealedHeader + 16) return false;
+    ByteReader r(data);
+    if (r.u32() != kUdpMagic || r.u8() != kSealedDatagram) return false;
+    *session = r.u32();
+    *counter = r.u64();
+    return true;
+}
+
+bool openSealed(const std::vector<std::uint8_t>& data, const Key& key, std::vector<std::uint8_t>& inner) {
+    std::uint32_t session = 0;
+    std::uint64_t counter = 0;
+    if (!peekSealed(data, &session, &counter)) return false;
+    return open(key, counterNonce(counter), data.data(), kSealedHeader, data.data() + kSealedHeader, data.size() - kSealedHeader, inner);
+}
+
 // --- messages ----------------------------------------------------------------
 
 void encode(ByteWriter& w, const HelloMsg& m) {
     w.u32(kTcpMagic);
     w.u16(m.version);
     w.text(m.name);
-    w.text(m.password);
+    for (std::uint8_t b : m.proof) w.u8(b);
 }
 
 bool decode(ByteReader& r, HelloMsg& m) {
     if (r.u32() != kTcpMagic) return false;
     m.version = r.u16();
     m.name = r.text(64);
-    m.password = r.text(64);
+    for (std::uint8_t& b : m.proof) b = r.u8();
     return r.ok();
 }
 
