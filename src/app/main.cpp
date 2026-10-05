@@ -395,8 +395,10 @@ int main(int argc, char** argv) {
         int setupRow = 0;
         bool teamPlay = cfg.teamPlay;
         std::array<int, ab::kMaxPlayers> teams{};
+        int teamsFromScheme = -1;
         if (!opt.gameDir.empty())
             if (auto sf = ab::loadSchemeFile(opt.gameDir + "/data/schemes/" + opt.scheme + ".sch")) teams = sf->team;
+        teamsFromScheme = schemeIndex;
 
         auto spritesPtr = std::make_unique<ab::SpriteBank>();
         if (!opt.gameDir.empty() && !opt.shapes) spritesPtr->load(opt.gameDir, level);
@@ -411,7 +413,10 @@ int main(int argc, char** argv) {
             if (!schemes.empty())
                 if (auto sf = ab::loadSchemeFile(opt.gameDir + "/data/schemes/" + schemes[static_cast<std::size_t>(schemeIndex)].file + ".sch")) {
                     scheme = sf->scheme;
-                    teams = sf->team;
+                    // The scheme gives the teams; choices made with T on the player list stay
+                    // until another scheme is chosen.
+                    if (teamsFromScheme != schemeIndex) teams = sf->team;
+                    teamsFromScheme = schemeIndex;
                 }
         };
         auto saveSettings = [&]() {
@@ -776,16 +781,42 @@ int main(int argc, char** argv) {
                         campaignRow = 0;
                         screen = Screen::CampaignList;
                     }
+                    if (key == SDLK_T) {
+                        // Original 0x4119DD: the selected player changes team; a seat that is off refuses.
+                        if (c != Control::Off) {
+                            int& t = teams[static_cast<std::size_t>(listRow)];
+                            t = t == 0 ? 1 : 0;
+                            teamsFromScheme = schemeIndex;
+                        } else if (sound) {
+                            audio.playRange(40, 49);
+                        }
+                    }
+                    if (key == SDLK_0) c = Control::Off;  // original key '0'
                     if (key == SDLK_RETURN) {
                         int n = 0, humans = 0;
-                        for (Control k : control) {
-                            n += k != Control::Off ? 1 : 0;
-                            humans += k != Control::Off && k != Control::Ai ? 1 : 0;
+                        std::array<int, 2> perTeam{};
+                        bool shared = false;
+                        for (int i = 0; i < ab::kMaxPlayers; ++i) {
+                            const Control k = control[static_cast<std::size_t>(i)];
+                            if (k == Control::Off) continue;
+                            ++n;
+                            humans += k != Control::Ai ? 1 : 0;
+                            ++perTeam[static_cast<std::size_t>(teams[static_cast<std::size_t>(i)] & 1)];
+                            for (int j = 0; j < i; ++j)
+                                if (k != Control::Ai && control[static_cast<std::size_t>(j)] == k) shared = true;
                         }
-                        if (campaignMode) {
+                        // The original's three checks (0x411BA9-0x411C62), each a "Problem!!" notice.
+                        auto back = [&]() { screen = Screen::PlayerList; };
+                        if (shared) {
+                            showMessage({"Problem!!", "More than one player selected to an input device!"}, back);  // message 45
+                        } else if (campaignMode) {
                             // No level screen and no two-player minimum in a campaign.
                             if (humans >= 1) startCampaignStage();
-                        } else if (n >= 2) {
+                        } else if (n < 2) {
+                            showMessage({"Problem!!", "Must have at least two players selected!"}, back);  // message 46
+                        } else if (teamPlay && (perTeam[0] == 0 || perTeam[1] == 0)) {
+                            showMessage({"Problem!!", "Must have at least one player on each team!"}, back);  // message 48
+                        } else {
                             screen = Screen::LevelSetup;
                         }
                     }
@@ -1279,13 +1310,15 @@ int main(int argc, char** argv) {
                     {0.95f, 0.95f, 0.95f}, {0.55f, 0.55f, 0.55f}, {0.90f, 0.15f, 0.15f}, {0.20f, 0.35f, 0.95f}, {0.15f, 0.80f, 0.20f},
                     {0.95f, 0.90f, 0.15f}, {0.15f, 0.85f, 0.85f}, {0.90f, 0.20f, 0.90f}, {0.95f, 0.55f, 0.10f}, {0.55f, 0.20f, 0.90f}};
                 for (int i = 0; i < ab::kMaxPlayers; ++i) {
-                    const std::string line = "Player " + std::to_string(i + 1) + ": " + controlName(control[static_cast<std::size_t>(i)]);
+                    std::string line = "Player " + std::to_string(i + 1) + ": " + controlName(control[static_cast<std::size_t>(i)]);
+                    if (teamPlay && control[static_cast<std::size_t>(i)] != Control::Off)
+                        line += std::string("   TEAM ") + (teams[static_cast<std::size_t>(i)] == 0 ? "1 (white)" : "2 (red)");
                     const float y = 170.0f + 24.0f * static_cast<float>(i);
                     renderer.text(*spritesPtr, line, 71, y + 1, 0, 0, 0);
                     renderer.text(*spritesPtr, line, 70, y, colour[i][0], colour[i][1], colour[i][2]);
                 }
                 renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 56.0f, 185.0f + 24.0f * static_cast<float>(listRow));
-                renderer.text(*spritesPtr, "Up/Down: select   Left: off   Right: change   Enter: start", 60, 440, 0.4f, 1.0f, 1.0f);
+                renderer.text(*spritesPtr, teamPlay ? "Up/Down: select   Left: off   Right: change   T: team   Enter: start" : "Up/Down: select   Left: off   Right: change   Enter: start", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             }
 

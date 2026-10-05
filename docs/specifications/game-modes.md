@@ -79,3 +79,9 @@ A hidden, visibly unfinished mode of the original, recovered from `campaign.c` a
 - The last-player-standing rule is off (the original reports two contenders at all times); the closing walls still run.
 - After the last stage: "Congratulations! You made it through the whole campaign!" and back to the menu.
 - The value 1205 ("chance that the direction change will NOT be towards a human") is not used by the code that was read.
+
+## Player list checks and teams
+
+- T on the player list moves the selected player to the other team (refused with a "can't do that" sound for a seat that is off); 0 switches the seat off. [S]
+- Starting is refused with a "Problem!!" notice when two players share an input device (message 45), when fewer than two players are selected (46, not in campaign mode), or, in team play, when a team is empty (48). [S]
+- Teams first come from the scheme file. In this implementation a choice made with T stays until another scheme is selected. [M]
