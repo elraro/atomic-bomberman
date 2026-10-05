@@ -45,11 +45,21 @@ jobs:
           mkdir -p package/atomic-bomberman-modern
           cp build/atomic build/atomic_server README.md INSTALL.md LICENSE package/atomic-bomberman-modern/
           tar -C package -czf atomic-bomberman-modern-linux-x86_64.tar.gz atomic-bomberman-modern
+          # The dedicated network server on its own: no window, no SDL.
+          mkdir -p package/atomic-bomberman-server
+          cp build/atomic_server README.md INSTALL.md LICENSE package/atomic-bomberman-server/
+          tar -C package -czf atomic-bomberman-server-linux-x86_64.tar.gz atomic-bomberman-server
 
       - uses: actions/upload-artifact@v7
         with:
           name: atomic-bomberman-modern-linux-x86_64
           path: atomic-bomberman-modern-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: atomic-bomberman-server-linux-x86_64
+          path: atomic-bomberman-server-linux-x86_64.tar.gz
           if-no-files-found: error
 
   windows:
@@ -72,6 +82,16 @@ jobs:
           New-Item -ItemType Directory -Force package/atomic-bomberman-modern | Out-Null
           Copy-Item build/Release/atomic.exe, build/Release/atomic_server.exe, README.md, INSTALL.md, LICENSE package/atomic-bomberman-modern/
           Compress-Archive -Path package/atomic-bomberman-modern -DestinationPath atomic-bomberman-modern-windows-x64.zip
+          # The dedicated network server on its own: no window, no SDL.
+          New-Item -ItemType Directory -Force package/atomic-bomberman-server | Out-Null
+          Copy-Item build/Release/atomic_server.exe, README.md, INSTALL.md, LICENSE package/atomic-bomberman-server/
+          Compress-Archive -Path package/atomic-bomberman-server -DestinationPath atomic-bomberman-server-windows-x64.zip
+
+      - name: Check that the server starts
+        shell: pwsh
+        run: |
+          package/atomic-bomberman-server/atomic_server.exe --help
+          "quit" | package/atomic-bomberman-server/atomic_server.exe --port 27411 --hidden
 
       - uses: actions/upload-artifact@v7
         with:
@@ -79,8 +99,14 @@ jobs:
           path: atomic-bomberman-modern-windows-x64.zip
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@v7
+        with:
+          name: atomic-bomberman-server-windows-x64
+          path: atomic-bomberman-server-windows-x64.zip
+          if-no-files-found: error
+
   release:
-    # On a version tag (v*), attach both packages to a GitHub release.
+    # On a version tag (v*), attach the packages to a GitHub release.
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [linux, windows]
     runs-on: ubuntu-24.04
@@ -95,3 +121,5 @@ jobs:
           files: |
             atomic-bomberman-modern-linux-x86_64.tar.gz
             atomic-bomberman-modern-windows-x64.zip
+            atomic-bomberman-server-linux-x86_64.tar.gz
+            atomic-bomberman-server-windows-x64.zip

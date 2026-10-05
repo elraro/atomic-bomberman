@@ -9,12 +9,14 @@ You need:
 
 ## 1. Get the program
 
-**Download.** Each push to the repository builds two packages with GitHub Actions (workflow "build"):
+**Download.** Each push to the repository builds four packages with GitHub Actions (workflow "build"):
 
 | Package | For |
 |---|---|
 | `atomic-bomberman-modern-linux-x86_64.tar.gz` | 64-bit Linux with X11 or Wayland |
 | `atomic-bomberman-modern-windows-x64.zip` | 64-bit Windows 10 or later |
+| `atomic-bomberman-server-linux-x86_64.tar.gz` | Only the dedicated network server, Linux (no graphics needed) |
+| `atomic-bomberman-server-windows-x64.zip` | Only the dedicated network server, Windows |
 
 They are attached to the workflow run (Actions → build → latest run → Artifacts) and, for tagged versions (`v*`), to the release page. Unpack the package anywhere; it holds the game (`atomic` or `atomic.exe`), the dedicated network server (`atomic_server` or `atomic_server.exe`), the README, the license and this file. Nothing else needs installing: SDL3 is built into the program. A graphics driver with OpenGL 3.3 is required.
 
