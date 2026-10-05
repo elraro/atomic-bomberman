@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "app/editor.hpp"
+#include "app/import_screen.hpp"
 #include "app/names.hpp"
 #include "app/net_ui.hpp"
 #include "app/touch.hpp"
@@ -48,6 +49,8 @@ struct Options {
     std::string screenshot;   // write the last frame as a PPM file
     std::string importFrom;   // --import-assets: build the asset folder from this original game folder and exit
     std::string assetsDir;    // --assets-dir: where --import-assets writes (default: the per-user data folder)
+    std::string importFolder; // --import-folder: a folder looked at on every start for a copy of the original game to convert
+    std::string importShot;   // automated: save pictures of the import screens as PREFIX-<screen>.ppm
     bool allSounds = false;   // --all-sounds: import also the sounds the game never plays (for the sound test)
     int menuShot = 0;         // automated: 1 = capture the main menu, 2 = the player list, ... 10-13 the network screens
     bool resultShot = false;  // automated: capture the result screen of the first decided round and exit
@@ -99,6 +102,8 @@ Options parseArgs(int argc, char** argv) {
                       "  --version            print the release number and exit\n"
                       "  --import-assets DIR  import the data of an original game copy, then exit\n"
                       "  --assets-dir DIR     where --import-assets writes (default: per-user data folder)\n"
+                      "  --import-folder DIR  look in DIR on every start for a copy of the original game, and convert it\n"
+                      "                       when it is new or was converted by another release (what the Android app does)\n"
                       "  --all-sounds         with --import-assets: also the sounds on the disc that the game never plays\n"
                       "                       (about 180 MB more; hear them under Options, Sound Test)\n"
                       "  --game-dir DIR       imported assets or an original game folder to play from\n"
@@ -136,6 +141,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--start") o.menu = false;
         else if (a == "--import-assets") o.importFrom = next();
         else if (a == "--assets-dir") o.assetsDir = next();
+        else if (a == "--import-folder") o.importFolder = next();
+        else if (a == "--import-shot") o.importShot = next();
         else if (a == "--all-sounds") o.allSounds = true;
         else if (a == "--result-shot") o.resultShot = true;
         else if (a == "--script") {
@@ -394,15 +401,82 @@ int main(int argc, char** argv) {
         std::printf("Start the game without arguments to play.\n");
         return 0;
     }
-    const std::string requested = opt.gameDir;
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+        std::fprintf(stderr, "ERROR SDL_Init: %s\n", SDL_GetError());
+        return 1;
+    }
+    // Desktop: OpenGL 3.3. Phones (and --gles, for trying that path on a desktop): OpenGL ES 3.0.
+    ab::setOpenGLES(opt.gles);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, opt.gles ? 0 : 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, opt.gles ? SDL_GL_CONTEXT_PROFILE_ES : SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_Window* window = SDL_CreateWindow("Atomic Bomberman (modern)", opt.native ? 640 : 960, opt.native ? 480 : 720,
+#ifdef __ANDROID__
+                                          SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN);
+#else
+                                          SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+#endif
+    if (window == nullptr) {
+        std::fprintf(stderr, "ERROR SDL_CreateWindow: %s\n", SDL_GetError());
+        SDL_Quit();
+        return 1;
+    }
+    SDL_GLContext gl = SDL_GL_CreateContext(window);
+    if (gl == nullptr) {
+        std::fprintf(stderr, "ERROR SDL_GL_CreateContext: %s\n", SDL_GetError());
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+    if (!ab::loadOpenGL()) {
+        std::fprintf(stderr, "ERROR %s is not available on this system\n", opt.gles ? "OpenGL ES 3.0" : "OpenGL 3.3");
+        SDL_GL_DestroyContext(gl);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+    SDL_GL_SetSwapInterval(opt.frames > 0 ? 0 : 1);  // automated runs do not wait for the display
+    std::fprintf(stderr, "INFO  OpenGL %s\n", reinterpret_cast<const char*>(glGetString(GL_VERSION)));
+
+    std::string requested = opt.gameDir;
+    std::string freeDir = "free-assets";  // the free asset set, written once to the per-user folder
+    std::string noticeFile = "import-notice-shown.txt";
+    if (char* pref = SDL_GetPrefPath("atomic-bomberman-modern", "atomic")) {
+        freeDir = std::string(pref) + "free-assets";
+        noticeFile = std::string(pref) + noticeFile;
+        SDL_free(pref);
+    }
+    // The original game's data taken from a folder the user fills: on a phone there is no
+    // command line to import it with. Looked at on every start; converted when it is new
+    // or when the converted files were made by another release.
+#ifdef __ANDROID__
+    if (opt.importFolder.empty())
+        if (const char* shared = SDL_GetAndroidExternalStoragePath()) opt.importFolder = std::string(shared) + "/original";
+#endif
+    if (!opt.importFolder.empty() && requested.empty() && !opt.freeAssets && ab::ensureFreeAssets(freeDir, true)) {
+        ab::ImportScreens screens;
+        screens.folder = opt.importFolder;
+        screens.converted = opt.assetsDir.empty() ? userAssetsDir() : opt.assetsDir;
+        screens.release = AB_VERSION;
+        screens.noticeFile = noticeFile;
+        screens.fontDir = freeDir;
+        screens.automated = opt.frames > 0 || opt.menuShot > 0 || !opt.script.empty();
+        if (!opt.importShot.empty())
+            screens.picture = [&](const std::string& name, int w, int h) {
+                if (!name.empty()) writePpm(opt.importShot + "-" + name + ".ppm", w, h);
+            };
+        const bool goOn = ab::runImportScreens(window, screens);
+        if (!goOn) {
+            SDL_GL_DestroyContext(gl);
+            SDL_DestroyWindow(window);
+            SDL_Quit();
+            return 0;
+        }
+        if (!ab::importStamp(screens.converted).empty() && looksLikeGameDir(screens.converted)) requested = screens.converted;
+    }
     opt.gameDir = opt.freeAssets ? std::string() : findGameDir(requested);
     if (opt.gameDir.empty()) {
-        // No original game data: the free asset set, written once to the per-user folder.
-        std::string freeDir = "free-assets";
-        if (char* pref = SDL_GetPrefPath("atomic-bomberman-modern", "atomic")) {
-            freeDir = std::string(pref) + "free-assets";
-            SDL_free(pref);
-        }
+        // No original game data: the free asset set.
         if (ab::ensureFreeAssets(freeDir, true)) {
             opt.gameDir = freeDir;
             if (!opt.freeAssets)
@@ -468,44 +542,6 @@ int main(int argc, char** argv) {
         if (!extras.empty()) std::fprintf(stderr, "INFO  Loaded level extras count=%zu\n", extras.size());
     }
 
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
-        std::fprintf(stderr, "ERROR SDL_Init: %s\n", SDL_GetError());
-        return 1;
-    }
-    // Desktop: OpenGL 3.3. Phones (and --gles, for trying that path on a desktop): OpenGL ES 3.0.
-    ab::setOpenGLES(opt.gles);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, opt.gles ? 0 : 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, opt.gles ? SDL_GL_CONTEXT_PROFILE_ES : SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_Window* window = SDL_CreateWindow(opt.gameDir.empty() ? "Atomic Bomberman (modern) - no game files found: run with --game-dir PATH"
-                                                               : "Atomic Bomberman (modern)",
-                                          opt.native ? 640 : 960, opt.native ? 480 : 720,
-#ifdef __ANDROID__
-                                          SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN);
-#else
-                                          SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
-#endif
-    if (window == nullptr) {
-        std::fprintf(stderr, "ERROR SDL_CreateWindow: %s\n", SDL_GetError());
-        SDL_Quit();
-        return 1;
-    }
-    SDL_GLContext gl = SDL_GL_CreateContext(window);
-    if (gl == nullptr) {
-        std::fprintf(stderr, "ERROR SDL_GL_CreateContext: %s\n", SDL_GetError());
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
-    }
-    if (!ab::loadOpenGL()) {
-        std::fprintf(stderr, "ERROR %s is not available on this system\n", opt.gles ? "OpenGL ES 3.0" : "OpenGL 3.3");
-        SDL_GL_DestroyContext(gl);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
-    }
-    SDL_GL_SetSwapInterval(opt.frames > 0 ? 0 : 1);  // automated runs do not wait for the display
-    std::fprintf(stderr, "INFO  OpenGL %s\n", reinterpret_cast<const char*>(glGetString(GL_VERSION)));
 
     {
         ab::Renderer renderer;
