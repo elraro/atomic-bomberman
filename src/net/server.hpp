@@ -158,6 +158,7 @@ private:
     std::vector<std::uint8_t> roundStart_;  // the encoded RoundStart of the current round
     std::vector<std::uint8_t> roundEnd_;    // and its RoundEnd, once decided
     std::vector<StepInputs> history_;
+    std::vector<World::Secrets> secrets_;  // per step: random draws and hidden powerups looked at
     std::vector<std::uint32_t> hashes_;
     std::uint64_t roundStartAt_ = 0;
     bool decided_ = false;

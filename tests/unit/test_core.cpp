@@ -2084,6 +2084,78 @@ void testFreeAssets() {
     std::filesystem::remove_all(dir);
 }
 
+// Network play keeps secrets on the server: a client's world is given, step by step, only
+// the random numbers a step used and the hidden powerups it looked at, and still stays
+// in step with the server's.
+void testSecretsStayOnTheServer() {
+    const Values values = Values::defaults();
+    Scheme scheme = Scheme::pillars();
+    for (auto& row : scheme.tiles)
+        for (Tile& t : row)
+            if (t == Tile::Blank) t = Tile::Brick;
+    scheme.brickDensity = 90;
+    World server{values, 4711};
+    server.startRound(scheme, true);
+    for (int i = 0; i < 4; ++i) server.addPlayer(i);
+    int hiddenAtStart = 0;
+    for (int y = 0; y < kGridH; ++y)
+        for (int x = 0; x < kGridW; ++x) hiddenAtStart += server.powerup({x, y}).state == PowerupState::Hidden ? 1 : 0;
+    CHECK(hiddenAtStart > 20);
+    server.recordSecrets();
+    server.takeSecrets();
+
+    // The client: the same rules, another seed, and the server's public snapshot.
+    World client{values, 1};
+    client.startRound(scheme, true);
+    for (int i = 0; i < 4; ++i) client.addPlayer(i);
+    CHECK(client.loadState(server.saveState(true)));
+    client.replaySecrets();
+    auto hiddenKnown = [&] {
+        int n = 0;
+        for (int y = 0; y < kGridH; ++y)
+            for (int x = 0; x < kGridW; ++x) n += client.powerup({x, y}).state == PowerupState::Hidden ? 1 : 0;
+        return n;
+    };
+    CHECK_EQ(hiddenKnown(), 0);  // the snapshot told it nothing about what lies under the bricks
+    CHECK_EQ(client.stateHash(true), server.stateHash(true));
+    CHECK(client.stateHash(false) != server.stateHash(false));
+
+    std::vector<AiPlayer> ai;
+    for (int i = 0; i < 4; ++i) ai.emplace_back(static_cast<std::uint32_t>(60 + i));
+    int outOfStep = 0, differences = 0, draws = 0, looks = 0, revealed = 0, mostKnown = 0;
+    for (int t = 0; t < 6000 && !server.roundOver(); ++t) {
+        Inputs in{};
+        for (int i = 0; i < 4; ++i) in[static_cast<std::size_t>(i)] = ai[static_cast<std::size_t>(i)].decide(server, i, 50);
+        server.tick(50, in);
+        server.takeEvents();
+        const World::Secrets secrets = server.takeSecrets();
+        draws += static_cast<int>(secrets.draws.size());
+        looks += static_cast<int>(secrets.hidden.size());
+        client.feedSecrets(secrets);
+        client.tick(50, in);
+        for (const Event& e : client.takeEvents()) revealed += e.kind == EventKind::Pickup ? 1 : 0;
+        if (!client.secretsInStep()) ++outOfStep;
+        if (client.stateHash(true) != server.stateHash(true)) ++differences;
+        mostKnown = std::max(mostKnown, hiddenKnown());
+    }
+    CHECK(server.roundOver());
+    CHECK_EQ(outOfStep, 0);
+    CHECK_EQ(differences, 0);
+    CHECK(draws > 0);      // chance played a part,
+    CHECK(looks > 0);      // bricks were opened,
+    CHECK(revealed > 0);   // and powerups were picked up on the client's side too
+    // At no time did the client hold more than a handful of hidden powerups (those of the
+    // step in hand, and ones the early-round swap moved): never the map of them.
+    CHECK(mostKnown <= 6);
+    // Numbers that the step does not use are noticed (a client out of step with its server).
+    World wrong = client;
+    World::Secrets tooMany;
+    tooMany.draws.assign(500, 7);
+    wrong.feedSecrets(tooMany);
+    wrong.tick(50, Inputs{});
+    CHECK(!wrong.secretsInStep());
+}
+
 }  // namespace
 
 int main() {
@@ -2157,6 +2229,7 @@ int main() {
         {"determinism", testDeterminism},
         {"ai attack and start cell", testAiAttackKeepsAwayFromStart},
         {"state transfer", testStateTransfer},
+        {"secrets stay on the server", testSecretsStayOnTheServer},
         {"free assets", testFreeAssets},
     };
     for (const auto& [name, fn] : tests) {

@@ -400,10 +400,10 @@ void testRound(bool udp) {
         ++rounds;
         CHECK(playToResult(h, {&ann, &bob, &cat}));
         CHECK(h.server.phase() == Phase::Result);
-        const std::uint32_t hash = h.server.world()->stateHash();
-        CHECK_EQ(ann.world()->stateHash(), hash);
-        CHECK_EQ(bob.world()->stateHash(), hash);
-        CHECK_EQ(cat.world()->stateHash(), hash);
+        const std::uint32_t hash = h.server.world()->stateHash(true);
+        CHECK_EQ(ann.world()->stateHash(true), hash);
+        CHECK_EQ(bob.world()->stateHash(true), hash);
+        CHECK_EQ(cat.world()->stateHash(true), hash);
         CHECK_EQ(ann.stepsApplied(), h.server.steps());
         CHECK_EQ(cat.stepsApplied(), h.server.steps());
         CHECK_EQ(ann.udpActive(), udp);
@@ -443,7 +443,7 @@ void testLeaveDuringRound() {
     CHECK(h.server.phase() == Phase::Round);
     CHECK(bob.lobby().seats[0].kind == SeatKind::Computer);
     CHECK(playToResult(h, {&bob}));
-    CHECK_EQ(bob.world()->stateHash(), h.server.world()->stateHash());
+    CHECK_EQ(bob.world()->stateHash(true), h.server.world()->stateHash(true));
     // The last human leaves: the server goes back to the lobby and frees the seats.
     bob.disconnect();
     CHECK(h.until([&] { return h.server.phase() == Phase::Lobby && h.server.players() == 0; }));
@@ -469,7 +469,7 @@ void testUdpLoss() {
     CHECK(ann.udpActive());
     CHECK_EQ(ann.snapshotsLoaded(), 0);
     CHECK_EQ(ann.stepsApplied(), h.server.steps());
-    CHECK_EQ(ann.world()->stateHash(), h.server.world()->stateHash());
+    CHECK_EQ(ann.world()->stateHash(true), h.server.world()->stateHash(true));
     CHECK(h.server.steps() > 100);
 }
 
@@ -497,9 +497,9 @@ void testPrediction() {
         for (int waited = 0; waited < ms; waited += 5) {
             h.turn();
             if (ann.state() != Client::State::Round) break;
-            confirmed[ann.stepsApplied()] = ann.world()->stateHash();
+            confirmed[ann.stepsApplied()] = ann.world()->stateHash(true);
             if (ann.view() != ann.world()) {
-                predicted[ann.viewStep()] = ann.view()->stateHash();
+                predicted[ann.viewStep()] = ann.view()->stateHash(true);
                 ahead += static_cast<int>(ann.viewStep()) - static_cast<int>(ann.stepsApplied());
                 ++samples;
             }
@@ -533,7 +533,7 @@ void testPrediction() {
     // Bob has prediction off and Ann's guesses never touch what is confirmed: all agree with the server.
     CHECK(bob.view() == bob.world());
     h.spin(50);
-    if (ann.state() == Client::State::Round && ann.stepsApplied() == h.server.steps()) CHECK_EQ(ann.world()->stateHash(), h.server.world()->stateHash());
+    if (ann.state() == Client::State::Round && ann.stepsApplied() == h.server.steps()) CHECK_EQ(ann.world()->stateHash(true), h.server.world()->stateHash(true));
     CHECK_EQ(ann.snapshotsLoaded(), 0);
     // Ann drops a bomb: its sound is reported exactly once, whether the prediction or the
     // server's confirmation gets there first (over the loopback interface either may).
@@ -686,7 +686,7 @@ void testTwoPlayersOneComputer() {
     CHECK(w.player(2).facing == 2 && w.player(2).x == x2 && w.player(2).y >= y2);  // the second turned south, on its own input
     CHECK(ann.view() != ann.world());
     CHECK_EQ(ann.snapshotsLoaded() + bob.snapshotsLoaded(), 0);
-    CHECK(h.until([&] { return ann.stepsApplied() == h.server.steps() && ann.world()->stateHash() == h.server.world()->stateHash(); }, 3000));
+    CHECK(h.until([&] { return ann.stepsApplied() == h.server.steps() && ann.world()->stateHash(true) == h.server.world()->stateHash(true); }, 3000));
 }
 
 // The roulette over the network: the winner of one match starts the next with a prize.
@@ -736,7 +736,7 @@ void testNetRoulette() {
     // One more of it than a player without the prize (compare with the tuning value).
     if (type >= 0 && type != kPowClog) CHECK_EQ(ann.world()->player(winner).inventory[static_cast<std::size_t>(type)], Values::defaults().get(vid::kStartInventory + type) + 1);
     CHECK(ann.world()->player(winner).gold);
-    CHECK_EQ(ann.world()->stateHash() == h.server.world()->stateHash() || ann.stepsApplied() != h.server.steps(), true);
+    CHECK_EQ(ann.world()->stateHash(true) == h.server.world()->stateHash(true) || ann.stepsApplied() != h.server.steps(), true);
 }
 
 // A campaign played over the network, with the free asset set as the server's game data.
@@ -782,8 +782,8 @@ void testNetCampaign() {
     // hold the server's state, and the server's verdict decides what comes next.
     CHECK(playToResult(h, {&ann, &bob}));
     CHECK(ann.result().campaign == 1 || ann.result().campaign == 2);
-    CHECK_EQ(ann.world()->stateHash(), h.server.world()->stateHash());
-    CHECK_EQ(bob.world()->stateHash(), h.server.world()->stateHash());
+    CHECK_EQ(ann.world()->stateHash(true), h.server.world()->stateHash(true));
+    CHECK_EQ(bob.world()->stateHash(true), h.server.world()->stateHash(true));
     CHECK_EQ(ann.result().campaign, h.server.world()->campaignResult());
     const bool again = ann.result().campaign == 2 && h.server.world()->campaignRetry();
     ann.sendContinue();

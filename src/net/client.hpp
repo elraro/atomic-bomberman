@@ -108,12 +108,17 @@ public:
     void disableUdp() { udpAllowed_ = false; }
 
 private:
+    // One step as the server sent it: everybody's input and that step's secrets.
+    struct Step {
+        StepInputs inputs{};
+        World::Secrets secrets;
+    };
     void fail(const std::string& why);
     void handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& payload, std::uint64_t nowMs);
     void handleSteps(const StepsMsg& m);
     void beginRound(const RoundStartMsg& m, std::uint64_t nowMs);
     void sendInput(std::uint64_t nowMs);
-    void applyStep(const StepInputs& bytes, const EventSink& events);
+    void applyStep(const Step& step, const EventSink& events);
     void predict(const EventSink& events);
     bool ownAction(const Event& e) const;
 
@@ -147,7 +152,8 @@ private:
     RoundEndMsg end_;
     bool ended_ = false;             // RoundEnd received for this round
     std::unique_ptr<World> world_;
-    std::deque<StepInputs> queue_;   // received, not yet applied
+    std::deque<Step> queue_;         // received, not yet applied
+    bool ready_ = false;             // the round's starting state has arrived
     std::uint32_t applied_ = 0;
     std::map<std::uint32_t, std::uint32_t> hashes_;  // steps applied -> the server's hash
     bool awaitingState_ = false;

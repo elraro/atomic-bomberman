@@ -661,7 +661,7 @@ bool UdpSocket::sendTo(const Address& to, const std::vector<std::uint8_t>& data)
 
 bool UdpSocket::receiveFrom(Address& from, std::vector<std::uint8_t>& data) {
     if (fd_ == -1) return false;
-    char buffer[2048];
+    static thread_local char buffer[65536];  // a step with many random draws can be a large datagram
     sockaddr_storage sa{};
     SockLen len = sizeof sa;
     const auto n = ::recvfrom(native(fd_), buffer, sizeof buffer, 0, reinterpret_cast<sockaddr*>(&sa), &len);

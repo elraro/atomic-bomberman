@@ -621,7 +621,7 @@ void World::flyBomb(Bomb& b, int dt) {
                 b.flightPx = 0;
                 emit(EventKind::BombBounced, b.owner);
                 const bool blocked = tile(c) != Tile::Blank || bombAt(c) != nullptr ||
-                                     (inGrid(c) && powerups_[index(c)].state != PowerupState::None);
+                                     (inGrid(c) && look(c).state != PowerupState::None);
                 if (!blocked) {
                     if (const int victim = playerAt(c); victim >= 0) {
                         hitOnHead(victim);  // and bounce on
@@ -729,7 +729,7 @@ void World::scatterPowerup(int type) {
             c = {rng_.below(kGridW), rng_.below(kGridH)};
             if (--inner < 1) return;
         } while (tile(c) != Tile::Blank);
-        if (bombAt(c) == nullptr && powerups_[index(c)].state == PowerupState::None && !anyPlayerAt(c)) {
+        if (bombAt(c) == nullptr && look(c).state == PowerupState::None && !anyPlayerAt(c)) {
             powerups_[index(c)] = {PowerupState::Revealed, type};
             return;
         }
@@ -743,7 +743,7 @@ void World::destroyPowerup(Cell c) {
 }
 
 void World::revealPowerup(Cell c) {
-    Powerup& here = powerups_[index(c)];
+    Powerup& here = look(c);
     if (here.state != PowerupState::Hidden) return;
 
     // Early in the round, punch, grab and super disease are swapped away.
@@ -751,7 +751,7 @@ void World::revealPowerup(Cell c) {
         bool swapped = false;
         for (int attempt = 0; attempt < 200 && !swapped; ++attempt) {
             const Cell o{rng_.below(kGridW), rng_.below(kGridH)};
-            Powerup& other = powerups_[index(o)];
+            Powerup& other = look(o);
             if (tile(o) != Tile::Brick || other.state == PowerupState::None) continue;
             if (isOverpowered(other.type)) continue;
             std::swap(here, other);
@@ -760,7 +760,7 @@ void World::revealPowerup(Cell c) {
         if (!swapped) {
             for (int attempt = 0; attempt < 200; ++attempt) {
                 const Cell o{rng_.below(kGridW), rng_.below(kGridH)};
-                if (tile(o) == Tile::Brick && powerups_[index(o)].state == PowerupState::None) {
+                if (tile(o) == Tile::Brick && look(o).state == PowerupState::None) {
                     powerups_[index(o)] = here;
                     here = {};
                     return;
@@ -1096,7 +1096,7 @@ void World::regenerateTile(int dt) {
     const int radius = values_.get(vid::kRegenerationClearRadius);
     for (int attempt = 0; attempt < 100; ++attempt) {
         const Cell c{rng_.below(kGridW), rng_.below(kGridH)};
-        if (tile(c) != Tile::Blank || powerups_[index(c)].state != PowerupState::None || bombAt(c) != nullptr) continue;
+        if (tile(c) != Tile::Blank || look(c).state != PowerupState::None || bombAt(c) != nullptr) continue;
         bool clear = true;
         for (const Player& p : players_) {
             if (!p.present) continue;
@@ -1374,7 +1374,7 @@ void World::handleButtons(int i, const PlayerInput& raw) {
             for (int n = 1;; ++n) {
                 c = step(c, p.facing);
                 if (playerAt(c) >= 0) break;
-                if (inGrid(c) && powerups_[index(c)].state != PowerupState::None) break;
+                if (inGrid(c) && look(c).state != PowerupState::None) break;
                 if (!playerPassable(c) || bombsOwnedBy(i) >= p.inventory[kPowBomb]) break;
                 const int before = activeBombs();
                 dropBomb(i, c, n);
@@ -1476,12 +1476,53 @@ void World::updatePlayer(int i, int dt, const PlayerInput& in) {
     handleButtons(i, effective);
 }
 
+// --- secrets ----------------------------------------------------------------
+
+Powerup& World::look(Cell c) {
+    Powerup& p = powerups_[index(c)];
+    if (recording_ && p.state == PowerupState::Hidden) looked_.emplace_back(static_cast<std::uint8_t>(index(c)), static_cast<std::uint8_t>(p.type));
+    return p;
+}
+
+void World::recordSecrets() {
+    recording_ = true;
+    looked_.clear();
+    rng_.setMode(Rng::Mode::Record);
+}
+
+World::Secrets World::takeSecrets() {
+    Secrets s;
+    s.draws = rng_.takeRecord();
+    s.hidden = std::exchange(looked_, {});
+    return s;
+}
+
+void World::replaySecrets() {
+    recording_ = false;
+    rng_.setMode(Rng::Mode::Replay);
+}
+
+void World::feedSecrets(const Secrets& secrets) {
+    rng_.clearFeed();
+    rng_.feed(secrets.draws);
+    // The hidden powerups this tick will look at, where the server has them.
+    for (const auto& [cell, type] : secrets.hidden)
+        if (cell < powerups_.size() && type < kPowTypeCount && powerups_[cell].state != PowerupState::Revealed) powerups_[cell] = {PowerupState::Hidden, type};
+}
+
+void World::ownRandom(std::uint32_t seed) {
+    recording_ = false;
+    rng_.setMode(Rng::Mode::Own);
+    rng_.setState(seed);
+}
+
 // --- state transfer ---------------------------------------------------------
 // One description of the state (World::archive) serves saving, loading and
 // hashing. Every number goes through value() as a 64-bit integer.
 namespace {
 
 struct StateWriter {
+    bool publicView = false;
     std::vector<std::uint8_t> out;
     void value(std::int64_t& v) {
         // Zigzag, then 7 bits per byte.
@@ -1500,6 +1541,7 @@ struct StateWriter {
 };
 
 struct StateReader {
+    static constexpr bool publicView = false;
     const std::vector<std::uint8_t>& in;
     std::size_t pos = 0;
     bool ok = true;
@@ -1529,6 +1571,7 @@ struct StateReader {
 };
 
 struct StateHasher {
+    bool publicView = false;
     std::uint32_t h = 2166136261u;
     void value(std::int64_t& v) {
         const auto u = static_cast<std::uint64_t>(v);
@@ -1692,9 +1735,9 @@ void field(A& a, Player& p) {
 
 template <class A>
 void World::archive(A& a) {
-    std::uint32_t rng = rng_.state();
+    std::uint32_t rng = a.publicView ? 0 : rng_.state();
     field(a, rng);
-    rng_.setState(rng);
+    if (!a.publicView) rng_.setState(rng);
     field(a, tickCount_);
     field(a, roundMs_);
     field(a, startFreezeMs_);
@@ -1726,7 +1769,15 @@ void World::archive(A& a) {
     field(a, conveyorSpeed_);
     field(a, tiles_);
     field(a, flames_);
-    field(a, powerups_);
+    if (a.publicView) {
+        // Hidden powerups are nobody's business yet.
+        std::array<Powerup, kGridW * kGridH> shown = powerups_;
+        for (Powerup& p : shown)
+            if (p.state == PowerupState::Hidden) p = {};
+        field(a, shown);
+    } else {
+        field(a, powerups_);
+    }
     field(a, players_);
     field(a, startCells_);
     field(a, bombs_, kMaxBombs);
@@ -1738,14 +1789,16 @@ void World::archive(A& a) {
     }
 }
 
-std::vector<std::uint8_t> World::saveState() const {
+std::vector<std::uint8_t> World::saveState(bool publicView) const {
     StateWriter w;
+    w.publicView = publicView;
     const_cast<World*>(this)->archive(w);  // the writer changes nothing
     return std::move(w.out);
 }
 
-std::uint32_t World::stateHash() const {
+std::uint32_t World::stateHash(bool publicView) const {
     StateHasher h;
+    h.publicView = publicView;
     const_cast<World*>(this)->archive(h);  // nor does the hasher
     return h.h;
 }

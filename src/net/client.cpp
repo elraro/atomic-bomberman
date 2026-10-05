@@ -140,6 +140,7 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     hashes_.clear();
     applied_ = 0;
     awaitingState_ = false;
+    ready_ = false;  // until the snapshot that follows the round start
     nextStepAt_ = nowMs;
     lastStepAt_ = nowMs;
     udpStepsAt_ = nowMs;
@@ -156,8 +157,11 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     Values values = Values::defaults();
     for (const auto& [id, value] : m.values) values.set(id, value);
     try {
-        world_ = std::make_unique<World>(values, m.seed);
+        // Built here only to have the round's rules in place; what is on the field comes with
+        // the snapshot the server sends next, without the hidden powerups.
+        world_ = std::make_unique<World>(values, 1);
         applyRoundSetup(*world_, values, m.setup);
+        world_->replaySecrets();
     } catch (const std::exception& e) {
         fail(std::string("The server sent a round this game cannot play (") + e.what() + ")");
         return;
@@ -171,7 +175,7 @@ void Client::handleSteps(const StepsMsg& m) {
     const std::uint32_t last = m.firstStep + static_cast<std::uint32_t>(m.steps.size());
     hashes_[last] = m.hash;
     if (m.firstStep > have || last <= have) return;  // a gap (the next message covers it) or nothing new
-    for (std::uint32_t i = have - m.firstStep; i < m.steps.size(); ++i) queue_.push_back(m.steps[i]);
+    for (std::uint32_t i = have - m.firstStep; i < m.steps.size(); ++i) queue_.push_back({m.steps[i], i < m.secrets.size() ? m.secrets[i] : World::Secrets{}});
 }
 
 void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& payload, std::uint64_t nowMs) {
@@ -249,13 +253,15 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             SnapshotMsg m;
             if (!decode(r, m) || !world_ || m.roundId != start_.roundId) break;
             if (!world_->loadState(m.state)) return fail("The server sent a game state this game cannot read");
+            world_->replaySecrets();
+            ready_ = true;
             queue_.clear();
             hashes_.clear();
             applied_ = m.step;
             soundedUpTo_ = std::max(soundedUpTo_, m.step);
             mine_.clear();
             awaitingState_ = false;
-            ++snapshots_;
+            if (m.step > 0) ++snapshots_;  // the one at the start of a round is not a repair
             break;
         }
         case ServerMsg::Ping: socket_.send(static_cast<std::uint8_t>(ClientMsg::Pong), payload); break;
@@ -369,9 +375,11 @@ bool Client::ownAction(const Event& e) const {
     }
 }
 
-void Client::applyStep(const StepInputs& bytes, const EventSink& events) {
+void Client::applyStep(const Step& step, const EventSink& events) {
+    const StepInputs& bytes = step.inputs;
     std::array<PlayerInput, kMaxPlayers> input{};
     for (std::size_t i = 0; i < input.size(); ++i) input[i] = unpackInput(bytes[i]);
+    world_->feedSecrets(step.secrets);
     world_->tick(kStepMs, input);
     lastInputs_ = bytes;
     ++applied_;
@@ -388,7 +396,7 @@ void Client::applyStep(const StepInputs& bytes, const EventSink& events) {
     });
     if (events && !happened.empty()) events(*world_, happened);
     if (const auto it = hashes_.find(applied_); it != hashes_.end()) {
-        if (it->second != world_->stateHash() && !awaitingState_) {
+        if ((it->second != world_->stateHash(true) || !world_->secretsInStep()) && !awaitingState_) {
             awaitingState_ = true;
             socket_.send(static_cast<std::uint8_t>(ClientMsg::NeedState), {});
         }
@@ -417,6 +425,7 @@ void Client::predict(const EventSink& events) {
     mine_.erase(mine_.begin(), mine_.upper_bound(applied_));
     if (!predicted_) predicted_ = std::make_unique<World>(*world_);
     else *predicted_ = *world_;
+    predicted_->ownRandom(applied_ * 2654435761u + 7u);  // chance cannot be guessed: any numbers will do until the server's arrive
     for (std::uint32_t s = applied_ + 1; s <= target_ && !predicted_->roundOver(); ++s) {
         std::array<PlayerInput, kMaxPlayers> input{};
         for (std::size_t i = 0; i < input.size(); ++i) input[i] = unpackInput(lastInputs_[i]);
@@ -437,7 +446,7 @@ void Client::predict(const EventSink& events) {
 }
 
 int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& before, const EventSink& after) {
-    if (state_ != State::Round || !world_) return 0;
+    if (state_ != State::Round || !world_ || !ready_) return 0;
     now_ = nowMs;
     int ran = 0;
     const bool predicting = prediction_ && seat() >= 0;
@@ -445,9 +454,9 @@ int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& befo
         if (predicting) {
             // Confirmed steps are taken as soon as they arrive; the picture is paced by the local clock.
             while (!queue_.empty() && ran < 400) {
-                const StepInputs bytes = queue_.front();
+                const Step next = queue_.front();
                 queue_.pop_front();
-                applyStep(bytes, after);
+                applyStep(next, after);
                 ++ran;
             }
             if (world_->roundOver() || ended_) {
@@ -466,10 +475,10 @@ int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& befo
         } else {
             predictedValid_ = false;
             while (!queue_.empty() && ran < 400 && (nowMs >= nextStepAt_ || queue_.size() > 20)) {
-                const StepInputs bytes = queue_.front();
+                const Step next = queue_.front();
                 queue_.pop_front();
                 if (before) before(*world_);
-                applyStep(bytes, after);
+                applyStep(next, after);
                 ++ran;
                 // Behind by more than a few steps: twice the speed until caught up.
                 const std::uint64_t interval = queue_.size() > 3 ? kStepMs / 2 : kStepMs;

@@ -17,7 +17,7 @@ namespace ab::net {
 
 inline constexpr std::uint32_t kTcpMagic = 0x4E4D4241u;  // "ABMN"
 inline constexpr std::uint32_t kUdpMagic = 0x554D4241u;  // "ABMU"
-inline constexpr std::uint16_t kProtocolVersion = 3;
+inline constexpr std::uint16_t kProtocolVersion = 4;
 inline constexpr std::uint16_t kDefaultPort = 27410;
 // Every server also listens here for searches on the local network, whatever its own port.
 inline constexpr std::uint16_t kDiscoveryPort = 27409;
@@ -174,7 +174,7 @@ struct ChatMsg {
 
 struct RoundStartMsg {
     std::uint32_t roundId = 0;
-    std::uint32_t seed = 0;
+    std::uint32_t seed = 0;   // unused since version 4: the round's start comes as a snapshot
     std::vector<std::pair<int, int>> values;  // the server's whole tuning table
     RoundSetup setup;
     int winsNeeded = 2;
@@ -189,6 +189,9 @@ struct StepsMsg {
     std::uint32_t roundId = 0;
     std::uint32_t firstStep = 0;      // steps before the first one in this message
     std::vector<StepInputs> steps;
+    // For each step, what it used of the things clients are not told in advance: the
+    // random numbers drawn and the hidden powerups looked at.
+    std::vector<World::Secrets> secrets;
     std::uint32_t hash = 0;           // of the state after the last step here
 };
 

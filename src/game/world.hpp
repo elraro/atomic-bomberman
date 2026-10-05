@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <utility>
 #include <vector>
 
@@ -61,15 +62,50 @@ class Rng {
 public:
     explicit Rng(std::uint32_t seed = 1) : state_(seed) {}
     int next() {
+        if (mode_ == Mode::Replay) {
+            // The numbers come from elsewhere (a network client is given the server's).
+            if (replay_.empty()) {
+                starved_ = true;
+                return 0;
+            }
+            const int v = replay_.front();
+            replay_.pop_front();
+            return v;
+        }
         state_ = state_ * 1103515245u + 12345u;
-        return static_cast<int>((state_ >> 16) & 0x7fff);
+        const int v = static_cast<int>((state_ >> 16) & 0x7fff);
+        if (mode_ == Mode::Record) record_.push_back(static_cast<std::uint16_t>(v));
+        return v;
     }
     int below(int n) { return n > 0 ? next() % n : 0; }
     std::uint32_t state() const { return state_; }
     void setState(std::uint32_t s) { state_ = s; }
 
+    // Network play keeps the future to the server: there the generator records what it
+    // gives out; on a client it only repeats what the server sent for the step.
+    enum class Mode : std::uint8_t { Own, Record, Replay };
+    void setMode(Mode m) {
+        mode_ = m;
+        record_.clear();
+        replay_.clear();
+        starved_ = false;
+    }
+    Mode mode() const { return mode_; }
+    std::vector<std::uint16_t> takeRecord() { return std::exchange(record_, {}); }
+    void feed(const std::vector<std::uint16_t>& draws) { replay_.insert(replay_.end(), draws.begin(), draws.end()); }
+    // True if a number was asked for that had not been fed, or fed numbers were left over.
+    bool outOfStep() const { return starved_ || !replay_.empty(); }
+    void clearFeed() {
+        replay_.clear();
+        starved_ = false;
+    }
+
 private:
     std::uint32_t state_;
+    Mode mode_ = Mode::Own;
+    bool starved_ = false;
+    std::vector<std::uint16_t> record_;
+    std::deque<std::uint16_t> replay_;
 };
 
 // Fixed features of a level theme (original extraN.res).
@@ -359,15 +395,41 @@ public:
     // Everything a round's future depends on, except the tuning values (both sides get
     // those with the round setup) and the event list. A World built from the same
     // values that loads this state continues exactly as the one that saved it.
-    std::vector<std::uint8_t> saveState() const;
+    // `publicView` leaves out what a player may not know yet: which powerups lie under
+    // which bricks, and the random generator's state.
+    std::vector<std::uint8_t> saveState(bool publicView = false) const;
     bool loadState(const std::vector<std::uint8_t>& bytes);  // false: malformed, state unchanged
     // Hash over the same fields; equal on two machines as long as they are in step.
-    std::uint32_t stateHash() const;
+    std::uint32_t stateHash(bool publicView = false) const;
+
+    // --- secrets (network play) ---
+    // What a step used of the things clients are not told in advance: the random numbers
+    // drawn, and the hidden powerups looked at (cell index and type).
+    struct Secrets {
+        std::vector<std::uint16_t> draws;
+        std::vector<std::pair<std::uint8_t, std::uint8_t>> hidden;
+    };
+    // Server: record them from now on; takeSecrets() after each tick.
+    void recordSecrets();
+    Secrets takeSecrets();
+    // Client: the world holds no hidden powerups and draws no numbers of its own; before
+    // each tick it is given that tick's secrets. secretsInStep() after the tick says
+    // whether exactly the numbers given were used.
+    void replaySecrets();
+    void feedSecrets(const Secrets& secrets);
+    bool secretsInStep() const { return !rng_.outOfStep(); }
+    // A copy made to guess ahead: its own random numbers again (the guesses about chance
+    // are wrong until the server's step arrives).
+    void ownRandom(std::uint32_t seed);
 
 private:
     template <class A>
     void archive(A& a);
     static std::size_t index(Cell c) { return static_cast<std::size_t>(c.y * kGridW + c.x); }
+    // Looks at a powerup where a hidden one would matter; the look is noted while recording.
+    Powerup& look(Cell c);
+    bool recording_ = false;
+    std::vector<std::pair<std::uint8_t, std::uint8_t>> looked_;
 
     bool playerPassable(Cell c) const;
     Bomb* findBomb(Cell c);

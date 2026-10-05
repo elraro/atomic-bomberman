@@ -442,8 +442,15 @@ void encode(ByteWriter& w, const StepsMsg& m) {
     w.u32(m.roundId);
     w.u32(m.firstStep);
     w.u8(static_cast<std::uint8_t>(m.steps.size()));
-    for (const StepInputs& s : m.steps)
-        for (std::uint8_t b : s) w.u8(b);
+    for (std::size_t i = 0; i < m.steps.size(); ++i) {
+        for (std::uint8_t b : m.steps[i]) w.u8(b);
+        static const World::Secrets kNone;
+        const World::Secrets& secrets = i < m.secrets.size() ? m.secrets[i] : kNone;
+        w.u8(static_cast<std::uint8_t>(std::min<std::size_t>(secrets.hidden.size(), 255)));
+        for (std::size_t k = 0; k < secrets.hidden.size() && k < 255; ++k) w.u8(secrets.hidden[k].first), w.u8(secrets.hidden[k].second);
+        w.u16(static_cast<std::uint16_t>(std::min<std::size_t>(secrets.draws.size(), 65535)));
+        for (std::size_t k = 0; k < secrets.draws.size() && k < 65535; ++k) w.u16(secrets.draws[k]);
+    }
     w.u32(m.hash);
 }
 
@@ -452,8 +459,22 @@ bool decode(ByteReader& r, StepsMsg& m) {
     m.firstStep = r.u32();
     const int n = r.u8();
     m.steps.assign(static_cast<std::size_t>(n), StepInputs{});
-    for (StepInputs& s : m.steps)
-        for (std::uint8_t& b : s) b = r.u8();
+    m.secrets.assign(static_cast<std::size_t>(n), World::Secrets{});
+    for (std::size_t i = 0; i < m.steps.size() && r.ok(); ++i) {
+        for (std::uint8_t& b : m.steps[i]) b = r.u8();
+        const int hidden = r.u8();
+        for (int k = 0; k < hidden && r.ok(); ++k) {
+            const std::uint8_t cell = r.u8(), type = r.u8();
+            if (cell >= kGridW * kGridH || type >= kPowTypeCount) return false;
+            m.secrets[i].hidden.emplace_back(cell, type);
+        }
+        const int draws = r.u16();
+        for (int k = 0; k < draws && r.ok(); ++k) {
+            const std::uint16_t v = r.u16();
+            if (v > 0x7fff) return false;
+            m.secrets[i].draws.push_back(v);
+        }
+    }
     m.hash = r.u32();
     return r.ok();
 }

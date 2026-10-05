@@ -816,9 +816,14 @@ void Server::startRound() {
             (settings_.teamPlay ? teams_[static_cast<std::size_t>(s)] : s) == prizeWinner_)
             setup.prize[static_cast<std::size_t>(s)] = prizeType_;
     }
-    world_ = std::make_unique<World>(values_, start.seed);
+    const std::uint32_t seed = start.seed;
+    start.seed = 0;  // the clients are not told: they get the round's start as a snapshot without its secrets
+    world_ = std::make_unique<World>(values_, seed);
     applyRoundSetup(*world_, values_, setup);
+    world_->recordSecrets();
+    world_->takeSecrets();  // the setup's own draws stay here
     history_.clear();
+    secrets_.clear();
     hashes_.clear();
     decided_ = false;
     winner_ = -1;
@@ -836,8 +841,10 @@ void Server::startRound() {
     phase_ = Phase::Round;
     lobbyDirty_ = true;
     broadcast(ServerMsg::RoundStart, roundStart_);
+    for (auto& p : peers_)
+        if (p->joined && !p->gone) sendSnapshot(*p);  // where the round begins, as far as a player may know
     if (campaignMode_) say("Stage " + std::to_string(start.stage) + " of " + std::to_string(start.stages) + ": " + start.stageName);
-    log("INFO  Round " + std::to_string(roundId_) + " started seed=" + std::to_string(start.seed) + (campaignMode_ ? " stage=\"" + start.stageName + "\"" : ""));
+    log("INFO  Round " + std::to_string(roundId_) + " started seed=" + std::to_string(seed) + (campaignMode_ ? " stage=\"" + start.stageName + "\"" : ""));
 }
 
 void Server::stepRound() {
@@ -862,7 +869,8 @@ void Server::stepRound() {
         world_->tick(kStepMs, input);
         world_->takeEvents();
         history_.push_back(bytes);
-        hashes_.push_back(world_->stateHash());
+        secrets_.push_back(world_->takeSecrets());
+        hashes_.push_back(world_->stateHash(true));
         ++ran;
         if (world_->roundOver()) {
             if (!decided_) {
@@ -879,24 +887,34 @@ void Server::stepRound() {
 
 void Server::sendSteps(Peer& p) {
     const auto total = static_cast<std::uint32_t>(history_.size());
-    auto message = [&](std::uint32_t from, std::uint32_t count) {
+    // Steps from `from`, at most `limit`, and for a datagram only as many as fit a usual
+    // packet (always at least one: a step with many random draws may be large).
+    auto message = [&](std::uint32_t from, std::uint32_t limit, bool datagramSized) {
         StepsMsg m;
         m.roundId = roundId_;
         m.firstStep = from;
-        m.steps.assign(history_.begin() + from, history_.begin() + from + count);
-        m.hash = hashes_[from + count - 1];
+        std::size_t bytes = 0;
+        for (std::uint32_t i = from; i < from + limit; ++i) {
+            const World::Secrets& secrets = secrets_[i];
+            const std::size_t size = kMaxPlayers + 3 + secrets.hidden.size() * 2 + secrets.draws.size() * 2;
+            if (datagramSized && !m.steps.empty() && bytes + size > 1100) break;
+            bytes += size;
+            m.steps.push_back(history_[i]);
+            m.secrets.push_back(secrets);
+        }
+        m.hash = hashes_[from + m.steps.size() - 1];
         return m;
     };
     if (p.udpOn && p.udpKnown) {
         // Everything the client has not acknowledged, so a lost datagram needs no request.
         const std::uint32_t from = p.ackRound == roundId_ ? std::min(p.ackStep, total) : 0;
         const std::uint32_t count = std::min<std::uint32_t>(total - from, kMaxStepsPerMessage);
-        if (count > 0) udp_.sendTo(p.udpAddress, sealDatagram(p.token, ++p.udpSent, p.keys.udpToClient, datagram(UdpMsg::Steps, message(from, count))));
+        if (count > 0) udp_.sendTo(p.udpAddress, sealDatagram(p.token, ++p.udpSent, p.keys.udpToClient, datagram(UdpMsg::Steps, message(from, count, true))));
         return;
     }
     while (p.sentStep < total) {
         const std::uint32_t count = std::min<std::uint32_t>(total - p.sentStep, kMaxStepsPerMessage);
-        p.socket.send(static_cast<std::uint8_t>(ServerMsg::Steps), encoded(message(p.sentStep, count)));
+        p.socket.send(static_cast<std::uint8_t>(ServerMsg::Steps), encoded(message(p.sentStep, count, false)));
         p.sentStep += count;
     }
 }
@@ -906,7 +924,7 @@ void Server::sendSnapshot(Peer& p) {
     SnapshotMsg m;
     m.roundId = roundId_;
     m.step = static_cast<std::uint32_t>(history_.size());
-    m.state = world_->saveState();
+    m.state = world_->saveState(true);  // without the hidden powerups and the random generator
     p.socket.send(static_cast<std::uint8_t>(ServerMsg::Snapshot), encoded(m));
     p.lastSnapshot = now_;
     p.ackRound = roundId_;
@@ -943,6 +961,7 @@ void Server::toLobby() {
     campaignMode_ = false;
     world_.reset();
     history_.clear();
+    secrets_.clear();
     hashes_.clear();
     rebuildSeats();
     log("INFO  Back in the lobby");

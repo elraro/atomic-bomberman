@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
             }
             if (state == State::Result) {
                 std::printf("[%s] result: steps=%u winner=%d match=%d hash=%08x snapshots=%d\n", name.c_str(), client.stepsApplied(),
-                            client.result().winner, client.score().matchWinner, client.world()->stateHash(), client.snapshotsLoaded());
+                            client.result().winner, client.score().matchWinner, client.world()->stateHash(true), client.snapshotsLoaded());
                 client.sendContinue();
             }
             std::fflush(stdout);
