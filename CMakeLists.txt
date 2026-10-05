@@ -116,6 +116,6 @@ add_test(NAME core COMMAND ab_tests)
 
 # Network mode: codec tests, and a server with several clients over the loopback interface.
 add_executable(ab_net_tests tests/unit/test_net.cpp)
-target_link_libraries(ab_net_tests PRIVATE ab_net)
+target_link_libraries(ab_net_tests PRIVATE ab_net ab_free)
 ab_warnings(ab_net_tests)
 add_test(NAME net COMMAND ab_net_tests)

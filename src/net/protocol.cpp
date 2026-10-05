@@ -93,7 +93,7 @@ std::string LobbyState::seatName(int seat) const {
     const Seat& s = seats[static_cast<std::size_t>(seat)];
     if (s.kind == SeatKind::Computer) return "Computer";
     if (s.kind == SeatKind::Human)
-        if (const ClientInfo* c = client(s.client)) return c->name;
+        if (const ClientInfo* c = client(s.client)) return s.local == 0 ? c->name : c->name + " (" + std::to_string(s.local + 1) + ")";
     return {};
 }
 
@@ -198,9 +198,13 @@ void encode(ByteWriter& w, const LobbyState& m) {
     w.flag(s.stompedBombsDetonate);
     w.flag(s.winByKills);
     w.flag(s.diseasesDestroyable);
+    w.flag(s.goldman);
+    w.u8(static_cast<std::uint8_t>(s.campaign));
+    w.text(s.campaignTitle);
     for (const Seat& seat : m.seats) {
         w.u8(static_cast<std::uint8_t>(seat.kind));
         w.u8(seat.client);
+        w.u8(seat.local);
         w.u8(static_cast<std::uint8_t>(seat.team));
     }
     w.u8(static_cast<std::uint8_t>(m.clients.size()));
@@ -208,6 +212,7 @@ void encode(ByteWriter& w, const LobbyState& m) {
         w.u8(c.id);
         w.text(c.name);
         w.i8(c.seat);
+        w.u8(static_cast<std::uint8_t>(c.players));
         w.u16(static_cast<std::uint16_t>(std::clamp(c.pingMs, 0, 65535)));
     }
 }
@@ -229,9 +234,14 @@ bool decode(ByteReader& r, LobbyState& m) {
     s.stompedBombsDetonate = r.flag();
     s.winByKills = r.flag();
     s.diseasesDestroyable = r.flag();
+    s.goldman = r.flag();
+    s.campaign = r.u8();
+    s.campaignTitle = r.text(64);
     for (Seat& seat : m.seats) {
         const int kind = r.u8();
         seat.client = r.u8();
+        seat.local = r.u8();
+        if (seat.local >= kMaxLocalPlayers) return false;
         seat.team = r.u8();
         if (kind > 2 || seat.team > 1) return false;
         seat.kind = static_cast<SeatKind>(kind);
@@ -243,6 +253,7 @@ bool decode(ByteReader& r, LobbyState& m) {
         c.id = r.u8();
         c.name = r.text(64);
         c.seat = r.i8();
+        c.players = r.u8();
         c.pingMs = r.u16();
         if (c.seat < -1 || c.seat >= kMaxPlayers) return false;
         m.clients.push_back(std::move(c));
@@ -286,6 +297,12 @@ void encode(ByteWriter& w, const RoundSetup& m) {
     w.flag(m.winByKills);
     for (int i = 0; i < kMaxPlayers; ++i)
         w.u8(static_cast<std::uint8_t>((m.present[static_cast<std::size_t>(i)] ? 1 : 0) | (m.human[static_cast<std::size_t>(i)] ? 2 : 0)));
+    w.flag(m.campaign);
+    w.u8(static_cast<std::uint8_t>(m.ghosts));
+    w.u16(static_cast<std::uint16_t>(m.ghostSpeed));
+    w.u8(static_cast<std::uint8_t>(m.rovers));
+    w.u16(static_cast<std::uint16_t>(m.roverSpeed));
+    for (int p : m.prize) w.i8(p);
 }
 
 bool decode(ByteReader& r, RoundSetup& m) {
@@ -341,6 +358,16 @@ bool decode(ByteReader& r, RoundSetup& m) {
         m.present[static_cast<std::size_t>(i)] = (bits & 1) != 0;
         m.human[static_cast<std::size_t>(i)] = (bits & 2) != 0;
     }
+    m.campaign = r.flag();
+    m.ghosts = r.u8();
+    m.ghostSpeed = r.u16();
+    m.rovers = r.u8();
+    m.roverSpeed = r.u16();
+    for (int& p : m.prize) {
+        p = r.i8();
+        if (p < -1 || p >= kPowTypeCount) return false;
+    }
+    if (m.ghosts > 100 || m.rovers > 100 || m.ghostSpeed > 5000 || m.roverSpeed > 5000) return false;
     return r.ok() && m.level <= 10 && m.scheme.brickDensity <= 100 && m.conveyorSpeed <= 2 && m.enclosementDepth <= 3 &&
            m.playTime >= 1;
 }
@@ -356,6 +383,9 @@ void encode(ByteWriter& w, const RoundStartMsg& m) {
     encode(w, m.setup);
     w.u8(static_cast<std::uint8_t>(m.winsNeeded));
     encodeScore(w, m.score);
+    w.text(m.stageName);
+    w.u8(static_cast<std::uint8_t>(m.stage));
+    w.u8(static_cast<std::uint8_t>(m.stages));
 }
 
 bool decode(ByteReader& r, RoundStartMsg& m) {
@@ -370,7 +400,11 @@ bool decode(ByteReader& r, RoundStartMsg& m) {
     }
     if (!r.ok() || !decode(r, m.setup)) return false;
     m.winsNeeded = r.u8();
-    return decodeScore(r, m.score);
+    if (!decodeScore(r, m.score)) return false;
+    m.stageName = r.text(64);
+    m.stage = r.u8();
+    m.stages = r.u8();
+    return r.ok();
 }
 
 void encode(ByteWriter& w, const StepsMsg& m) {
@@ -397,14 +431,14 @@ void encode(ByteWriter& w, const InputMsg& m) {
     w.u32(m.token);
     w.u32(m.roundId);
     w.u32(m.haveStep);
-    w.u8(m.input);
+    for (std::uint8_t b : m.input) w.u8(b);
 }
 
 bool decode(ByteReader& r, InputMsg& m) {
     m.token = r.u32();
     m.roundId = r.u32();
     m.haveStep = r.u32();
-    m.input = r.u8();
+    for (std::uint8_t& b : m.input) b = r.u8();
     return r.ok();
 }
 
@@ -414,6 +448,8 @@ void encode(ByteWriter& w, const RoundEndMsg& m) {
     w.i8(m.winner);
     w.flag(m.teamPlay);
     encodeScore(w, m.score);
+    w.u8(static_cast<std::uint8_t>(m.campaign));
+    w.flag(m.campaignOver);
 }
 
 bool decode(ByteReader& r, RoundEndMsg& m) {
@@ -421,7 +457,10 @@ bool decode(ByteReader& r, RoundEndMsg& m) {
     m.steps = r.u32();
     m.winner = r.i8();
     m.teamPlay = r.flag();
-    return decodeScore(r, m.score) && m.winner >= -1 && m.winner < kMaxPlayers;
+    if (!decodeScore(r, m.score)) return false;
+    m.campaign = r.u8();
+    m.campaignOver = r.flag();
+    return r.ok() && m.campaign <= 2 && m.winner >= -1 && m.winner < kMaxPlayers;
 }
 
 void encode(ByteWriter& w, const SnapshotMsg& m) {

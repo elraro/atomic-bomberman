@@ -729,16 +729,17 @@ int main(int argc, char** argv) {
                 setup.human[static_cast<std::size_t>(i)] = c != Control::Ai;
                 n += c != Control::Off ? 1 : 0;
             }
-            ab::applyRoundSetup(world, values, setup);
             if (campaignMode) {
                 const ab::CampaignStage& st = stages[static_cast<std::size_t>(stageIndex)];
-                world.spawnAliens(ab::AlienType::Ghost, st.ghosts, st.ghostSpeed);
-                world.spawnAliens(ab::AlienType::Rover, st.rovers, st.roverSpeed);
+                setup.ghosts = st.ghosts, setup.ghostSpeed = st.ghostSpeed;
+                setup.rovers = st.rovers, setup.roverSpeed = st.roverSpeed;
             }
             // The roulette prize goes to the winner of the last match (to every member of the
             // winning team), in every round of this one.
             for (int i = 0; i < ab::kMaxPlayers && prizeType >= 0; ++i)
-                if (world.player(i).present && (teamPlay ? world.player(i).team : i) == prizeWinner) world.grantPrize(i, prizeType);
+                if (setup.present[static_cast<std::size_t>(i)] && (teamPlay ? teams[static_cast<std::size_t>(i)] : i) == prizeWinner)
+                    setup.prize[static_cast<std::size_t>(i)] = prizeType;
+            ab::applyRoundSetup(world, values, setup);
             previous.capture(world);
             roundOverSteps = 0;
             resultKey = false;
@@ -971,7 +972,7 @@ int main(int argc, char** argv) {
                 } else {
                     press.type = SDL_EVENT_KEY_DOWN;
                     press.key.key = k == "up" ? SDLK_UP : k == "down" ? SDLK_DOWN : k == "left" ? SDLK_LEFT : k == "right" ? SDLK_RIGHT
-                                    : k == "esc" ? SDLK_ESCAPE : k == "f2" ? SDLK_F2 : k == "f3" ? SDLK_F3 : k == "t" ? SDLK_T
+                                    : k == "esc" ? SDLK_ESCAPE : k == "f2" ? SDLK_F2 : k == "f3" ? SDLK_F3 : k == "f5" ? SDLK_F5 : k == "f6" ? SDLK_F6 : k == "t" ? SDLK_T
                                     : k == "space" ? SDLK_SPACE : k == "backspace" ? SDLK_BACKSPACE : SDLK_RETURN;
                 }
                 if (k != "wait") SDL_PushEvent(&press);
@@ -1382,13 +1383,17 @@ int main(int argc, char** argv) {
             SDL_GetWindowSizeInPixels(window, &w, &h);
 
             if (screen == Screen::Net) {
-                // This player's controller: the first key set or the first gamepad.
-                ab::PlayerInput local = keyboardInput(SDL_GetKeyboardState(nullptr), cfg.keys[0]);
-                const ab::PlayerInput pad = gamepadInput(pads[0]);
-                for (std::size_t d = 0; d < 4; ++d) local.dir[d] = local.dir[d] || pad.dir[d];
-                local.button1 = local.button1 || pad.button1;
-                local.button2 = local.button2 || pad.button2;
-                net.update(ab::net::clockMs(), local);
+                // The players at this computer: the two key sets, each with a gamepad, then two more gamepads.
+                const bool* keys = SDL_GetKeyboardState(nullptr);
+                std::array<ab::PlayerInput, ab::net::kMaxLocalPlayers> locals{};
+                for (std::size_t l = 0; l < locals.size(); ++l) {
+                    if (l < 2) locals[l] = keyboardInput(keys, cfg.keys[l]);
+                    const ab::PlayerInput pad = gamepadInput(pads[l]);
+                    for (std::size_t d = 0; d < 4; ++d) locals[l].dir[d] = locals[l].dir[d] || pad.dir[d];
+                    locals[l].button1 = locals[l].button1 || pad.button1;
+                    locals[l].button2 = locals[l].button2 || pad.button2;
+                }
+                net.update(ab::net::clockMs(), locals);
                 if (opt.frames > 0) SDL_Delay(5);  // automated runs: the network runs on the real clock
             }
             if (screen == Screen::Match) {

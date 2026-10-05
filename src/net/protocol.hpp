@@ -16,7 +16,7 @@ namespace ab::net {
 
 inline constexpr std::uint32_t kTcpMagic = 0x4E4D4241u;  // "ABMN"
 inline constexpr std::uint32_t kUdpMagic = 0x554D4241u;  // "ABMU"
-inline constexpr std::uint16_t kProtocolVersion = 1;
+inline constexpr std::uint16_t kProtocolVersion = 2;
 inline constexpr std::uint16_t kDefaultPort = 27410;
 // Every server also listens here for searches on the local network, whatever its own port.
 inline constexpr std::uint16_t kDiscoveryPort = 27409;
@@ -25,8 +25,9 @@ inline constexpr int kMaxStepsPerMessage = 40;
 inline constexpr std::size_t kMaxName = 16;
 inline constexpr std::size_t kMaxChat = 120;
 inline constexpr std::uint8_t kServerSender = 255;
+inline constexpr int kMaxLocalPlayers = 4;  // players at one computer
 
-enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, UdpState, NeedState, Continue, Pong };
+enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, UdpState, NeedState, Continue, Pong, Locals };
 enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Steps, RoundEnd, Snapshot, Ping };
 enum class UdpMsg : std::uint8_t { Probe = 1, ProbeAck, Input, Steps, Query, Info };
 
@@ -47,6 +48,8 @@ enum class Option : std::uint8_t {
     StompedBombs,
     WinByKills,
     DiseasesDestroyable,
+    Goldman,
+    Campaign,
     Count
 };
 
@@ -110,18 +113,23 @@ struct MatchSettings {
     bool stompedBombsDetonate = true;
     bool winByKills = false;
     bool diseasesDestroyable = true;
+    bool goldman = false;        // the roulette: a prize for the winner of the last match
+    int campaign = 0;            // 0: an ordinary match; n: campaign number n of the server's list
+    std::string campaignTitle;   // its name, for the lobby
 };
 
 struct Seat {
     SeatKind kind = SeatKind::Empty;
     std::uint8_t client = 0;  // for a human seat
+    std::uint8_t local = 0;   // which of that client's players (0-3)
     int team = 0;
 };
 
 struct ClientInfo {
     std::uint8_t id = 0;
     std::string name;
-    int seat = -1;   // -1: watching
+    int seat = -1;   // the first of its seats; -1: watching
+    int players = 1; // players at this computer
     int pingMs = 0;
 };
 
@@ -162,6 +170,10 @@ struct RoundStartMsg {
     RoundSetup setup;
     int winsNeeded = 2;
     MatchScore score;  // before this round
+    // Campaign: the stage's name and number (stages = 0 in an ordinary match).
+    std::string stageName;
+    int stage = 0;
+    int stages = 0;
 };
 
 struct StepsMsg {
@@ -175,7 +187,7 @@ struct InputMsg {
     std::uint32_t token = 0;
     std::uint32_t roundId = 0;
     std::uint32_t haveStep = 0;       // steps received so far, without gaps
-    std::uint8_t input = 0;
+    std::array<std::uint8_t, kMaxLocalPlayers> input{};  // one byte per player at this computer
 };
 
 struct RoundEndMsg {
@@ -184,6 +196,8 @@ struct RoundEndMsg {
     int winner = -1;                  // player, or team in team play; -1 draw
     bool teamPlay = false;
     MatchScore score;                 // after this round (matchWinner >= 0: match decided)
+    int campaign = 0;                 // campaign stage: 1 cleared, 2 failed (0: not a campaign)
+    bool campaignOver = false;        // that was the last stage
 };
 
 struct SnapshotMsg {

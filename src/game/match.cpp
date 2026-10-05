@@ -31,6 +31,12 @@ void applyRoundSetup(World& world, const Values& base, const RoundSetup& setup) 
         if (setup.present[static_cast<std::size_t>(i)]) world.addPlayer(i);
     for (int i = 0; i < kMaxPlayers; ++i)
         if (world.player(i).present) world.setHuman(i, setup.human[static_cast<std::size_t>(i)]);
+    if (setup.campaign) {
+        world.spawnAliens(AlienType::Ghost, setup.ghosts, setup.ghostSpeed);
+        world.spawnAliens(AlienType::Rover, setup.rovers, setup.roverSpeed);
+    }
+    for (int i = 0; i < kMaxPlayers; ++i)
+        if (world.player(i).present && setup.prize[static_cast<std::size_t>(i)] >= 0) world.grantPrize(i, setup.prize[static_cast<std::size_t>(i)]);
 }
 
 int MatchScore::roundDecided(const World& world, int winsNeeded, bool winByKills) {

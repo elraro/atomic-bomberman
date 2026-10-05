@@ -35,6 +35,10 @@ struct RoundSetup {
     int playTime = 150;                  // seconds; kInfinitePlayTime or more: no clock
     bool winByKills = false;
     bool campaign = false;
+    // Campaign stage: enemies placed at random (ghosts first, then rovers); speeds in 100ths of a pixel per step.
+    int ghosts = 0, ghostSpeed = 0, rovers = 0, roverSpeed = 0;
+    // Roulette prize: one more of this powerup type for the player in every round (-1: none).
+    std::array<int, kMaxPlayers> prize{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     std::array<bool, kMaxPlayers> present{};
     std::array<bool, kMaxPlayers> human{};  // not a computer player (the ice delay is for humans)
 };

@@ -59,9 +59,25 @@ void Client::connect(const std::string& address, const std::string& name, const 
     state_ = State::Connecting;
 }
 
+std::array<int, kMaxLocalPlayers> Client::seats() const {
+    std::array<int, kMaxLocalPlayers> mine{-1, -1, -1, -1};
+    if (!welcomed_) return mine;
+    for (int s = 0; s < kMaxPlayers; ++s) {
+        const Seat& seat = lobby_.seats[static_cast<std::size_t>(s)];
+        if (seat.kind == SeatKind::Human && seat.client == id_ && lobby_.client(id_) != nullptr) mine[seat.local] = s;
+    }
+    return mine;
+}
+
 int Client::seat() const {
+    for (int s : seats())
+        if (s >= 0) return s;
+    return -1;
+}
+
+int Client::localPlayers() const {
     const ClientInfo* me = lobby_.client(id_);
-    return me != nullptr ? me->seat : -1;
+    return me != nullptr ? me->players : 1;
 }
 
 void Client::sendChat(const std::string& text) {
@@ -80,7 +96,8 @@ void Client::sendOption(Option option, int direction) {
 }
 
 void Client::sendStart() { socket_.send(static_cast<std::uint8_t>(ClientMsg::Start), {}); }
-void Client::sendTeam() { socket_.send(static_cast<std::uint8_t>(ClientMsg::Team), {}); }
+void Client::sendTeam(int local) { socket_.send(static_cast<std::uint8_t>(ClientMsg::Team), {static_cast<std::uint8_t>(local)}); }
+void Client::sendLocalPlayers(int count) { socket_.send(static_cast<std::uint8_t>(ClientMsg::Locals), {static_cast<std::uint8_t>(count)}); }
 void Client::sendContinue() { socket_.send(static_cast<std::uint8_t>(ClientMsg::Continue), {}); }
 
 void Client::sendKick(std::uint8_t id) {
@@ -281,7 +298,8 @@ void Client::update(std::uint64_t nowMs) {
 
 // Things a player does with their own hands: worth hearing without the round trip.
 bool Client::ownAction(const Event& e) const {
-    if (e.player < 0 || e.player != seat()) return false;
+    const auto mine = seats();
+    if (e.player < 0 || std::find(mine.begin(), mine.end(), e.player) == mine.end()) return false;
     switch (e.kind) {
         case EventKind::BombDropped:
         case EventKind::BombPunched:
@@ -328,7 +346,7 @@ void Client::applyStep(const StepInputs& bytes, const EventSink& events) {
 // of those steps; everybody else is assumed to keep doing what they did last. It is thrown
 // away and rebuilt on every local step, so a wrong guess lasts until the server's word arrives.
 void Client::predict(const EventSink& events) {
-    const int mySeat = seat();
+    const std::array<int, kMaxLocalPlayers> mySeats = seats();
     int ahead = predictionSteps_;
     if (ahead <= 0) {
         const ClientInfo* me = lobby_.client(id_);
@@ -348,7 +366,8 @@ void Client::predict(const EventSink& events) {
         std::array<PlayerInput, kMaxPlayers> input{};
         for (std::size_t i = 0; i < input.size(); ++i) input[i] = unpackInput(lastInputs_[i]);
         const auto own = mine_.find(s);
-        input[static_cast<std::size_t>(mySeat)] = unpackInput(own != mine_.end() ? own->second : input_);
+        for (std::size_t l = 0; l < mySeats.size(); ++l)
+            if (mySeats[l] >= 0) input[static_cast<std::size_t>(mySeats[l])] = unpackInput(own != mine_.end() ? own->second[l] : input_[l]);
         predicted_->tick(kStepMs, input);
         // Sounds come from the confirmed steps, except this player's own actions: those are
         // given out the first time a step is predicted.

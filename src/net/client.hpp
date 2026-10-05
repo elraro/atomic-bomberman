@@ -56,16 +56,21 @@ public:
     const std::string& serverName() const { return serverName_; }
     std::uint8_t id() const { return id_; }
     bool isAdmin() const { return lobby_.admin == id_; }
-    int seat() const;  // own seat, -1 while watching
+    int seat() const;  // the seat of this computer's first player, -1 while watching
+    // The seats of this computer's players (-1: that player has none).
+    std::array<int, kMaxLocalPlayers> seats() const;
+    int localPlayers() const;  // how many players this computer has asked for
     const LobbyState& lobby() const { return lobby_; }
     const std::deque<ChatLine>& chat() const { return chat_; }
     bool udpActive() const { return udpOn_; }
 
-    void setInput(const PlayerInput& in) { input_ = packInput(in); }
+    void setInput(const PlayerInput& in) { input_[0] = packInput(in); }
+    void setInput(int local, const PlayerInput& in) { input_[static_cast<std::size_t>(local)] = packInput(in); }
     void sendChat(const std::string& text);
     void sendOption(Option option, int direction);
     void sendStart();
-    void sendTeam();
+    void sendTeam(int local = 0);
+    void sendLocalPlayers(int count);  // 1-4 players at this computer (in the lobby)
     void sendKick(std::uint8_t id);
     void sendContinue();
 
@@ -90,6 +95,7 @@ public:
     // Scores: those before the round while it runs, those after it on the result screen.
     const MatchScore& score() const { return state_ == State::Result ? end_.score : start_.score; }
     const RoundEndMsg& result() const { return end_; }
+    const RoundStartMsg& roundStart() const { return start_; }
     std::uint32_t stepsApplied() const { return applied_; }
     int snapshotsLoaded() const { return snapshots_; }
 
@@ -139,13 +145,13 @@ private:
     int snapshots_ = 0;
     std::uint64_t nextStepAt_ = 0;
     std::uint64_t lastStepAt_ = 0;
-    std::uint8_t input_ = 0;
+    std::array<std::uint8_t, kMaxLocalPlayers> input_{};
     bool prediction_ = true;
     int predictionSteps_ = 0;
     std::unique_ptr<World> predicted_;
     bool predictedValid_ = false;
     std::uint32_t target_ = 0;                        // the step the predicted state stands for
-    std::map<std::uint32_t, std::uint8_t> mine_;      // own input assumed for each step not yet confirmed
+    std::map<std::uint32_t, std::array<std::uint8_t, kMaxLocalPlayers>> mine_;      // own input assumed for each step not yet confirmed
     StepInputs lastInputs_{};                         // everyone's input in the last confirmed step
     std::uint64_t nextLocalAt_ = 0;
     std::uint64_t now_ = 0;
@@ -156,7 +162,7 @@ private:
         std::uint64_t atMs;
     };
     std::vector<Heard> heard_;                        // own actions already reported from a prediction
-    std::uint8_t inputSent_ = 0;
+    std::array<std::uint8_t, kMaxLocalPlayers> inputSent_{};
     std::uint64_t inputSentAt_ = 0;
 };
 

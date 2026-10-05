@@ -14,6 +14,7 @@
 #include "net/protocol.hpp"
 #include "net/socket.hpp"
 #include "net/upnp.hpp"
+#include "resources/campaign_file.hpp"
 #include "resources/scheme_file.hpp"
 
 namespace ab::net {
@@ -71,7 +72,7 @@ private:
     void tell(Peer& p, const std::string& text);
     void leave(Peer& p);
     Peer* peerById(std::uint8_t id);
-    Peer* peerAtSeat(int seat);
+    Peer* peerAtSeat(int seat, int* local = nullptr);
     Peer* admin();
 
     void loadScheme();
@@ -110,6 +111,15 @@ private:
     MatchSettings settings_;
     std::array<int, kMaxPlayers> teams_{};
     std::array<SeatKind, kMaxPlayers> seatKind_{};
+    std::array<SeatKind, kMaxPlayers> roundKind_{};  // who sits where in the round being played (a campaign stage seats its own computer players)
+    std::vector<std::pair<std::string, std::string>> campaigns_;  // name, path
+    std::vector<CampaignStage> stages_;
+    int stageIndex_ = 0;
+    int campaignNext_ = 0;
+    bool campaignMode_ = false;
+    int lastWinner_ = -1;   // winner of the last match (player or team), for the roulette
+    int prizeType_ = -1;
+    int prizeWinner_ = -1;
     LobbyState lobby_;
     bool lobbyDirty_ = true;
     std::uint64_t lobbySentAt_ = 0;

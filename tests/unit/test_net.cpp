@@ -10,6 +10,10 @@
 #include <thread>
 #include <vector>
 
+#include <filesystem>
+
+#include "free/free_data.hpp"
+#include "game/roulette.hpp"
 #include "net/client.hpp"
 #include "net/protocol.hpp"
 #include "net/server.hpp"
@@ -83,6 +87,9 @@ void testCodec() {
     s.playTime = kInfinitePlayTime;
     s.enclosementDepth = 3;
     s.conveyorSpeed = 2;
+    s.campaign = true;
+    s.ghosts = 3, s.ghostSpeed = 150, s.rovers = 2, s.roverSpeed = 400;
+    s.prize[3] = kPowSkate;
     s.present = {true, true, false, true};
     s.human = {true, false, false, true};
     const std::vector<std::uint8_t> bytes = encoded(start);
@@ -98,6 +105,7 @@ void testCodec() {
     CHECK_EQ(got.setup.powers[9].overrideValue, -5);
     CHECK_EQ(got.score.kills[4], -2);
     CHECK(got.setup.present[3] && !got.setup.present[2] && !got.setup.human[1]);
+    CHECK(got.setup.campaign && got.setup.ghosts == 3 && got.setup.roverSpeed == 400 && got.setup.prize[3] == kPowSkate && got.setup.prize[0] == -1);
     // Two worlds built from the two copies are the same world.
     {
         Values values = Values::defaults();
@@ -130,10 +138,14 @@ void testCodec() {
     lobby.settings.level = -1;
     lobby.settings.schemeTitle = "X marks the spot";
     lobby.settings.playTime = kInfinitePlayTime;
-    lobby.seats[0] = {SeatKind::Human, 3, 1};
-    lobby.seats[1] = {SeatKind::Computer, 0, 0};
-    lobby.clients.push_back({3, "Ann", 0, 42});
-    lobby.clients.push_back({5, "Watcher", -1, 7});
+    lobby.seats[0] = {SeatKind::Human, 3, 0, 1};
+    lobby.seats[1] = {SeatKind::Computer, 0, 0, 0};
+    lobby.seats[4] = {SeatKind::Human, 3, 1, 0};  // the second player at Ann's computer
+    lobby.settings.goldman = true;
+    lobby.settings.campaign = 2;
+    lobby.settings.campaignTitle = "night-shift";
+    lobby.clients.push_back({3, "Ann", 0, 2, 42});
+    lobby.clients.push_back({5, "Watcher", -1, 1, 7});
     LobbyState lobby2;
     {
         const std::vector<std::uint8_t> lb = encoded(lobby);
@@ -145,6 +157,9 @@ void testCodec() {
     CHECK(lobby2.seatName(0) == "Ann");
     CHECK(lobby2.seatName(1) == "Computer");
     CHECK(lobby2.seatName(2).empty());
+    CHECK(lobby2.seatName(4) == "Ann (2)");
+    CHECK(lobby2.settings.goldman && lobby2.settings.campaign == 2 && lobby2.settings.campaignTitle == "night-shift");
+    CHECK_EQ(lobby2.clients[0].players, 2);
     CHECK_EQ(lobby2.clients[1].seat, -1);
 
     StepsMsg steps;
@@ -186,6 +201,7 @@ struct Harness {
     std::vector<std::unique_ptr<Client>> clients;
     std::uint64_t now = 100000;
     std::vector<std::string> log;
+    std::string gameDir;  // game data for the server (empty: the built-in arena)
 
     bool start(const std::string& password = "", int computers = 1) {
         ServerConfig config;
@@ -193,6 +209,7 @@ struct Harness {
         config.seed = 4242;
         config.password = password;
         config.discoverable = false;
+        config.gameDir = gameDir;
         config.settings.computers = computers;
         config.settings.enclosementDepth = 3;
         config.settings.playTime = 60;
@@ -607,6 +624,159 @@ void testUpnp() {
     CHECK(!nobody.ok && !nobody.message.empty());
 }
 
+// Two players at one computer: two seats, two inputs, both predicted.
+void testTwoPlayersOneComputer() {
+    Harness h;
+    CHECK(h.start("", 0));
+    Client& ann = h.join("Ann");
+    Client& bob = h.join("Bob");
+    CHECK(h.until([&] { return ann.lobby().clients.size() == 2 && bob.state() == Client::State::Lobby; }));
+    ann.sendLocalPlayers(2);
+    CHECK(h.until([&] { return ann.seats()[1] >= 0 && bob.lobby().client(ann.id()) != nullptr && bob.lobby().client(ann.id())->players == 2; }));
+    CHECK_EQ(ann.seats()[0], 0);
+    CHECK_EQ(ann.seats()[1], 2);  // Bob has seat 1
+    CHECK(bob.lobby().seatName(2) == "Ann (2)");
+    // Each of the two changes team on its own.
+    const int team = ann.lobby().seats[2].team;
+    ann.sendTeam(1);
+    CHECK(h.until([&] { return bob.lobby().seats[2].team == 1 - team; }));
+    // One player fewer, one more: the seat is given back and taken again.
+    ann.sendLocalPlayers(1);
+    CHECK(h.until([&] { return ann.seats()[1] < 0 && ann.lobby().seats[2].kind == SeatKind::Empty; }));
+    ann.sendLocalPlayers(9);  // more than a computer may have
+    CHECK(h.until([&] { return ann.localPlayers() == 4 && ann.seats()[3] >= 0; }));
+    ann.sendLocalPlayers(2);
+    CHECK(h.until([&] { return ann.localPlayers() == 2 && ann.seats()[2] < 0; }));
+
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }));
+    CHECK_EQ(h.server.world()->alivePlayers(), 3);
+    PlayerInput east, south;
+    east.dir[1] = true;
+    south.dir[2] = true;
+    ann.setInput(0, east);   // seat 0 starts top left
+    ann.setInput(1, south);
+    const int x0 = h.server.world()->player(0).x, y2 = h.server.world()->player(2).y, x2 = h.server.world()->player(2).x;
+    CHECK(h.until([&] { return ann.stepsApplied() > 80; }));
+    const World& w = *h.server.world();
+    CHECK(w.player(0).x > x0 || w.player(0).facing == 1);          // the first player walked east
+    CHECK(w.player(2).facing == 2 && w.player(2).x == x2 && w.player(2).y >= y2);  // the second turned south, on its own input
+    CHECK(ann.view() != ann.world());
+    CHECK_EQ(ann.snapshotsLoaded() + bob.snapshotsLoaded(), 0);
+    CHECK(h.until([&] { return ann.stepsApplied() == h.server.steps() && ann.world()->stateHash() == h.server.world()->stateHash(); }, 3000));
+}
+
+// The roulette over the network: the winner of one match starts the next with a prize.
+void testNetRoulette() {
+    Harness h;
+    CHECK(h.start("", 3));
+    Client& ann = h.join("Ann");
+    CHECK(h.until([&] { return ann.state() == Client::State::Lobby && !ann.lobby().clients.empty(); }));
+    ann.sendOption(Option::Goldman, 1);
+    CHECK(h.until([&] { return ann.lobby().settings.goldman; }));
+    auto playMatch = [&]() {
+        ann.sendStart();
+        if (!h.until([&] { return ann.state() == Client::State::Round; })) return -2;
+        for (int rounds = 0; rounds < 30; ++rounds) {
+            if (!playToResult(h, {&ann})) return -2;
+            const int winner = ann.score().matchWinner;
+            ann.sendContinue();
+            if (winner >= 0) {
+                h.until([&] { return ann.state() == Client::State::Lobby; });
+                return winner;
+            }
+            const std::uint32_t round = ann.roundId();
+            if (!h.until([&] { return ann.state() == Client::State::Round && ann.roundId() != round; })) return -2;
+        }
+        return -2;
+    };
+    const int winner = playMatch();
+    CHECK(winner >= 0);
+    // The second match: the wheel is spun by the server, announced in the chat, and the
+    // prize is in the round setup of every round, for that player only.
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.state() == Client::State::Round; }));
+    int prizes = 0, type = -1;
+    for (int i = 0; i < kMaxPlayers; ++i)
+        if (ann.setup().prize[static_cast<std::size_t>(i)] >= 0) {
+            ++prizes;
+            type = ann.setup().prize[static_cast<std::size_t>(i)];
+            CHECK_EQ(i, winner);
+        }
+    CHECK_EQ(prizes, 1);
+    bool validPrize = false;
+    for (int p : Roulette::kPrize) validPrize = validPrize || p == type;
+    CHECK(validPrize);
+    bool announced = false;
+    for (const ChatLine& line : ann.chat()) announced = announced || (line.fromServer && line.text.rfind("The Gold Player", 0) == 0);
+    CHECK(announced);
+    // One more of it than a player without the prize (compare with the tuning value).
+    if (type >= 0 && type != kPowClog) CHECK_EQ(ann.world()->player(winner).inventory[static_cast<std::size_t>(type)], Values::defaults().get(vid::kStartInventory + type) + 1);
+    CHECK(ann.world()->player(winner).gold);
+    CHECK_EQ(ann.world()->stateHash() == h.server.world()->stateHash() || ann.stepsApplied() != h.server.steps(), true);
+}
+
+// A campaign played over the network, with the free asset set as the server's game data.
+void testNetCampaign() {
+    const std::string dir = (std::filesystem::temp_directory_path() / "ab-net-campaign-test").string();
+    std::filesystem::remove_all(dir);
+    CHECK(ensureFreeAssets(dir, false));
+    Harness h;
+    h.gameDir = dir;
+    CHECK(h.start("", 2));
+    Client& ann = h.join("Ann");
+    Client& bob = h.join("Bob");
+    CHECK(h.until([&] { return ann.lobby().clients.size() == 2 && bob.state() == Client::State::Lobby; }));
+    CHECK_EQ(ann.lobby().settings.campaign, 0);
+    // The campaigns of the data folder, in name order, after "off".
+    ann.sendOption(Option::Campaign, 1);
+    CHECK(h.until([&] { return bob.lobby().settings.campaign == 1; }));
+    CHECK(bob.lobby().settings.campaignTitle == "first-steps");
+    ann.sendOption(Option::Campaign, -1);
+    ann.sendOption(Option::Campaign, -1);
+    CHECK(h.until([&] { return bob.lobby().settings.campaignTitle == "night-shift"; }));
+    ann.sendOption(Option::Campaign, 1);
+    ann.sendOption(Option::Campaign, 1);
+    CHECK(h.until([&] { return bob.lobby().settings.campaignTitle == "first-steps"; }));
+
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }));
+    // Stage 1 of first-steps: one rover, no computer players (the lobby's two stay out), no teams.
+    CHECK(ann.setup().campaign);
+    CHECK(ann.roundStart().stageName == "A Lonely Rover");
+    CHECK_EQ(ann.roundStart().stage, 1);
+    CHECK_EQ(ann.roundStart().stages, 6);
+    CHECK_EQ(ann.world()->alivePlayers(), 2);
+    CHECK(ann.world()->campaign());
+    int rovers = 0;
+    for (const Alien& a : ann.world()->aliens()) rovers += a.active && a.type == AlienType::Rover ? 1 : 0;
+    CHECK_EQ(rovers, 1);
+    bool stageSaid = false;
+    for (const ChatLine& line : bob.chat()) stageSaid = stageSaid || line.text == "Stage 1 of 6: A Lonely Rover";
+    CHECK(stageSaid);
+
+    // Nobody moves: the stage ends by the rover or by the clock. Either way both clients
+    // hold the server's state, and the server's verdict decides what comes next.
+    CHECK(playToResult(h, {&ann, &bob}));
+    CHECK(ann.result().campaign == 1 || ann.result().campaign == 2);
+    CHECK_EQ(ann.world()->stateHash(), h.server.world()->stateHash());
+    CHECK_EQ(bob.world()->stateHash(), h.server.world()->stateHash());
+    CHECK_EQ(ann.result().campaign, h.server.world()->campaignResult());
+    const bool again = ann.result().campaign == 2 && h.server.world()->campaignRetry();
+    ann.sendContinue();
+    bob.sendContinue();
+    const std::uint32_t round = ann.roundId();
+    CHECK(h.until([&] { return ann.state() == Client::State::Round && ann.roundId() == round + 1; }));
+    CHECK_EQ(ann.roundStart().stage, again ? 1 : 2);
+    CHECK(ann.roundStart().stageName == (again ? "A Lonely Rover" : "Rovers in the Brickyard"));
+    CHECK_EQ(ann.snapshotsLoaded() + bob.snapshotsLoaded(), 0);
+    // Everybody leaves: the campaign is dropped and the server is in its lobby again.
+    ann.disconnect();
+    bob.disconnect();
+    CHECK(h.until([&] { return h.server.phase() == Phase::Lobby; }));
+    std::filesystem::remove_all(dir);
+}
+
 // The network keys of the settings file.
 void testNetSettings() {
     Settings s;
@@ -678,6 +848,9 @@ int main() {
         {"leave during round", testLeaveDuringRound},
         {"udp loss", testUdpLoss},
         {"prediction", testPrediction},
+        {"two players at one computer", testTwoPlayersOneComputer},
+        {"roulette prize", testNetRoulette},
+        {"campaign", testNetCampaign},
         {"router port mapping", testUpnp},
         {"ipv6 and ipv4 together", testIpv6},
         {"settings keys", testNetSettings},

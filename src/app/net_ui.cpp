@@ -17,7 +17,7 @@ using State = net::Client::State;
 
 constexpr int kJoinFields = 3;   // name, address, password; then the servers found
 constexpr int kHostRows = 5;     // name, server name, port, password, start
-constexpr int kLobbyRows = 13;   // start, then the twelve settings
+constexpr int kLobbyRows = 15;   // start, then the fourteen settings
 constexpr std::uint64_t kChatShownMs = 8000;
 
 const char* const kYesNo[2] = {"No", "Yes"};
@@ -38,6 +38,8 @@ std::string optionText(const net::MatchSettings& s, int option) {
         case net::Option::StompedBombs: return std::string("Stomped Bombs Detonate: ") + kYesNo[s.stompedBombsDetonate];
         case net::Option::WinByKills: return std::string("Win Matches By Kill Total: ") + kYesNo[s.winByKills];
         case net::Option::DiseasesDestroyable: return std::string("Diseases Can Be Destroyed: ") + kYesNo[s.diseasesDestroyable];
+        case net::Option::Goldman: return std::string("Gold Bomberman: ") + kYesNo[s.goldman];
+        case net::Option::Campaign: return "Campaign: " + (s.campaign > 0 ? s.campaignTitle : std::string("Off"));
         case net::Option::Count: break;
     }
     return {};
@@ -296,7 +298,11 @@ void NetUi::key(unsigned key, bool ctrl) {
             sound(10);
             client_.sendStart();
         }
-        if (key == SDLK_F3) client_.sendTeam();
+        if (key == SDLK_F3) client_.sendTeam(0);
+        if (key == SDLK_F4) client_.sendTeam(1);
+        // More players at this computer (second key set, gamepads), or fewer.
+        if (key == SDLK_F5) client_.sendLocalPlayers(std::min(client_.localPlayers() + 1, net::kMaxLocalPlayers));
+        if (key == SDLK_F6) client_.sendLocalPlayers(std::max(client_.localPlayers() - 1, 1));
         if (key == SDLK_ESCAPE) {
             if (!chatText_.empty()) chatText_.clear();
             else if (escape(now)) leave();
@@ -328,7 +334,7 @@ void NetUi::key(unsigned key, bool ctrl) {
     if ((key == SDLK_ESCAPE || (key == SDLK_Q && ctrl)) && escape(now)) leave();
 }
 
-void NetUi::update(std::uint64_t nowMs, const PlayerInput& local) {
+void NetUi::update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxLocalPlayers>& locals) {
     now_ = nowMs;
     if (mode_ == Mode::Closed) return;
     if (mode_ == Mode::Join) {
@@ -341,7 +347,7 @@ void NetUi::update(std::uint64_t nowMs, const PlayerInput& local) {
 
     client_.update(nowMs);
     if (client_.state() == State::Round) {
-        client_.setInput(chatOpen_ ? PlayerInput{} : local);
+        for (int l = 0; l < net::kMaxLocalPlayers; ++l) client_.setInput(l, chatOpen_ ? PlayerInput{} : locals[static_cast<std::size_t>(l)]);
         client_.advance(
             nowMs, [this](World& w) { previous_.capture(w); },
             [this](const World& w, const std::vector<Event>& events) {
@@ -510,7 +516,7 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
 
     label(r, bank, wrap(r, bank, client_.serverName(), 284).front(), 332, 16, 1.0f, 0.95f, 0.3f);
     for (int row = 0; row < kLobbyRows; ++row) {
-        const float y = 42.0f + 20.0f * static_cast<float>(row);
+        const float y = 40.0f + 18.0f * static_cast<float>(row);
         const bool on = row == lobbyRow_;
         std::string line;
         if (row == 0) {
@@ -539,8 +545,8 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
 
     const bool leaving = escapeAt_ != 0 && nowMs - escapeAt_ < 3000;
     const std::string hint = leaving ? "Press Esc again to leave the game"
-                             : admin ? "Type to chat   Arrows: settings   F2: start   F3: team   Esc: leave"
-                                     : "Type to chat   F3: change team   Esc: leave";
+                             : admin ? "Type: chat  Arrows: settings  F2: start  F3/F4: team  F5/F6: players here  Esc"
+                                     : "Type: chat   F3/F4: team   F5/F6: players at this computer   Esc: leave";
     label(r, bank, hint, 24, 458, 0.4f, 1.0f, 1.0f);
 }
 
@@ -575,7 +581,18 @@ void NetUi::drawResult(Renderer& r, SpriteBank& bank) {
         return name.empty() || name == "Computer" ? "Player " + std::to_string(seat + 1) : name;
     };
     const bool matchOver = end.score.matchWinner >= 0;
-    if (end.winner < 0) {
+    if (end.campaign != 0) {
+        // A campaign stage: the original's notices, on a plain background.
+        r.image(bank.picture("glue0"));
+        r.quad(100, 170, 440, 130, 0.0f, 0.0f, 0.10f, 0.88f);
+        const net::RoundStartMsg& start = client_.roundStart();
+        const std::string lines[3] = {end.campaign == 1 ? (end.campaignOver ? "Congratulations!" : "Stage cleared!") : "Oh Well!",
+                                      end.campaign == 1 ? (end.campaignOver ? "You made it through the whole campaign!" : "(" + start.stageName + ")")
+                                                        : "Campaign unsuccessful!",
+                                      "Stage " + std::to_string(start.stage) + " of " + std::to_string(start.stages)};
+        for (int i = 0; i < 3; ++i)
+            label(r, bank, lines[i], 320.0f - r.textWidth(bank, lines[i]) / 2.0f, 190.0f + 28.0f * static_cast<float>(i), i == 0 ? 1.0f : 0.9f, i == 0 ? 0.95f : 0.9f, i == 0 ? 0.3f : 0.9f);
+    } else if (end.winner < 0) {
         r.image(bank.picture("draw"));
     } else if (end.teamPlay) {
         r.image(bank.picture("team" + std::to_string(end.winner)));
@@ -609,6 +626,8 @@ void NetUi::draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int fr
     const State state = client_.state();
     if (mode_ == Mode::Session && (state == State::Round || state == State::Result) && client_.world() != nullptr) {
         std::array<int, kMaxPlayers> wins = client_.score().wins;
+        if (client_.view()->campaign())  // the score boxes show campaign points
+            for (int i = 0; i < kMaxPlayers; ++i) wins[static_cast<std::size_t>(i)] = client_.view()->player(i).score;
         r.draw(*client_.view(), previous_, client_.stepAlpha(nowMs), windowW, windowH, &bank, &wins);
         r.begin(windowW, windowH, false);
         if (state == State::Result) drawResult(r, bank);

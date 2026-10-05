@@ -46,8 +46,9 @@ public:
 
     void key(unsigned key, bool ctrl);  // an SDL keycode
     void text(const char* utf8);        // typed characters, while wantsTextInput()
-    // Network and round. `local` is this player's controller.
-    void update(std::uint64_t nowMs, const PlayerInput& local);
+    // Network and round. `locals` are the controllers of the players at this computer:
+    // the first and second key set (each with a gamepad), then two more gamepads.
+    void update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxLocalPlayers>& locals);
     void draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int frame, std::uint64_t nowMs);
 
 private:
