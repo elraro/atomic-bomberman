@@ -1,0 +1,7 @@
+// The Android build of the game. The game itself is the C++ code of the
+// repository, built by the CMake file at its top; this project wraps it in an
+// app. SDL (its C code and the Java "activity" that starts the game) is
+// fetched by fetch-sdl.sh into android/SDL before the first build.
+plugins {
+    id 'com.android.application' version '8.7.3' apply false
+}

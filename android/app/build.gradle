@@ -1,0 +1,61 @@
+plugins {
+    id 'com.android.application'
+}
+
+// The release number is the one in the top CMakeLists.txt (project(... VERSION x.y ...)).
+def cmakeText = file('../../CMakeLists.txt').text
+def versionMatch = (cmakeText =~ /project\(AtomicBombermanModern VERSION ([0-9.]+)/)
+def gameVersion = versionMatch ? versionMatch[0][1] : '0.0'
+def versionParts = gameVersion.tokenize('.')
+
+android {
+    namespace 'io.github.elraro.atomicbomberman'
+    compileSdk 35
+    ndkVersion '27.2.12479018'
+
+    defaultConfig {
+        applicationId 'io.github.elraro.atomicbomberman'
+        minSdk 24
+        targetSdk 35
+        versionName gameVersion
+        versionCode versionParts[0].toInteger() * 1000 + (versionParts.size() > 1 ? versionParts[1].toInteger() : 0)
+        externalNativeBuild {
+            cmake {
+                arguments '-DAB_FETCH_SDL3=ON',
+                          "-DFETCHCONTENT_SOURCE_DIR_SDL3=${rootDir}/SDL",
+                          '-DANDROID_STL=c++_shared'
+                targets 'main'
+            }
+        }
+        ndk {
+            // Phones and tablets (64- and 32-bit ARM), and 64-bit x86 for emulators.
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path '../../CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    sourceSets {
+        // SDL's Java side: the activity that opens the window and starts the game.
+        main.java.srcDirs += '../SDL/android-project/app/src/main/java'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Signed with the debug key unless a real one is configured: installable, but
+            // not updatable across builds from different machines, and not for a store.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}

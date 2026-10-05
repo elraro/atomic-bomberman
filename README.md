@@ -9,7 +9,7 @@
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C)
 ![SDL3](https://img.shields.io/badge/SDL-3-1a5fb4)
 ![OpenGL 3.3](https://img.shields.io/badge/OpenGL-3.3-5586a4)
-![platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows-444)
+![platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows%20%7C%20Android-444)
 [![tests](https://img.shields.io/badge/unit%20tests-run%20on%20every%20push-2ea44f)](https://github.com/elraro/atomic-bomberman/actions/workflows/build.yml)
 [![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/NruWuaq56B)
 
@@ -75,6 +75,10 @@ Without the original game the program uses its own free set (robots instead of t
    `--free` switches back to the free set at any time.
 
 Full instructions, folder locations and troubleshooting: **[INSTALL.md](INSTALL.md)**.
+
+## 📱 Android
+
+There is an Android build (an APK among the downloads): the same game with on-screen controls, playing with the free asset set. It is new and has only been run on an emulator so far. How it works, how to build it and what it cannot do yet: [`android/README.md`](android/README.md).
 
 ## 🛠️ Build from source
 
@@ -167,6 +171,7 @@ A few things learned along the way:
 | `src/game/` | Gameplay core and computer players. Deterministic, no platform dependencies |
 | `src/app/`, `src/rendering/`, `src/audio/` | SDL3 window and input, OpenGL 3.3 renderer, sound and music |
 | `src/resources/` | Readers for the original's file formats, and the asset importer |
+| `android/` | The Android app: Gradle project and manifest around the same C++ code |
 | `src/free/` | The free asset set: graphics, sounds, music and arenas made by code |
 | `src/net/`, `src/server/` | Network mode: sockets, protocol, server, client; the dedicated server program |
 | `tests/unit/` | Tests that encode the specified rules |

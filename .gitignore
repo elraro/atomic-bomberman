@@ -11,3 +11,12 @@ __pycache__/
 /package/
 *.tar.gz
 *.zip
+
+# Android build: SDL is fetched by android/fetch-sdl.sh, the rest is produced by Gradle.
+/android/SDL/
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/app/.cxx/
+/android/local.properties
+*.apk

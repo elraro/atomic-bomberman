@@ -41,9 +41,11 @@ add_library(ab_free src/free/free_art.cpp src/free/free_sound.cpp src/free/free_
 target_link_libraries(ab_free PUBLIC ab_game ab_resources)
 ab_warnings(ab_free)
 
-add_executable(free_art_dump tools/diagnostics/free_art_dump.cpp)
-target_link_libraries(free_art_dump PRIVATE ab_free)
-ab_warnings(free_art_dump)
+if(NOT ANDROID)
+    add_executable(free_art_dump tools/diagnostics/free_art_dump.cpp)
+    target_link_libraries(free_art_dump PRIVATE ab_free)
+    ab_warnings(free_art_dump)
+endif()
 
 # Network play: sockets, protocol, server and client. No SDL: the dedicated
 # server is built from this alone.
@@ -55,13 +57,14 @@ if(WIN32)
 endif()
 ab_warnings(ab_net)
 
-# Dedicated server: no window, no SDL.
-find_package(Threads REQUIRED)
-add_executable(atomic_server src/server/main.cpp)
-target_link_libraries(atomic_server PRIVATE ab_net ab_free Threads::Threads)
-target_compile_definitions(atomic_server PRIVATE AB_VERSION="${PROJECT_VERSION}")
-ab_warnings(atomic_server)
-install(TARGETS atomic_server RUNTIME DESTINATION .)
+# Dedicated server: no window, no SDL. (Not for Android: the app is the game alone.)
+if(NOT ANDROID)
+    add_executable(atomic_server src/server/main.cpp)
+    target_link_libraries(atomic_server PRIVATE ab_net ab_free Threads::Threads)
+    target_compile_definitions(atomic_server PRIVATE AB_VERSION="${PROJECT_VERSION}")
+    ab_warnings(atomic_server)
+    install(TARGETS atomic_server RUNTIME DESTINATION .)
+endif()
 
 # Front end: SDL3 window, input and audio + OpenGL 3.3 renderer. Optional.
 # SDL3 is taken from the system when installed. With -DAB_FETCH_SDL3=ON it is
@@ -70,8 +73,14 @@ option(AB_FETCH_SDL3 "Download and build SDL3 if it is not installed" OFF)
 find_package(SDL3 CONFIG QUIET)
 if(NOT SDL3_FOUND AND AB_FETCH_SDL3)
     include(FetchContent)
-    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    if(ANDROID)
+        # The Android activity (SDL's Java side) loads libSDL3.so and then the game's library.
+        set(SDL_SHARED ON CACHE BOOL "" FORCE)
+        set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+    else()
+        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+        set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    endif()
     set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(SDL3
         GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
@@ -81,7 +90,7 @@ if(NOT SDL3_FOUND AND AB_FETCH_SDL3)
     set(SDL3_FOUND TRUE)
 endif()
 if(SDL3_FOUND)
-    add_executable(atomic
+    set(AB_APP_SOURCES
         src/app/main.cpp
         src/app/editor.cpp
         src/app/net_ui.cpp
@@ -90,14 +99,24 @@ if(SDL3_FOUND)
         src/rendering/renderer.cpp
         src/rendering/sprites.cpp
         src/audio/audio.cpp)
-    target_link_libraries(atomic PRIVATE ab_game ab_resources ab_net ab_free SDL3::SDL3)
-    target_compile_definitions(atomic PRIVATE AB_VERSION="${PROJECT_VERSION}")
-    ab_warnings(atomic)
-    install(TARGETS atomic RUNTIME DESTINATION .)
+    if(ANDROID)
+        # On Android the game is a shared library named "main", started by SDL's activity
+        # (see android/). Built by Gradle, which calls this file once per processor type.
+        add_library(main SHARED ${AB_APP_SOURCES})
+        set(AB_APP main)
+    else()
+        add_executable(atomic ${AB_APP_SOURCES})
+        set(AB_APP atomic)
+        install(TARGETS atomic RUNTIME DESTINATION .)
+    endif()
+    target_link_libraries(${AB_APP} PRIVATE ab_game ab_resources ab_net ab_free SDL3::SDL3)
+    target_compile_definitions(${AB_APP} PRIVATE AB_VERSION="${PROJECT_VERSION}")
+    ab_warnings(${AB_APP})
 else()
     message(STATUS "SDL3 not found: building the core and tests only (use -DAB_FETCH_SDL3=ON to download it)")
 endif()
 
+if(NOT ANDROID)
 enable_testing()
 # Developer tool for the movie decoder (not installed).
 add_executable(mve_dump tools/diagnostics/mve_dump.cpp)
@@ -123,3 +142,4 @@ add_executable(ab_net_tests tests/unit/test_net.cpp)
 target_link_libraries(ab_net_tests PRIVATE ab_net ab_free)
 ab_warnings(ab_net_tests)
 add_test(NAME net COMMAND ab_net_tests)
+endif()

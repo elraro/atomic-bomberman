@@ -1,6 +1,6 @@
 name: build
 
-# Builds the modern game for Linux and Windows and runs the unit tests.
+# Builds the modern game for Linux, Windows and Android and runs the unit tests.
 # The artifacts contain only new code: no original game files are in this
 # repository, and none are packaged. Players import their own copy with
 # `atomic --import-assets` (see INSTALL.md).
@@ -105,10 +105,49 @@ jobs:
           path: atomic-bomberman-server-windows-x64.zip
           if-no-files-found: error
 
+  android:
+    # The Android app: the same game built with the NDK, wrapped by the project in android/.
+    # The APK is signed with a throw-away debug key: it installs, but a later build will not
+    # install over it (uninstall first), and it is not for an app store.
+    runs-on: ubuntu-24.04
+    env:
+      GRADLE_VERSION: 8.11.1
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Java 21 and the Android SDK packages
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1" > /dev/null
+
+      - name: Gradle
+        run: |
+          curl -sSL -o gradle.zip "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+          unzip -q gradle.zip -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: SDL
+        run: android/fetch-sdl.sh
+
+      - name: Build
+        working-directory: android
+        run: gradle --no-daemon assembleDebug
+
+      - name: Package
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk atomic-bomberman-modern-android.apk
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: atomic-bomberman-modern-android
+          path: atomic-bomberman-modern-android.apk
+          if-no-files-found: error
+
   release:
     # On a version tag (v*), attach the packages to a GitHub release.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows]
+    needs: [linux, windows, android]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -123,3 +162,4 @@ jobs:
             atomic-bomberman-modern-windows-x64.zip
             atomic-bomberman-server-linux-x86_64.tar.gz
             atomic-bomberman-server-windows-x64.zip
+            atomic-bomberman-modern-android.apk

@@ -11,12 +11,13 @@ For the import you need:
 
 ## 1. Get the program
 
-**Download.** Each push to the repository builds four packages with GitHub Actions (workflow "build"):
+**Download.** Each push to the repository builds five packages with GitHub Actions (workflow "build"):
 
 | Package | For |
 |---|---|
 | `atomic-bomberman-modern-linux-x86_64.tar.gz` | 64-bit Linux with X11 or Wayland |
 | `atomic-bomberman-modern-windows-x64.zip` | 64-bit Windows 10 or later |
+| `atomic-bomberman-modern-android.apk` | Android 7.0 or later (new; see `android/README.md`) |
 | `atomic-bomberman-server-linux-x86_64.tar.gz` | Only the dedicated network server, Linux (no graphics needed) |
 | `atomic-bomberman-server-windows-x64.zip` | Only the dedicated network server, Windows |
 
