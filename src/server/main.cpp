@@ -63,6 +63,7 @@ void logLine(const std::string& line) {
 
 const char* const kUsage =
     "Usage: atomic_server [options]\n"
+    "  --version          print the release number and exit\n"
     "  --port N           TCP and UDP port (default 27410)\n"
     "  --name TEXT        server name shown to players\n"
     "  --password TEXT    players must give this password\n"
@@ -95,6 +96,10 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
+        if (a == "--version") {
+            std::puts("Atomic Bomberman (modern) server " AB_VERSION);
+            return 0;
+        }
         if (a == "--help" || a == "-h") {
             std::fputs(kUsage, stdout);
             return 0;

@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
-project(AtomicBombermanModern LANGUAGES CXX)
+# The release number: shown on the main menu and by --version. Releases are tagged v<this>.
+project(AtomicBombermanModern VERSION 1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -58,6 +59,7 @@ ab_warnings(ab_net)
 find_package(Threads REQUIRED)
 add_executable(atomic_server src/server/main.cpp)
 target_link_libraries(atomic_server PRIVATE ab_net ab_free Threads::Threads)
+target_compile_definitions(atomic_server PRIVATE AB_VERSION="${PROJECT_VERSION}")
 ab_warnings(atomic_server)
 install(TARGETS atomic_server RUNTIME DESTINATION .)
 
@@ -88,6 +90,7 @@ if(SDL3_FOUND)
         src/rendering/sprites.cpp
         src/audio/audio.cpp)
     target_link_libraries(atomic PRIVATE ab_game ab_resources ab_net ab_free SDL3::SDL3)
+    target_compile_definitions(atomic PRIVATE AB_VERSION="${PROJECT_VERSION}")
     ab_warnings(atomic)
     install(TARGETS atomic RUNTIME DESTINATION .)
 else()

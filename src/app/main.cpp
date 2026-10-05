@@ -81,8 +81,13 @@ Options parseArgs(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
+        if (a == "--version") {
+            std::puts("Atomic Bomberman (modern) " AB_VERSION);
+            std::exit(0);
+        }
         if (a == "--help" || a == "-h") {
             std::puts("Usage: atomic [options]\n"
+                      "  --version            print the release number and exit\n"
                       "  --import-assets DIR  import the data of an original game copy, then exit\n"
                       "  --assets-dir DIR     where --import-assets writes (default: per-user data folder)\n"
                       "  --game-dir DIR       imported assets or an original game folder to play from\n"
@@ -1857,6 +1862,9 @@ int main(int argc, char** argv) {
                 // The picture carries the item texts; the game draws only the cursor
                 // (original value 700: first item at x 332, y 140, 38 px apart).
                 renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 332.0f, 140.0f + 38.0f * static_cast<float>(menuItem));
+                // The release, top left, where the original shows its "V1.0".
+                renderer.text(*spritesPtr, "V" AB_VERSION " Modern", 9, 7, 0, 0, 0);
+                renderer.text(*spritesPtr, "V" AB_VERSION " Modern", 8, 6, 1, 1, 1);
                 renderer.end();
             } else {
                 renderer.begin(w, h);
