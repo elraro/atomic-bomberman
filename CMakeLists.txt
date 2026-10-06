@@ -70,6 +70,7 @@ endif()
 # SDL3 is taken from the system when installed. With -DAB_FETCH_SDL3=ON it is
 # downloaded and built as a static library instead (used by the release builds).
 option(AB_FETCH_SDL3 "Download and build SDL3 if it is not installed" OFF)
+option(AB_MACOS_APP "macOS: build the game as an application bundle (.app) instead of a plain program" OFF)
 find_package(SDL3 CONFIG QUIET)
 if(NOT SDL3_FOUND AND AB_FETCH_SDL3)
     include(FetchContent)
@@ -106,6 +107,29 @@ if(SDL3_FOUND)
         # (see android/). Built by Gradle, which calls this file once per processor type.
         add_library(main SHARED ${AB_APP_SOURCES})
         set(AB_APP main)
+    elseif(APPLE AND AB_MACOS_APP)
+        # macOS: an application bundle, "Atomic Bomberman.app", with the program inside it
+        # (Contents/MacOS/atomic, which still takes the command-line options).
+        # -DAB_MACOS_ICON=FILE.icns gives it an icon; the release build makes that file
+        # from packaging/macos/icon-1024.png (see .github/workflows/build.yml).
+        set(AB_ICON)
+        if(AB_MACOS_ICON)
+            set(AB_ICON ${AB_MACOS_ICON})
+            set_source_files_properties(${AB_ICON} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+            get_filename_component(AB_ICON_NAME ${AB_ICON} NAME)
+        endif()
+        add_executable(atomic MACOSX_BUNDLE ${AB_APP_SOURCES} ${AB_ICON})
+        set(AB_APP atomic)
+        set_target_properties(atomic PROPERTIES
+            OUTPUT_NAME "Atomic Bomberman"
+            MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/Info.plist.in
+            MACOSX_BUNDLE_BUNDLE_NAME "Atomic Bomberman"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.elraro.atomicbomberman"
+            MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+            MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+            MACOSX_BUNDLE_ICON_FILE "${AB_ICON_NAME}"
+            MACOSX_BUNDLE_COPYRIGHT "GPL-3.0-or-later. A new program: it holds nothing of the original game.")
+        install(TARGETS atomic BUNDLE DESTINATION .)
     else()
         add_executable(atomic ${AB_APP_SOURCES})
         set(AB_APP atomic)

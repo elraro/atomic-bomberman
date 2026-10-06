@@ -129,17 +129,32 @@ jobs:
           if-no-files-found: error
 
   macos:
-    # One package for Apple silicon and Intel Macs. The tests run on the runner's own
-    # processor (Apple silicon); the Intel half is built and checked to be present, not run.
-    # The programs are not signed with an Apple developer certificate: see INSTALL.md.
+    # One package for Apple silicon and Intel Macs: the game as an application bundle
+    # ("Atomic Bomberman.app"), and the dedicated server as a command-line program.
+    # The tests run on the runner's own processor (Apple silicon); the Intel half is built
+    # and checked to be present, not run. The app carries an ad-hoc signature only, not one
+    # from an Apple developer certificate: see INSTALL.md for what that means when opening it.
     runs-on: macos-15
+    env:
+      APP: build/Atomic Bomberman.app
     steps:
       - uses: actions/checkout@v7
+
+      - name: Icon
+        # The .icns file from the one picture in the repository.
+        run: |
+          mkdir -p icon/atomic.iconset
+          for size in 16 32 128 256 512; do
+            sips -z $size $size packaging/macos/icon-1024.png --out icon/atomic.iconset/icon_${size}x${size}.png > /dev/null
+            sips -z $((size * 2)) $((size * 2)) packaging/macos/icon-1024.png --out icon/atomic.iconset/icon_${size}x${size}@2x.png > /dev/null
+          done
+          iconutil -c icns icon/atomic.iconset -o icon/atomic.icns
 
       - name: Configure
         run: >
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAB_FETCH_SDL3=ON
           "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          -DAB_MACOS_APP=ON "-DAB_MACOS_ICON=$PWD/icon/atomic.icns"
 
       - name: Build
         run: cmake --build build --parallel
@@ -161,17 +176,26 @@ jobs:
 
       - name: Check that both processor types are in the programs
         run: |
-          for program in build/atomic build/atomic_server; do
+          for program in "$APP/Contents/MacOS/Atomic Bomberman" build/atomic_server; do
             lipo -archs "$program"
             lipo "$program" -verify_arch arm64 x86_64
           done
-          otool -L build/atomic
+          otool -L "$APP/Contents/MacOS/Atomic Bomberman"
+
+      - name: Sign (ad hoc) and check the app
+        run: |
+          plutil -lint "$APP/Contents/Info.plist"
+          test -f "$APP/Contents/Resources/atomic.icns"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
 
       - name: Package
         run: |
           mkdir -p package/atomic-bomberman-modern
-          cp build/atomic build/atomic_server README.md INSTALL.md LICENSE package/atomic-bomberman-modern/
-          tar -C package -czf atomic-bomberman-modern-macos-universal.tar.gz atomic-bomberman-modern
+          cp -R "$APP" package/atomic-bomberman-modern/
+          cp build/atomic_server README.md INSTALL.md LICENSE package/atomic-bomberman-modern/
+          # ditto keeps what a signed app needs (a plain zip may not).
+          ditto -c -k --keepParent package/atomic-bomberman-modern atomic-bomberman-modern-macos-universal.zip
           # The dedicated network server on its own: no window, no SDL.
           mkdir -p package/atomic-bomberman-server
           cp build/atomic_server README.md INSTALL.md LICENSE package/atomic-bomberman-server/
@@ -179,14 +203,31 @@ jobs:
 
       - name: Check that the programs start
         run: |
-          package/atomic-bomberman-modern/atomic --version
+          mkdir unpacked && ditto -x -k atomic-bomberman-modern-macos-universal.zip unpacked
+          codesign --verify --deep --strict "unpacked/atomic-bomberman-modern/Atomic Bomberman.app"
+          "unpacked/atomic-bomberman-modern/Atomic Bomberman.app/Contents/MacOS/Atomic Bomberman" --version
           package/atomic-bomberman-server/atomic_server --help
           echo quit | package/atomic-bomberman-server/atomic_server --port 27411 --hidden
+
+      - name: Try the window (told as a notice; does not fail the build)
+        # Whether a window with OpenGL opens on this runner and the main menu gets drawn,
+        # with the free asset set. What it finds is shown as an annotation on the run's page.
+        continue-on-error: true
+        run: |
+          GAME="unpacked/atomic-bomberman-modern/Atomic Bomberman.app/Contents/MacOS/Atomic Bomberman"
+          "$GAME" --native --frames 60 --menu-shot 1 --screenshot menu.ppm > window.log 2>&1 &
+          pid=$!
+          for i in $(seq 1 60); do kill -0 $pid 2>/dev/null || break; sleep 1; done
+          if kill -0 $pid 2>/dev/null; then kill -9 $pid; echo "::warning::macOS window try: the game did not finish in 60 s"; fi
+          wait $pid; code=$?
+          picture=no; [ -s menu.ppm ] && picture="yes ($(head -c 15 menu.ppm | tr '\n' ' '))"
+          echo "::notice::macOS window try: exit code $code; menu picture written: $picture; $(grep -E 'OpenGL|ERROR' window.log | head -2 | tr '\n' ' ')"
+          grep -E "WARN|ERROR" window.log | head -5 | while read -r line; do echo "::warning::macOS window try: $line"; done
 
       - uses: actions/upload-artifact@v7
         with:
           name: atomic-bomberman-modern-macos-universal
-          path: atomic-bomberman-modern-macos-universal.tar.gz
+          path: atomic-bomberman-modern-macos-universal.zip
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v7
@@ -252,7 +293,7 @@ jobs:
             atomic-bomberman-modern-linux-arm64.tar.gz
             atomic-bomberman-modern-windows-x64.zip
             atomic-bomberman-modern-windows-arm64.zip
-            atomic-bomberman-modern-macos-universal.tar.gz
+            atomic-bomberman-modern-macos-universal.zip
             atomic-bomberman-server-linux-x86_64.tar.gz
             atomic-bomberman-server-linux-arm64.tar.gz
             atomic-bomberman-server-windows-x64.zip
