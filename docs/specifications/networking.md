@@ -2,6 +2,8 @@
 
 This is **not** the original's network mode. The original (`../reverse-engineering/networking.md`) talks IPX or serial, lets every machine simulate its own players and was only analysed statically; none of it is reproduced. This document specifies a new client-server mode for the modern game. Everything here is this project's own design; nothing is a claim about the original.
 
+**Where this is going:** `online-play.md` specifies the target for internet play (a master server, NAT traversal with STUN/TURN, snapshots instead of lockstep). It is not implemented; this document describes what the game does today.
+
 ## Goals
 
 - Play over a LAN or the internet with TCP/IP (IPv4 and IPv6): up to 10 players, up to four at one machine, the rest computer players.

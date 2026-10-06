@@ -26,4 +26,4 @@ Numbers written as `V(n)` are entries of the original `data/res/valuelst.res`; t
 | `powerups.md` | Types, generation, pickup, diseases |
 | `game-modes.md` | Pre-game screens, free-for-all, team play, match flow |
 
-`networking.md` specifies the modern client-server mode (a new design, not the original's). Campaign mode, the roulette and the settings are in `game-modes.md`. The AI is described in `../reverse-engineering/ai.md`.
+`networking.md` specifies the modern client-server mode (a new design, not the original's). `online-play.md` is the target design for internet play (master server, NAT traversal, snapshots); nothing of it is implemented yet. Campaign mode, the roulette and the settings are in `game-modes.md`. The AI is described in `../reverse-engineering/ai.md`.

@@ -672,3 +672,9 @@ Not a discovery about the original; a record of what was built and seen.
 - The CI job signs the bundle ad hoc, zips it with `ditto`, unpacks the zip again, verifies the signature and starts the game from it.
 - Seen on the macOS build machine (Apple silicon, run of commit `459c53c`): `OpenGL 4.1 APPLE-21.1.1`, 60 frames of the main menu drawn, a 640 x 480 picture written, exit code 0. The picture itself was not looked at (job files cannot be fetched without signing in).
 - Not done: a double click on a person's Mac, Gatekeeper's refusal and "Open Anyway", the folder dialog, sound, an Intel Mac. No Apple developer certificate, no notarization.
+
+### Decision: target design for internet play
+
+Not a discovery about the original. The user asked for internet play that works behind NAT and carrier-grade NAT, with a master server, and decided (2026-10-06): snapshots instead of lockstep; the user hosts master, database and coturn; statistics only from dedicated servers the master trusts; TCP kept as the last resort where UDP is blocked. The design is in `docs/specifications/online-play.md`. Nothing of it is implemented.
+
+Measured for that design with the core's present save format, over 20 ten-player rounds of computer players (49 495 steps): 5450 bytes per public state on average (5510 at most), 1097 bytes differing from one step to the next on average (2940 at most), 0.21 events per step. This is why snapshots get a format of their own rather than the save format.
