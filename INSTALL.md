@@ -19,7 +19,7 @@ For the import you need:
 | `atomic-bomberman-modern-linux-arm64.tar.gz` | The same for 64-bit ARM (for example a Raspberry Pi 4 or 5 with a 64-bit system) |
 | `atomic-bomberman-modern-windows-x64.zip` | 64-bit Windows 10 or later, Intel or AMD processor |
 | `atomic-bomberman-modern-windows-arm64.zip` | Windows 11 on ARM |
-| `atomic-bomberman-modern-macos-universal.tar.gz` | macOS 11 or later, Apple silicon and Intel in one package (see the note below) |
+| `atomic-bomberman-modern-macos-universal.zip` | macOS 11 or later: the application **Atomic Bomberman**, for Apple silicon and Intel alike (see the note below) |
 | `atomic-bomberman-modern-android.apk` | Android 7.0 or later (new; see `android/README.md`) |
 | `atomic-bomberman-server-linux-x86_64.tar.gz`, `…-linux-arm64.tar.gz` | Only the dedicated network server, Linux (no graphics needed) |
 | `atomic-bomberman-server-windows-x64.zip`, `…-windows-arm64.zip` | Only the dedicated network server, Windows |
@@ -27,13 +27,17 @@ For the import you need:
 
 They are attached to the workflow run (Actions → build → latest run → Artifacts) and, for tagged versions (`v*`), to the release page. Unpack the package anywhere; it holds the game (`atomic` or `atomic.exe`), the dedicated network server (`atomic_server` or `atomic_server.exe`), the README, the license and this file. Nothing else needs installing: SDL3 is built into the program. A graphics driver with OpenGL 3.3 is required.
 
-**macOS.** The package holds two command-line programs, not an application bundle: unpack it and start `./atomic` from Terminal. The programs are not signed with an Apple developer certificate, so macOS refuses to start them after a download with a browser. Remove the download mark once, in the unpacked folder:
+**macOS.** Unpack the zip and move **Atomic Bomberman** (the `.app`) where you like, for instance to Applications; start it with a double click. The original game's data, if you have it, is chosen from inside the game (step 2).
+
+The app is not signed with an Apple developer certificate, so macOS refuses the first start after a download with a browser ("Apple could not verify..."). Either allow it once under **System Settings → Privacy & Security → Open Anyway** (the button appears there after the refused start), or remove the download mark in Terminal:
 
 ```sh
-xattr -d com.apple.quarantine atomic atomic_server
+xattr -dr com.apple.quarantine "Atomic Bomberman.app"
 ```
 
-The Linux commands on this page work the same on macOS.
+The program inside the app still takes the command-line options of this page, as `"Atomic Bomberman.app/Contents/MacOS/Atomic Bomberman" --import-assets ...` where the page says `./atomic`. The package also holds `atomic_server`, a plain command-line program (the same `xattr` command, with its name, lets it start).
+
+Otherwise the Linux commands on this page work the same on macOS.
 
 ## 2. Import the original game data (optional, once)
 
@@ -128,7 +132,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 `-DAB_FETCH_SDL3=ON` downloads SDL3 and links it into the program. Leave it out to use an SDL3 already installed on the system (for example `libsdl3-dev`). On Linux, building SDL3 needs the X11, Wayland, OpenGL and audio development packages; the exact list is in `.github/workflows/build.yml`.
 
-The program is `build/atomic` (Linux, macOS) or `build\Release\atomic.exe` (Windows).
+The program is `build/atomic` (Linux, macOS; with `-DAB_MACOS_APP=ON` on macOS it is the application `build/Atomic Bomberman.app`) or `build\Release\atomic.exe` (Windows).
 
 ## Network games and the dedicated server
 
@@ -149,7 +153,7 @@ To play over a network, one player chooses **Start Network Game** in the menu an
 
 - The dedicated server and network play were run on Linux on one machine only (their automated tests also pass on Windows in CI); see the README for what that means.
 - The import from inside the game was run on Linux with the real data in every case but one: first-start offer, conversion from a remembered folder (260 data files, 971 sounds, 48 s), no conversion at the next start, a new release with the folder gone (note once, old data kept) and with the folder back, the game starting anew after a change under Options. **The folder dialog itself was not operated** (it cannot be driven unattended), and none of this was run on Windows or macOS.
-- The macOS package and the ARM packages for Linux and Windows are built by GitHub Actions, where the unit tests pass on Apple silicon and on ARM Linux and Windows machines and the programs answer `--version` and `--help`. None of them has been started on a real machine by the author: the game's window, graphics and sound are **untried** on macOS and on ARM. The Intel half of the macOS package is built but its tests are not run.
+- The macOS package and the ARM packages for Linux and Windows are built by GitHub Actions, where the unit tests pass on Apple silicon and on ARM Linux and Windows machines and the programs answer `--version` and `--help`. None of them has been started on a real machine by the author. On macOS the build machine also unpacks the zip, checks the app's signature and starts the game from inside the app: a window with OpenGL 4.1 opened and the main menu was drawn (free asset set, Apple silicon). **Not tried:** opening the app with a double click, the refusal and "Open Anyway" after a download, the folder dialog, sound, an Intel Mac (that half is built, its tests are not run), and the game's window on ARM Linux and Windows.
 
 - The disc holds about a thousand more sounds than the game ever plays (alternate takes and unused lines). They are left out unless you add `--all-sounds` to the import (about 180 MB more); **Options → Sound Test** then lists and plays them.
 - Three sounds are always reported as not found: `xxx` and `0`, which the original's own sound list marks as dummies, and `zahpu111`, a voice line the list names but the disc does not contain. Nothing is wrong with your copy.

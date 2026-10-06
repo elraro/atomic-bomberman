@@ -665,3 +665,10 @@ Not a discovery about the original; a record of what was built and seen.
 
 - The workflow builds Linux and Windows for x86-64 and ARM64 on runners of each type, and a universal macOS package. Two assumptions of the network tests did not hold on macOS and were corrected in the tests: clients connecting in the same instant reach the server in either order, and the predicted step settles five ahead (within the client's two steps of allowed drift) where four were asked for.
 - Not done: the game started by a person on macOS or on an ARM machine.
+
+### Modern: macOS application bundle
+
+- `-DAB_MACOS_APP=ON` builds the game as `Atomic Bomberman.app` (bundle id `io.github.elraro.atomicbomberman`, `packaging/macos/Info.plist.in`); the icon is the free set's menu pointer (`packaging/macos/icon-1024.png`, made into `.icns` by the CI job).
+- The CI job signs the bundle ad hoc, zips it with `ditto`, unpacks the zip again, verifies the signature and starts the game from it.
+- Seen on the macOS build machine (Apple silicon, run of commit `459c53c`): `OpenGL 4.1 APPLE-21.1.1`, 60 frames of the main menu drawn, a 640 x 480 picture written, exit code 0. The picture itself was not looked at (job files cannot be fetched without signing in).
+- Not done: a double click on a person's Mac, Gatekeeper's refusal and "Open Anyway", the folder dialog, sound, an Intel Mac. No Apple developer certificate, no notarization.
