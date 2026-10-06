@@ -96,6 +96,8 @@ if(SDL3_FOUND)
         src/app/editor.cpp
         src/app/net_ui.cpp
         src/app/touch.cpp
+        src/app/pad_keys.cpp
+        src/app/screen_keyboard.cpp
         src/app/import_screen.cpp
         src/app/original_folder.cpp
         src/rendering/gl.cpp
@@ -168,4 +170,14 @@ add_executable(ab_net_tests tests/unit/test_net.cpp)
 target_link_libraries(ab_net_tests PRIVATE ab_net ab_free)
 ab_warnings(ab_net_tests)
 add_test(NAME net COMMAND ab_net_tests)
+
+# The network screens worked with a gamepad alone: the pad's keys, the on-screen keyboard,
+# and a host and a guest over the loopback interface. Nothing is drawn, so no window is needed.
+if(SDL3_FOUND)
+    add_executable(ab_ui_tests tests/unit/test_ui.cpp src/app/net_ui.cpp src/app/pad_keys.cpp src/app/screen_keyboard.cpp
+        src/rendering/gl.cpp src/rendering/renderer.cpp src/rendering/sprites.cpp)
+    target_link_libraries(ab_ui_tests PRIVATE ab_game ab_resources ab_net ab_free SDL3::SDL3)
+    ab_warnings(ab_ui_tests)
+    add_test(NAME ui COMMAND ab_ui_tests)
+endif()
 endif()

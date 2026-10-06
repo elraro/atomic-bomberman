@@ -678,3 +678,13 @@ Not a discovery about the original; a record of what was built and seen.
 Not a discovery about the original. The user asked for internet play that works behind NAT and carrier-grade NAT, with a master server, and decided (2026-10-06): snapshots instead of lockstep; the user hosts master, database and coturn; statistics only from dedicated servers the master trusts; TCP kept as the last resort where UDP is blocked. The design is in `docs/specifications/online-play.md`. Nothing of it is implemented.
 
 Measured for that design with the core's present save format, over 20 ten-player rounds of computer players (49 495 steps): 5450 bytes per public state on average (5510 at most), 1097 bytes differing from one step to the next on average (2940 at most), 0.21 events per step. This is why snapshots get a format of their own rather than the save format.
+
+### Modern: network screens worked with a gamepad (online play, phase 1)
+
+Not a discovery about the original; a record of what was built and seen.
+
+- Ready state: `ClientMsg::Ready`, a flag per client in the lobby state, protocol version 6. The server refuses the administrator's start, naming who is missing, until every other seated player is ready; asked again after each match. Programs without a person (tests, `net_bot`) answer by themselves (`Client::setAlwaysReady`).
+- `src/app/pad_keys.*`: gamepad buttons and stick as menu keys, for every screen of the program (they reach the screens as key presses marked as coming from a pad). During a round only Start is passed on. Gamepads plugged in or pulled out while the program runs are handled.
+- `src/app/screen_keyboard.*` and `src/app/net_ui.*`: on-screen keyboard; "Join this address", "Back", "Cancel", "Ok" / "Forget the old identity" as items; the lobby's row of actions; the match menu.
+- Validation: `ab_ui_tests` (Level 4 for the rules of these screens): a host and a guest do everything with pad keys alone over the loopback interface. Screens looked at from unattended runs with scripted pad buttons (`--script pad=a,...`): join with the keyboard, host, lobby as administrator and as guest, lobby chat keyboard, match menu.
+- Not done: any of it with a real controller (none available; `/dev/uinput` is not open to this user, so no simulated device either). SDL's own gamepad events therefore reached this code only by reading, not by running. Typing by touch on the on-screen keyboard (a phone uses its own keyboard). The changed-identity question by pad is not in the automated test.

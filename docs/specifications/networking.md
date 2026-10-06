@@ -197,6 +197,12 @@ Everything goes over TCP (the relay carries no UDP), so play is as with a TCP-on
 - With prediction: applies confirmed steps as they arrive and paces the picture by its own clock. Without (watchers, or prediction off): applies one step per 50 ms; with more than 3 steps waiting two per 50 ms, with more than 20 as fast as it can.
 - Screens: join (name, address, servers found on the LAN), host (server name, port, password), lobby (seats, settings, chat), match, result.
 - Chat: typed directly in the lobby; in a match `T` opens the line, Enter sends, Esc closes. The last lines stay on screen for 8 s.
+- Everything a screen can do is an item that can be chosen (phase 1 of `online-play.md`), so that a gamepad is enough:
+  - Join: the three fields, "Join this address", the servers found, "Back". Host: the five fields, "Start the server", "Back". The box shown while connecting has "Cancel"; an error has "Ok" and, for a changed server identity, "Forget the old identity".
+  - Lobby: the settings, and under them a row of actions: Start (administrator) or Ready (the others), Team (one per player at this computer, with team play), Players (one more at this computer with each press; after four, one), Chat, Leave. The cursor starts on the first action. A line above the settings says what the lobby waits for.
+  - Match and result: a menu (Start on a gamepad) with Resume, Chat, Back To Lobby, Leave The Server. The match goes on behind it; this computer's players stand still while it, the chat line or the on-screen keyboard is open.
+- Gamepad as keys: d-pad or left stick are the arrows (a held direction repeats after 400 ms, then every 130 ms; the stick counts from half deflection and is released below 30 %), A confirms, B goes back, X erases, Y is a space, Start opens the menu (in the lobby: jumps to the actions). During a round only Start is a key; the rest steer the players.
+- On-screen keyboard: opens when a text field is chosen, or the chat opened, with a gamepad. Ten columns: digits, three rows of letters, a row of marks (`- _ : @ / ! ( ) + =`), then Shift, Space, Erase, Done; a field of digits (the port) has the digits, Erase and Done. It moves round the edges. Done (or Start) ends the typing and sends a chat line; B ends it too, keeps a field's text and drops a chat line. A real keyboard goes on typing directly while it is shown. On a phone, typing by touch uses the phone's own keyboard.
 
 ## Test plan
 

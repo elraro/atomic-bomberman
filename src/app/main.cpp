@@ -22,6 +22,7 @@
 #include "app/import_screen.hpp"
 #include "app/names.hpp"
 #include "app/net_ui.hpp"
+#include "app/pad_keys.hpp"
 #include "app/touch.hpp"
 #include "audio/audio.hpp"
 #include "free/free_data.hpp"
@@ -241,6 +242,10 @@ ab::PlayerInput keyboardInput(const bool* keys, const std::array<int, 6>& set) {
     in.button2 = down(5);
     return in;
 }
+
+// Key presses that come from a gamepad carry this keyboard number, so that a screen can
+// tell them from a real keyboard's (a text field then shows its on-screen keyboard).
+constexpr SDL_KeyboardID kPadKeyboard = 0xAB0001;
 
 // Gamepad as a player's controller. Directions follow the original's joystick rule
 // (axis below 30 % or above 70 % of its range), plus the d-pad.
@@ -1106,6 +1111,38 @@ int runGame(int argc, char** argv, bool& again) {
         };
 
         int netResultFrames = 0;
+        // The gamepads also work the screens (pad_keys.hpp). In a match they are the players'.
+        ab::PadKeys padKeys;
+        auto padsPlaying = [&]() {
+            if (screen == Screen::Net) return net.padsPlay();
+            return screen == Screen::Match && !attract && !world.roundOver();
+        };
+        auto pushPadKeys = [&]() {
+            for (const ab::PadKey k : padKeys.take()) {
+                SDL_Event press{};
+                press.type = SDL_EVENT_KEY_DOWN;
+                press.key.which = kPadKeyboard;
+                press.key.key = ab::NetUi::padKeycode(k);
+                // Start: the network screens have a menu for it; in a local match it is Esc
+                // (the way out), anywhere else it confirms.
+                if (k == ab::PadKey::Menu && screen != Screen::Net) press.key.key = padsPlaying() ? SDLK_ESCAPE : SDLK_RETURN;
+                SDL_PushEvent(&press);
+            }
+        };
+        auto padButton = [](int sdlButton) {
+            switch (sdlButton) {
+                case SDL_GAMEPAD_BUTTON_DPAD_UP: return ab::PadKeys::Button::Up;
+                case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return ab::PadKeys::Button::Right;
+                case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return ab::PadKeys::Button::Down;
+                case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return ab::PadKeys::Button::Left;
+                case SDL_GAMEPAD_BUTTON_SOUTH: return ab::PadKeys::Button::South;
+                case SDL_GAMEPAD_BUTTON_EAST: return ab::PadKeys::Button::East;
+                case SDL_GAMEPAD_BUTTON_WEST: return ab::PadKeys::Button::West;
+                case SDL_GAMEPAD_BUTTON_NORTH: return ab::PadKeys::Button::North;
+                case SDL_GAMEPAD_BUTTON_START: return ab::PadKeys::Button::Start;
+                default: return ab::PadKeys::Button::Count;
+            }
+        };
         ab::TouchPad touch;  // on-screen controls: always on a phone, --touch elsewhere
         touch.enable(opt.touch);
         bool paused = false;
@@ -1129,6 +1166,14 @@ int runGame(int argc, char** argv, bool& again) {
                     press.button.y = static_cast<float>(ty * wh) / 1000.0f;
                     SDL_PushEvent(&press);
                     press.type = SDL_EVENT_MOUSE_BUTTON_UP;
+                } else if (k.rfind("pad=", 0) == 0) {
+                    // A gamepad button: a b x y start up down left right.
+                    static const char* const kNames[9] = {"up", "right", "down", "left", "a", "b", "x", "y", "start"};
+                    for (int b = 0; b < 9; ++b)
+                        if (k.substr(4) == kNames[b]) {
+                            padKeys.button(static_cast<ab::PadKeys::Button>(b), true, SDL_GetTicks());
+                            padKeys.button(static_cast<ab::PadKeys::Button>(b), false, SDL_GetTicks());
+                        }
                 } else if (k.rfind("text=", 0) == 0) {  // typed characters (the string outlives the event)
                     press.type = SDL_EVENT_TEXT_INPUT;
                     press.text.text = k.c_str() + 5;
@@ -1138,8 +1183,11 @@ int runGame(int argc, char** argv, bool& again) {
                                     : k == "esc" ? SDLK_ESCAPE : k == "f2" ? SDLK_F2 : k == "f3" ? SDLK_F3 : k == "f5" ? SDLK_F5 : k == "f6" ? SDLK_F6 : k == "t" ? SDLK_T
                                     : k == "space" ? SDLK_SPACE : k == "backspace" ? SDLK_BACKSPACE : SDLK_RETURN;
                 }
-                if (k != "wait") SDL_PushEvent(&press);
+                if (k != "wait" && k.rfind("pad=", 0) != 0) SDL_PushEvent(&press);
             }
+            padKeys.setPlaying(padsPlaying());
+            padKeys.update(SDL_GetTicks());
+            pushPadKeys();
             SDL_Event e;
             bool singleStep = false;
             while (SDL_PollEvent(&e)) {
@@ -1148,6 +1196,42 @@ int runGame(int argc, char** argv, bool& again) {
                     int ww = 1, wh = 1;
                     SDL_GetWindowSize(window, &ww, &wh);
                     touch.handle(e, ww, wh);
+                }
+                if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+                    if (const ab::PadKeys::Button b = padButton(e.gbutton.button); b != ab::PadKeys::Button::Count)
+                        padKeys.button(b, e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GetTicks());
+                    pushPadKeys();
+                    continue;
+                }
+                if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+                    for (std::size_t i = 0; i < pads.size(); ++i)
+                        if (pads[i] != nullptr && SDL_GetGamepadID(pads[i]) == e.gaxis.which)
+                            padKeys.stick(static_cast<int>(i), SDL_GetGamepadAxis(pads[i], SDL_GAMEPAD_AXIS_LEFTX),
+                                          SDL_GetGamepadAxis(pads[i], SDL_GAMEPAD_AXIS_LEFTY), SDL_GetTicks());
+                    pushPadKeys();
+                    continue;
+                }
+                // A gamepad plugged in while the program runs takes the first free place; one pulled out frees its place.
+                if (e.type == SDL_EVENT_GAMEPAD_ADDED) {
+                    bool known = false;
+                    for (SDL_Gamepad* pad : pads) known = known || (pad != nullptr && SDL_GetGamepadID(pad) == e.gdevice.which);
+                    for (std::size_t i = 0; i < pads.size() && !known; ++i)
+                        if (pads[i] == nullptr) {
+                            pads[i] = SDL_OpenGamepad(e.gdevice.which);
+                            known = true;
+                        }
+                    for (padCount = 4; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
+                    continue;
+                }
+                if (e.type == SDL_EVENT_GAMEPAD_REMOVED) {
+                    for (std::size_t i = 0; i < pads.size(); ++i)
+                        if (pads[i] != nullptr && SDL_GetGamepadID(pads[i]) == e.gdevice.which) {
+                            SDL_CloseGamepad(pads[i]);
+                            pads[i] = nullptr;
+                            padKeys.stick(static_cast<int>(i), 0, 0, SDL_GetTicks());
+                        }
+                    for (padCount = 4; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
+                    continue;
                 }
                 // A phone's back key is Esc.
                 if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_AC_BACK) e.key.key = SDLK_ESCAPE;
@@ -1177,7 +1261,7 @@ int runGame(int argc, char** argv, bool& again) {
                     if (e.type == SDL_EVENT_TEXT_INPUT) net.text(e.text.text);
                     // Held Backspace repeats; nothing else does.
                     if (e.type == SDL_EVENT_KEY_DOWN && (!e.key.repeat || e.key.key == SDLK_BACKSPACE))
-                        net.key(e.key.key, (e.key.mod & SDL_KMOD_CTRL) != 0);
+                        net.key(e.key.key, (e.key.mod & SDL_KMOD_CTRL) != 0, e.key.which == kPadKeyboard);
                     if (net.finished()) leaveNet();
                     continue;
                 }
@@ -1417,7 +1501,10 @@ int runGame(int argc, char** argv, bool& again) {
                 } else if (screen == Screen::Keys) {
                     // "Keyboard definitions" (messages 1100-1140): pick an action, press its new key.
                     constexpr int kRows = 13;
-                    if (keyCapture) {
+                    if (keyCapture && e.key.which == kPadKeyboard) {
+                        // A gamepad button is not a key to play with: only "back" counts, and ends the question.
+                        if (key == SDLK_ESCAPE) keyCapture = false;
+                    } else if (keyCapture) {
                         keyCapture = false;
                         const int dik = dikOfScancode(e.key.scancode);
                         if (key != SDLK_ESCAPE && dik != 0) cfg.keys[static_cast<std::size_t>(keyRow / 6)][static_cast<std::size_t>(keyRow % 6)] = dik;
@@ -1752,8 +1839,12 @@ int runGame(int argc, char** argv, bool& again) {
                     leaveRoulette();
                 }
             }
-            if (const bool want = (screen == Screen::Editor && editor.wantsTextInput()) || (screen == Screen::Net && net.wantsTextInput());
-                want != textInputOn) {
+            bool wantText = (screen == Screen::Editor && editor.wantsTextInput()) || (screen == Screen::Net && net.wantsTextInput());
+#ifdef __ANDROID__
+            // Asking for text brings up the phone's keyboard, which would cover the game's own.
+            wantText = wantText && !(screen == Screen::Net && net.keyboardShown());
+#endif
+            if (const bool want = wantText; want != textInputOn) {
                 textInputOn = want;
                 if (want) SDL_StartTextInput(window);
                 else SDL_StopTextInput(window);

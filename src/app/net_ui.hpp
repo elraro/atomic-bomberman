@@ -12,6 +12,8 @@
 
 #include <memory>
 
+#include "app/pad_keys.hpp"
+#include "app/screen_keyboard.hpp"
 #include "game/roulette.hpp"
 #include "net/client.hpp"
 #include "net/server.hpp"
@@ -47,7 +49,24 @@ public:
     bool inRound() const;
     bool showingResult() const;
 
-    void key(unsigned key, bool ctrl);  // an SDL keycode
+    // The gamepads steer players now (a round is on and no menu, chat line or keyboard is open).
+    bool padsPlay() const;
+    bool keyboardShown() const { return osk_.shown(); }
+    const ScreenKeyboard& keyboard() const { return osk_; }
+    bool matchMenuShown() const { return menuOpen_; }
+    // For automated checks: the screen shown ("join", "host", "connecting", "error", "lobby",
+    // "wheel", "round", "result", "closed"), the connection, and a host that stays off the network
+    // outside this machine (no router port, no announcements).
+    const char* screenName() const;
+    const net::Client& client() const { return client_; }
+    void setLocalOnly(bool on) { localOnly_ = on; }
+
+    // The SDL keycode a gamepad's key is passed to key() as. (Start has a key of its own,
+    // the "menu" key of a keyboard.)
+    static unsigned padKeycode(PadKey k);
+    // An SDL keycode. `pad`: pressed on a gamepad, not on a keyboard: a text field then
+    // opens the on-screen keyboard.
+    void key(unsigned key, bool ctrl, bool pad = false);
     void text(const char* utf8);        // typed characters, while wantsTextInput()
     // Network and round. `locals` are the controllers of the players at this computer:
     // the first and second key set (each with a gamepad), then two more gamepads.
@@ -62,7 +81,21 @@ private:
     void startHost();
     void leave();
     void submitChat();
-    void edit(std::string* value, std::size_t maxLength, bool digitsOnly);
+    void edit(std::string* value, std::size_t maxLength, bool digitsOnly, bool pad);
+    bool keyboardKey(unsigned key, bool pad);  // a key while the on-screen keyboard is shown; true: taken
+    void finishKeyboard(bool submit);
+    enum class LobbyAction { Start, Ready, Team, Players, Chat, Leave };
+    struct LobbyItem {
+        LobbyAction action;
+        int local;  // Team: which of this computer's players
+        std::string label;
+        bool enabled;
+    };
+    std::vector<LobbyItem> lobbyItems() const;
+    void lobbyAct(const LobbyItem& item, bool pad);
+    void drawKeyboard(Renderer& r, SpriteBank& bank, int frame);
+    void drawMatchMenu(Renderer& r, SpriteBank& bank);
+    std::uint64_t clock() const;
     bool escape(std::uint64_t nowMs);  // true on the second press
     std::string playerName() const;
     void label(Renderer& r, SpriteBank& bank, const std::string& s, float x, float y, float red, float green, float blue) const;
@@ -99,7 +132,15 @@ private:
     std::uint32_t lastRound_ = 0;
     bool autoStart_ = false;
 
-    int lobbyRow_ = 0;
+    int lobbyRow_ = 0;           // a setting, or the row of actions below them
+    int lobbyAction_ = 0;        // the action selected in that row
+    ScreenKeyboard osk_;
+    bool menuOpen_ = false;      // the menu of a match (Start on a gamepad)
+    int menuItem_ = 0;
+    int errorItem_ = 0;          // 0 Ok, 1 forget the old identity
+    int shownServers_ = 0;       // servers listed at the last update
+    std::uint64_t connectingSince_ = 0;
+    bool localOnly_ = false;
     std::string chatText_;
     bool chatOpen_ = false;      // the chat line during a match
     bool continueSent_ = false;

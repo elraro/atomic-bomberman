@@ -16,9 +16,13 @@ namespace {
 
 using State = net::Client::State;
 
-constexpr int kJoinFields = 3;   // name, address, password; then the servers found
-constexpr int kHostRows = 6;     // name, server name, port, password, relay, start
-constexpr int kLobbyRows = 15;   // start, then the fourteen settings
+constexpr int kJoinFields = 4;   // name, address, password, join; then the servers found, then back
+constexpr int kHostRows = 7;     // name, server name, port, password, relay, start, back
+constexpr int kHostStartRow = 5;
+constexpr int kLobbySettings = 14;             // the fourteen settings...
+constexpr int kLobbyRows = kLobbySettings + 1; // ...and below them the row of actions
+constexpr int kMenuItems = 4;
+const char* const kMenuItem[kMenuItems] = {"Resume", "Chat", "Back To Lobby", "Leave The Server"};
 constexpr std::uint64_t kChatShownMs = 8000;
 
 const char* const kYesNo[2] = {"No", "Yes"};
@@ -72,7 +76,7 @@ void NetUi::openJoin() {
 void NetUi::openHost() {
     close();
     mode_ = entry_ = Mode::Host;
-    row_ = kHostRows - 1;
+    row_ = kHostStartRow;
     if (cfg_.netName.empty()) cfg_.netName = playerName();
     if (cfg_.netServerName.empty()) cfg_.netServerName = net::cleanText(playerName() + "'s game", 32);
     portText_ = std::to_string(cfg_.netPort);
@@ -98,6 +102,9 @@ void NetUi::close() {
     editing_ = nullptr;
     chatText_.clear();
     chatOpen_ = false;
+    menuOpen_ = false;
+    osk_.close();
+    errorItem_ = 0;
     escapeAt_ = 0;
     lastState_ = State::Idle;
     mode_ = Mode::Closed;
@@ -108,7 +115,7 @@ void NetUi::leave() {
     const Mode back = entry_;
     close();
     mode_ = entry_ = back;
-    row_ = back == Mode::Host ? kHostRows - 1 : 1;
+    row_ = back == Mode::Host ? kHostStartRow : 1;
     if (hooks_.lobbyEntered) hooks_.lobbyEntered();
 }
 
@@ -121,10 +128,121 @@ bool NetUi::showingResult() const { return mode_ == Mode::Session && client_.sta
 
 bool NetUi::inRound() const { return mode_ == Mode::Session && client_.state() == State::Round; }
 
-void NetUi::edit(std::string* value, std::size_t maxLength, bool digitsOnly) {
+bool NetUi::padsPlay() const { return inRound() && !chatOpen_ && !menuOpen_ && !osk_.shown(); }
+
+const char* NetUi::screenName() const {
+    switch (mode_) {
+        case Mode::Closed: return "closed";
+        case Mode::Join: return "join";
+        case Mode::Host: return "host";
+        case Mode::Connecting: return "connecting";
+        case Mode::Error: return "error";
+        case Mode::Session: break;
+    }
+    if (client_.roulette() != nullptr) return "wheel";
+    return client_.state() == State::Round ? "round" : client_.state() == State::Result ? "result" : "lobby";
+}
+
+unsigned NetUi::padKeycode(PadKey k) {
+    switch (k) {
+        case PadKey::Up: return SDLK_UP;
+        case PadKey::Right: return SDLK_RIGHT;
+        case PadKey::Down: return SDLK_DOWN;
+        case PadKey::Left: return SDLK_LEFT;
+        case PadKey::Confirm: return SDLK_RETURN;
+        case PadKey::Back: return SDLK_ESCAPE;
+        case PadKey::Erase: return SDLK_BACKSPACE;
+        case PadKey::Space: return SDLK_SPACE;
+        case PadKey::Menu: break;
+    }
+    return SDLK_APPLICATION;
+}
+
+// The time of the last update (the program's clock; a test's own), or the clock itself before the first.
+std::uint64_t NetUi::clock() const { return now_ != 0 ? now_ : net::clockMs(); }
+
+void NetUi::edit(std::string* value, std::size_t maxLength, bool digitsOnly, bool pad) {
     editing_ = value;
     editMax_ = maxLength;
     editDigits_ = digitsOnly;
+    if (pad) osk_.open(digitsOnly);
+}
+
+// The on-screen keyboard is closed: with "done" (a chat line is sent) or without.
+void NetUi::finishKeyboard(bool submit) {
+    osk_.close();
+    if (editing_ != nullptr) {
+        // A field keeps what was typed either way, as with Esc on a real keyboard.
+        editing_ = nullptr;
+        cfg_.netName = net::cleanText(cfg_.netName, net::kMaxName);
+        if (hooks_.settingsChanged) hooks_.settingsChanged();
+        return;
+    }
+    if (submit) submitChat();
+    else chatText_.clear();
+    chatOpen_ = false;
+}
+
+bool NetUi::keyboardKey(unsigned key, bool pad) {
+    const int dir = key == SDLK_UP ? 0 : key == SDLK_RIGHT ? 1 : key == SDLK_DOWN ? 2 : key == SDLK_LEFT ? 3 : -1;
+    if (dir >= 0) {
+        osk_.move(dir);
+        if (hooks_.sound) hooks_.sound(20);
+        return true;
+    }
+    // A real keyboard's other keys do what they do without it (Enter and Esc end the typing).
+    if (!pad) return false;
+    std::string& target = editing_ != nullptr ? *editing_ : chatText_;
+    const std::size_t limit = editing_ != nullptr ? editMax_ : static_cast<std::size_t>(net::kMaxChat);
+    const bool digits = editing_ != nullptr && editDigits_;
+    if (key == SDLK_RETURN) {
+        const ScreenKeyboard::Press press = osk_.confirm();
+        if (press.action == ScreenKeyboard::Action::Text) appendTyped(target, press.text.c_str(), limit, digits);
+        if (press.action == ScreenKeyboard::Action::Erase) removeLastChar(target);
+        if (press.action == ScreenKeyboard::Action::Done) finishKeyboard(true);
+        if (hooks_.sound) hooks_.sound(10);
+    }
+    if (key == SDLK_BACKSPACE) removeLastChar(target);
+    if (key == SDLK_SPACE && !digits) appendTyped(target, " ", limit, false);
+    if (key == SDLK_APPLICATION) finishKeyboard(true);
+    if (key == SDLK_ESCAPE) finishKeyboard(false);
+    return true;
+}
+
+// The row of actions under the lobby's settings.
+std::vector<NetUi::LobbyItem> NetUi::lobbyItems() const {
+    const net::LobbyState& lobby = client_.lobby();
+    const bool open = lobby.phase == net::Phase::Lobby;  // no match is on
+    std::vector<LobbyItem> items;
+    if (client_.isAdmin()) items.push_back({LobbyAction::Start, 0, "Start", open});
+    else items.push_back({LobbyAction::Ready, 0, std::string(client_.ready() ? "[x]" : "[ ]") + " Ready", open && client_.seat() >= 0});
+    if (lobby.settings.teamPlay) {
+        const std::array<int, net::kMaxLocalPlayers> seats = client_.seats();
+        int seated = 0;
+        for (int seat : seats) seated += seat >= 0 ? 1 : 0;
+        for (int l = 0; l < net::kMaxLocalPlayers; ++l)
+            if (seats[static_cast<std::size_t>(l)] >= 0) items.push_back({LobbyAction::Team, l, seated > 1 ? "Team " + std::to_string(l + 1) : "Team", open});
+    }
+    items.push_back({LobbyAction::Players, 0, "Players: " + std::to_string(client_.localPlayers()), open});
+    items.push_back({LobbyAction::Chat, 0, "Chat", true});
+    items.push_back({LobbyAction::Leave, 0, "Leave", true});
+    return items;
+}
+
+void NetUi::lobbyAct(const LobbyItem& item, bool pad) {
+    if (hooks_.sound) hooks_.sound(item.enabled ? 10 : 40);
+    if (!item.enabled) return;
+    switch (item.action) {
+        case LobbyAction::Start: client_.sendStart(); break;  // refused by the server, with the reason in the chat, if somebody is not ready
+        case LobbyAction::Ready: client_.sendReady(!client_.ready()); break;
+        case LobbyAction::Team: client_.sendTeam(item.local); break;
+        // One more player at this computer; after the fourth, one again.
+        case LobbyAction::Players: client_.sendLocalPlayers(client_.localPlayers() % net::kMaxLocalPlayers + 1); break;
+        case LobbyAction::Chat:
+            if (pad) osk_.open(false);  // a keyboard types into the chat line as it is
+            break;
+        case LobbyAction::Leave: leave(); break;
+    }
 }
 
 void NetUi::connectTo(const std::string& address, bool remember) {
@@ -133,9 +251,10 @@ void NetUi::connectTo(const std::string& address, bool remember) {
         if (hooks_.settingsChanged) hooks_.settingsChanged();
     }
     connectingTo_ = address;
+    connectingSince_ = clock();
     client_.setPrediction(cfg_.netPrediction);
     if (!userSchemesDir_.empty()) client_.setKnownServersFile(userSchemesDir_ + "/../known_servers.txt");
-    client_.connect(address, playerName(), password_, net::clockMs());
+    client_.connect(address, playerName(), password_, clock());
     lastState_ = State::Connecting;
     lastRound_ = 0;
     mode_ = Mode::Connecting;
@@ -170,7 +289,8 @@ void NetUi::startHost() {
     config.settings.winByKills = cfg_.winByKills;
     config.settings.diseasesDestroyable = cfg_.diseasesDestroyable;
     config.settings.computers = 1;
-    config.upnp = true;
+    config.upnp = !localOnly_;
+    config.discoverable = !localOnly_;
     config.relay = net::cleanText(cfg_.netRelay, 64);
     if (!userSchemesDir_.empty()) config.banFile = userSchemesDir_ + "/../bans.txt";  // beside the settings file
     if (!userSchemesDir_.empty()) config.identityFile = userSchemesDir_ + "/../server.key";  // a hosted game tries to open the router's port; the lobby says how it went
@@ -236,30 +356,44 @@ void NetUi::text(const char* utf8) {
     appendTyped(*target, utf8, limit, digits);
 }
 
-void NetUi::key(unsigned key, bool ctrl) {
+void NetUi::key(unsigned key, bool ctrl, bool pad) {
     auto sound = [&](int id) {
         if (hooks_.sound) hooks_.sound(id);
     };
-    const std::uint64_t now = net::clockMs();
+    const std::uint64_t now = clock();
     if (key != SDLK_ESCAPE) escapeAt_ = 0;
+    if (osk_.shown() && keyboardKey(key, pad)) return;
+    if (osk_.shown() && (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_ESCAPE)) {
+        // Enter or Esc on a real keyboard end the typing, and the on-screen keyboard with it.
+        osk_.close();
+        if (editing_ == nullptr && chatText_.empty()) {
+            chatOpen_ = false;
+            return;
+        }
+    }
 
     if (mode_ == Mode::Error) {
-        // A server whose identity changed: F8 forgets the old one, so that joining again
-        // accepts the new (for when the server really was set up anew).
-        if (key == SDLK_F8 && identityChanged_) {
+        // A server whose identity changed: the second item (or F8) forgets the old one, so
+        // that joining again accepts the new (for when the server really was set up anew).
+        if (identityChanged_ && (key == SDLK_LEFT || key == SDLK_RIGHT || key == SDLK_UP || key == SDLK_DOWN)) errorItem_ ^= 1, sound(20);
+        if (identityChanged_ && (key == SDLK_F8 || (errorItem_ == 1 && (key == SDLK_RETURN || key == SDLK_KP_ENTER)))) {
             client_.forgetServer(connectingTo_);
             identityChanged_ = false;
+            errorItem_ = 0;
             error_ = "The old identity is forgotten. Join again to accept the new one.";
             return;
         }
-        if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_ESCAPE) {
+        if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE || key == SDLK_ESCAPE) {
+            errorItem_ = 0;
             mode_ = entry_;
-            row_ = entry_ == Mode::Host ? kHostRows - 1 : 1;
+            row_ = entry_ == Mode::Host ? kHostStartRow : 1;
         }
         return;
     }
     if (mode_ == Mode::Connecting) {
-        if (key == SDLK_ESCAPE) leave();
+        // "Cancel" is the one item. Enter counts only after a moment, so that the Enter
+        // that started the connection, pressed twice, does not end it.
+        if (key == SDLK_ESCAPE || ((key == SDLK_RETURN || key == SDLK_KP_ENTER) && now - connectingSince_ > 700)) leave();
         return;
     }
     if (mode_ == Mode::Join || mode_ == Mode::Host) {
@@ -268,6 +402,7 @@ void NetUi::key(unsigned key, bool ctrl) {
             if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_ESCAPE) {
                 const bool wasAddress = editing_ == &cfg_.netAddress;
                 editing_ = nullptr;
+                osk_.close();
                 cfg_.netName = net::cleanText(cfg_.netName, net::kMaxName);
                 if (hooks_.settingsChanged) hooks_.settingsChanged();
                 // Enter on the address joins at once.
@@ -279,24 +414,29 @@ void NetUi::key(unsigned key, bool ctrl) {
             return;
         }
         const int servers = mode_ == Mode::Join ? static_cast<int>(browser_.servers().size()) : 0;
-        const int rows = mode_ == Mode::Join ? kJoinFields + servers : kHostRows;
+        const int rows = mode_ == Mode::Join ? kJoinFields + servers + 1 : kHostRows;
         if (key == SDLK_UP) row_ = (row_ + rows - 1) % rows, sound(20);
         if (key == SDLK_DOWN) row_ = (row_ + 1) % rows, sound(20);
         if (key == SDLK_ESCAPE) close();
         if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
             sound(10);
             if (mode_ == Mode::Join) {
-                if (row_ == 0) edit(&cfg_.netName, net::kMaxName, false);
-                else if (row_ == 1) edit(&cfg_.netAddress, 64, false);
-                else if (row_ == 2) edit(&password_, 32, false);
+                const std::string address = net::cleanText(cfg_.netAddress, 64);
+                if (row_ == 0) edit(&cfg_.netName, net::kMaxName, false, pad);
+                else if (row_ == 1) edit(&cfg_.netAddress, 64, false, pad);
+                else if (row_ == 2) edit(&password_, 32, false, pad);
+                else if (row_ == 3 && address.empty()) sound(40);
+                else if (row_ == 3) connectTo(address, true);
                 else if (row_ - kJoinFields < servers) connectTo(browser_.servers()[static_cast<std::size_t>(row_ - kJoinFields)].address.text(), false);
+                else close();
             } else {
-                if (row_ == 0) edit(&cfg_.netName, net::kMaxName, false);
-                else if (row_ == 1) edit(&cfg_.netServerName, 32, false);
-                else if (row_ == 2) edit(&portText_, 5, true);
-                else if (row_ == 3) edit(&password_, 32, false);
-                else if (row_ == 4) edit(&cfg_.netRelay, 64, false);
-                else startHost();
+                if (row_ == 0) edit(&cfg_.netName, net::kMaxName, false, pad);
+                else if (row_ == 1) edit(&cfg_.netServerName, 32, false, pad);
+                else if (row_ == 2) edit(&portText_, 5, true, pad);
+                else if (row_ == 3) edit(&password_, 32, false, pad);
+                else if (row_ == 4) edit(&cfg_.netRelay, 64, false, pad);
+                else if (row_ == kHostStartRow) startHost();
+                else close();
             }
         }
         return;
@@ -306,21 +446,36 @@ void NetUi::key(unsigned key, bool ctrl) {
     const State state = client_.state();
     if (state == State::Lobby) {
         const bool admin = client_.isAdmin() && client_.lobby().phase == net::Phase::Lobby;
+        const std::vector<LobbyItem> items = lobbyItems();
+        const int count = static_cast<int>(items.size());
+        lobbyAction_ = std::clamp(lobbyAction_, 0, count - 1);
+        const bool onActions = lobbyRow_ == kLobbySettings;
         if (key == SDLK_BACKSPACE) removeLastChar(chatText_);
         if (key == SDLK_UP) lobbyRow_ = (lobbyRow_ + kLobbyRows - 1) % kLobbyRows, sound(20);
         if (key == SDLK_DOWN) lobbyRow_ = (lobbyRow_ + 1) % kLobbyRows, sound(20);
-        if ((key == SDLK_LEFT || key == SDLK_RIGHT) && lobbyRow_ >= 1) {
-            if (admin) client_.sendOption(static_cast<net::Option>(lobbyRow_ - 1), key == SDLK_LEFT ? -1 : 1);
-            sound(admin ? 20 : 40);
+        if (key == SDLK_LEFT || key == SDLK_RIGHT) {
+            if (onActions) {
+                lobbyAction_ = (lobbyAction_ + (key == SDLK_LEFT ? count - 1 : 1)) % count;
+                sound(20);
+            } else {
+                if (admin) client_.sendOption(static_cast<net::Option>(lobbyRow_), key == SDLK_LEFT ? -1 : 1);
+                sound(admin ? 20 : 40);
+            }
         }
         if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
             if (!chatText_.empty()) {
                 submitChat();
-            } else if (lobbyRow_ == 0 && admin) {
-                sound(10);
-                client_.sendStart();
+            } else if (onActions) {
+                lobbyAct(items[static_cast<std::size_t>(lobbyAction_)], pad);
+            } else {
+                // On a setting: the next value.
+                if (admin) client_.sendOption(static_cast<net::Option>(lobbyRow_), 1);
+                sound(admin ? 20 : 40);
             }
         }
+        // Start on a gamepad: to the actions.
+        if (key == SDLK_APPLICATION) lobbyRow_ = kLobbySettings, lobbyAction_ = 0, sound(20);
+        // The keys of before, as shortcuts.
         if (key == SDLK_F2 && admin) {
             sound(10);
             client_.sendStart();
@@ -340,6 +495,24 @@ void NetUi::key(unsigned key, bool ctrl) {
         }
         return;
     }
+    // In a match or on its result screen: the menu (Start on a gamepad) first.
+    if (menuOpen_) {
+        if (key == SDLK_UP) menuItem_ = (menuItem_ + kMenuItems - 1) % kMenuItems, sound(20);
+        if (key == SDLK_DOWN) menuItem_ = (menuItem_ + 1) % kMenuItems, sound(20);
+        if (key == SDLK_ESCAPE || key == SDLK_APPLICATION) menuOpen_ = false;
+        if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+            sound(10);
+            menuOpen_ = false;
+            if (menuItem_ == 1) {
+                chatOpen_ = true;
+                chatText_.clear();
+                if (pad) osk_.open(false);
+            }
+            if (menuItem_ == 2) client_.leaveMatch();
+            if (menuItem_ == 3) leave();
+        }
+        return;
+    }
     // In a match or on its result screen.
     if (chatOpen_) {
         if (key == SDLK_BACKSPACE) removeLastChar(chatText_);
@@ -351,6 +524,12 @@ void NetUi::key(unsigned key, bool ctrl) {
             chatText_.clear();
             chatOpen_ = false;
         }
+        return;
+    }
+    if (key == SDLK_APPLICATION) {
+        menuOpen_ = true;
+        menuItem_ = 0;
+        escapeAt_ = 0;
         return;
     }
     if (key == SDLK_T) {
@@ -375,14 +554,17 @@ void NetUi::update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxL
     if (mode_ == Mode::Join) {
         browser_.update(nowMs);
         // The list of servers found may have become shorter under the cursor.
-        row_ = std::min(row_, kJoinFields + static_cast<int>(browser_.servers().size()) - 1);
+        // "Back", after them, stays under a cursor that was on it.
+        const int servers = static_cast<int>(browser_.servers().size());
+        row_ = row_ == kJoinFields + shownServers_ ? kJoinFields + servers : std::min(row_, kJoinFields + servers);
+        shownServers_ = servers;
     }
     if (hosting_) server_.update(nowMs);
     if (mode_ != Mode::Connecting && mode_ != Mode::Session) return;
 
     client_.update(nowMs);
     if (client_.state() == State::Round) {
-        for (int l = 0; l < net::kMaxLocalPlayers; ++l) client_.setInput(l, chatOpen_ ? PlayerInput{} : locals[static_cast<std::size_t>(l)]);
+        for (int l = 0; l < net::kMaxLocalPlayers; ++l) client_.setInput(l, padsPlay() ? locals[static_cast<std::size_t>(l)] : PlayerInput{});
         client_.advance(
             nowMs, [this](World& w) { previous_.capture(w); },
             [this](const World& w, const std::vector<Event>& events) {
@@ -429,8 +611,11 @@ void NetUi::update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxL
     if (state == State::Lobby) {
         mode_ = Mode::Session;
         chatOpen_ = false;
+        menuOpen_ = false;
+        osk_.close();
         chatText_.clear();
-        lobbyRow_ = 0;
+        lobbyRow_ = kLobbySettings;
+        lobbyAction_ = 0;
         if (hooks_.lobbyEntered) hooks_.lobbyEntered();
     }
     if (state == State::Round) mode_ = Mode::Session;
@@ -497,17 +682,24 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
         label(r, bank, shown, 230, y, editing_ == value ? 0.4f : 1.0f, 1.0f, editing_ == value ? 1.0f : 1.0f);
         if (on) r.sprite(bank, "cursor1", frame / 8, -1, 62.0f, y + 15.0f);
     };
+    // A row that does something when chosen.
+    auto item = [&](int row, const std::string& text, float y) {
+        const bool on = row == row_;
+        label(r, bank, text, 80, y, on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
+        if (on) r.sprite(bank, "cursor1", frame / 8, -1, 62.0f, y + 15.0f);
+    };
     if (join) {
         fieldRow(0, "Your name:", &cfg_.netName, false, "Player");
         fieldRow(1, "Address:", &cfg_.netAddress, false, "(host, host:port or CODE@relay)");
         fieldRow(2, "Password:", &password_, true, "(none)");
-        label(r, bank, "Games on the local network:", 80, 172, 1, 1, 1);
+        item(3, "Join this address", 86.0f + 24.0f * 3.0f);
+        label(r, bank, "Games on the local network:", 80, 190, 1, 1, 1);
         const auto& servers = browser_.servers();
-        if (servers.empty()) label(r, bank, "(searching...)", 100, 196, 0.7f, 0.7f, 0.7f);
+        if (servers.empty()) label(r, bank, "(searching...)", 100, 212, 0.7f, 0.7f, 0.7f);
         for (std::size_t i = 0; i < servers.size() && i < 8; ++i) {
             static const char* const kPhase[4] = {"in the lobby", "playing", "playing", "playing"};
             const net::ServerInfo& info = servers[i].info;
-            const float y = 196.0f + 22.0f * static_cast<float>(i);
+            const float y = 212.0f + 22.0f * static_cast<float>(i);
             const bool on = row_ == kJoinFields + static_cast<int>(i);
             const std::string line = info.name + "   " + std::to_string(info.players) + " player" + (info.players == 1 ? "" : "s") + ", " +
                                      kPhase[static_cast<int>(info.phase)] + (info.password ? "   (password)" : "") +
@@ -515,6 +707,7 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
             label(r, bank, line, 100, y, on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
             if (on) r.sprite(bank, "cursor1", frame / 8, -1, 82.0f, y + 15.0f);
         }
+        item(kJoinFields + static_cast<int>(servers.size()), "Back", 394);
         label(r, bank, editing_ != nullptr ? "Type, then Enter" : "Up/Down: select   Enter: change / join   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
     } else {
         fieldRow(0, "Your name:", &cfg_.netName, false, "Player");
@@ -522,15 +715,13 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
         fieldRow(2, "Port:", &portText_, false, "");
         fieldRow(3, "Password:", &password_, true, "(none)");
         fieldRow(4, "Relay:", &cfg_.netRelay, false, "(none)");
-        const float y = 86.0f + 24.0f * 5.0f + 12.0f;
-        const bool on = row_ == 5;
-        label(r, bank, "Start the server", 80, y, on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
-        if (on) r.sprite(bank, "cursor1", frame / 8, -1, 62.0f, y + 15.0f);
+        item(kHostStartRow, "Start the server", 86.0f + 24.0f * 5.0f + 6.0f);
+        item(kHostStartRow + 1, "Back", 86.0f + 24.0f * 6.0f + 6.0f);
         const std::vector<std::string> notes = {"Others join with your address and this port (TCP and UDP).",
                                                 "On the same network they find the game by themselves.",
                                                 "If your router lets nothing in: name a relay, and give out the code it shows.",
                                                 "For a server without a window run atomic_server."};
-        for (std::size_t i = 0; i < notes.size(); ++i) label(r, bank, notes[i], 60, 262.0f + 22.0f * static_cast<float>(i), 0.75f, 0.75f, 0.75f);
+        for (std::size_t i = 0; i < notes.size(); ++i) label(r, bank, notes[i], 60, 276.0f + 22.0f * static_cast<float>(i), 0.75f, 0.75f, 0.75f);
         label(r, bank, editing_ != nullptr ? "Type, then Enter" : "Up/Down: select   Enter: change / start   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
     }
 }
@@ -579,20 +770,26 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
     }
 
     label(r, bank, wrap(r, bank, client_.serverName(), 284).front(), 332, 16, 1.0f, 0.95f, 0.3f);
-    for (int row = 0; row < kLobbyRows; ++row) {
-        const float y = 40.0f + 18.0f * static_cast<float>(row);
+    // What the lobby is waiting for, then the settings.
+    {
+        const net::ClientInfo* a = lobby.client(lobby.admin);
+        const std::string adminName = a != nullptr ? a->name : std::string("the administrator");
+        std::string missing;
+        for (const net::ClientInfo& c : lobby.clients)
+            if (c.seat >= 0 && c.id != lobby.admin && !c.ready) missing += (missing.empty() ? "" : ", ") + c.name;
+        const std::string status = waiting ? (client_.sittingOut() ? "The match goes on without you" : "A match is being played")
+                                   : !missing.empty() && admin ? "Not ready yet: " + missing
+                                   : admin ? "Everybody is ready"
+                                   : !client_.ready() && client_.seat() >= 0 ? "Say when you are ready"
+                                   : !missing.empty() ? "Waiting for: " + missing
+                                   : "Waiting for " + adminName + " to start";
+        label(r, bank, wrap(r, bank, status, 284).front(), 332, 40, 0.4f, 1.0f, 1.0f);
+    }
+    for (int row = 0; row < kLobbySettings; ++row) {
+        const float y = 58.0f + 18.0f * static_cast<float>(row);
         const bool on = row == lobbyRow_;
-        std::string line;
-        if (row == 0) {
-            const net::ClientInfo* a = lobby.client(lobby.admin);
-            line = waiting ? (client_.sittingOut() ? "The match goes on without you" : "A match is being played")
-                   : admin ? "Start the match"
-                   : !client_.ready() ? "Press F7 when you are ready"
-                   : "Ready. Waiting for " + (a != nullptr ? a->name : std::string("the administrator"));
-        } else {
-            line = wrap(r, bank, optionText(lobby.settings, row - 1), 270).front();
-        }
-        const float dim = admin || row == 0 ? 1.0f : 0.75f;
+        const std::string line = wrap(r, bank, optionText(lobby.settings, row), 270).front();
+        const float dim = admin ? 1.0f : 0.75f;
         label(r, bank, line, 346, y, on ? 1.0f : 0.85f * dim, on ? 0.95f : 0.85f * dim, on ? 0.3f : 0.85f * dim);
         if (on) r.sprite(bank, "cursor1", frame / 8, -1, 332.0f, y + 15.0f);
     }
@@ -610,11 +807,56 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
     while (r.textWidth(bank, typing) > 580 && typing.size() > 3) typing.erase(2, 1);  // the end stays visible
     label(r, bank, typing + ((frame / 20) % 2 == 0 ? "_" : ""), 24, 430, 0.4f, 1.0f, 1.0f);
 
-    const bool leaving = escapeAt_ != 0 && nowMs - escapeAt_ < 3000;
-    const std::string hint = leaving ? "Press Esc again to leave the server"
-                             : admin ? "Arrows: settings  F2: start  F3/F4: team  F5/F6: players  Esc: leave"
-                                     : "F7: ready   F3/F4: team   F5/F6: players at this computer   Esc: leave";
-    label(r, bank, hint, 24, 458, 0.4f, 1.0f, 1.0f);
+    // The row of actions; the one chosen is on a lighter ground.
+    if (escapeAt_ != 0 && nowMs - escapeAt_ < 3000) {
+        label(r, bank, "Press Esc again to leave the server", 24, 458, 0.4f, 1.0f, 1.0f);
+        return;
+    }
+    const std::vector<LobbyItem> items = lobbyItems();
+    float x = 24.0f;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        const LobbyItem& it = items[i];
+        const bool on = lobbyRow_ == kLobbySettings && static_cast<int>(i) == std::clamp(lobbyAction_, 0, static_cast<int>(items.size()) - 1);
+        const float w = r.textWidth(bank, it.label);
+        if (on) r.quad(x - 6.0f, 456.0f, w + 12.0f, 20.0f, 0.25f, 0.30f, 0.75f, 1.0f);
+        const float lit = it.enabled ? 1.0f : 0.5f;
+        label(r, bank, it.label, x, 458, on ? 1.0f : 0.85f * lit, on ? 0.95f * lit : 0.85f * lit, on ? 0.3f : 0.85f * lit);
+        x += w + 22.0f;
+    }
+}
+
+// The on-screen keyboard, over the lower part of whatever screen asked for it. Its first
+// line is the text being typed, since it may cover the place the text is shown at.
+void NetUi::drawKeyboard(Renderer& r, SpriteBank& bank, int frame) {
+    if (!osk_.shown()) return;
+    const float cellW = 50.0f, cellH = 28.0f, left = 70.0f;
+    const float top = 474.0f - 22.0f - cellH * static_cast<float>(osk_.rows()) - 30.0f;
+    r.quad(60, top, 520, 474.0f - top, 0.0f, 0.0f, 0.10f, 1.0f);
+    const bool secret = editing_ == &password_;
+    const std::string& value = editing_ != nullptr ? *editing_ : chatText_;
+    std::string typing = "> " + (secret ? std::string(value.size(), '*') : value);
+    while (r.textWidth(bank, typing) > 480 && typing.size() > 3) typing.erase(2, 1);  // the end stays visible
+    label(r, bank, typing + ((frame / 20) % 2 == 0 ? "_" : ""), left, top + 6.0f, 0.4f, 1.0f, 1.0f);
+    for (const ScreenKeyboard::Cell& c : osk_.cells()) {
+        const float x = left + cellW * static_cast<float>(c.col), y = top + 30.0f + cellH * static_cast<float>(c.row);
+        const float w = cellW * static_cast<float>(c.span) - 4.0f;
+        if (c.selected) r.quad(x, y, w, cellH - 4.0f, 0.25f, 0.30f, 0.75f, 1.0f);
+        else r.quad(x, y, w, cellH - 4.0f, 0.12f, 0.12f, 0.28f, 1.0f);
+        label(r, bank, c.label, x + (w - r.textWidth(bank, c.label)) / 2.0f, y + 3.0f, c.selected ? 1.0f : 0.9f, c.selected ? 0.95f : 0.9f, c.selected ? 0.3f : 0.9f);
+    }
+    label(r, bank, "A: press   X: erase   Y: space   Start: done   B: close", left, 474.0f - 22.0f, 0.6f, 0.6f, 0.6f);
+}
+
+// The menu of a match: the game goes on behind it.
+void NetUi::drawMatchMenu(Renderer& r, SpriteBank& bank) {
+    if (!menuOpen_) return;
+    r.quad(200, 150, 240, 44.0f + 26.0f * kMenuItems, 0.0f, 0.0f, 0.10f, 0.92f);
+    for (int i = 0; i < kMenuItems; ++i) {
+        const bool on = i == menuItem_;
+        const float y = 166.0f + 26.0f * static_cast<float>(i);
+        if (on) r.quad(212, y - 2.0f, 216, 22, 0.25f, 0.30f, 0.75f, 1.0f);
+        label(r, bank, kMenuItem[i], 320.0f - r.textWidth(bank, kMenuItem[i]) / 2.0f, y, on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
+    }
 }
 
 void NetUi::drawChat(Renderer& r, SpriteBank& bank, std::uint64_t nowMs) {
@@ -624,17 +866,18 @@ void NetUi::drawChat(Renderer& r, SpriteBank& bank, std::uint64_t nowMs) {
         for (const std::string& part : wrap(r, bank, c.fromServer ? "* " + c.text : c.name + ": " + c.text, 560)) lines.emplace_back(part, c.fromServer);
     }
     const std::size_t shown = std::min<std::size_t>(lines.size(), chatOpen_ ? 6 : 4);
-    const float bottom = 428.0f;
+    const float bottom = osk_.shown() ? 200.0f : 428.0f;  // the on-screen keyboard has the lower part
     if (chatOpen_) r.quad(20, bottom - 20.0f * static_cast<float>(shown) - 4.0f, 600, 20.0f * static_cast<float>(shown + 1) + 8.0f, 0.0f, 0.0f, 0.10f, 0.75f);
     for (std::size_t i = 0; i < shown; ++i) {
         const auto& [text, fromServer] = lines[lines.size() - shown + i];
         label(r, bank, text, 28, bottom - 20.0f * static_cast<float>(shown - i), fromServer ? 0.6f : 1.0f, fromServer ? 0.8f : 1.0f, 1.0f);
     }
-    if (chatOpen_) {
+    if (chatOpen_ && !osk_.shown()) {
         std::string typing = "> " + chatText_;
         while (r.textWidth(bank, typing) > 570 && typing.size() > 3) typing.erase(2, 1);
         label(r, bank, typing + "_", 28, bottom, 0.4f, 1.0f, 1.0f);
     }
+    if (menuOpen_ || osk_.shown()) return;
     if (escapeAt_ != 0 && nowMs - escapeAt_ < 3000) label(r, bank, "Press Esc again to go back to the lobby", 160, 456, 1.0f, 0.95f, 0.3f);
     else if (client_.seat() < 0 && client_.state() == State::Round) label(r, bank, "Watching - you play in the next match   T: chat", 150, 456, 0.8f, 0.8f, 0.8f);
 }
@@ -711,6 +954,7 @@ void NetUi::drawResult(Renderer& r, SpriteBank& bank) {
             label(r, bank, line, 150, 210.0f + 20.0f * static_cast<float>(row++), won ? 1.0f : 0.8f, won ? 0.95f : 0.8f, won ? 0.3f : 0.8f);
         }
     }
+    if (menuOpen_ || osk_.shown()) return;
     const std::string hint = continueSent_ ? "Waiting for the other players..." : "Enter: continue   T: chat";
     label(r, bank, hint, 320.0f - r.textWidth(bank, hint) / 2.0f, 460, 0.4f, 1.0f, 1.0f);
 }
@@ -725,6 +969,8 @@ void NetUi::draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int fr
         r.begin(windowW, windowH, false);
         if (state == State::Result) drawResult(r, bank);
         drawChat(r, bank, nowMs);
+        drawMatchMenu(r, bank);
+        drawKeyboard(r, bank, frame);
         r.end();
         return;
     }
@@ -749,9 +995,21 @@ void NetUi::draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int fr
         r.quad(100, 180, 440, boxH, 0.0f, 0.0f, 0.10f, 0.88f);
         for (std::size_t i = 0; i < lines.size(); ++i)
             label(r, bank, lines[i], 320.0f - r.textWidth(bank, lines[i]) / 2.0f, 196.0f + 24.0f * static_cast<float>(i), i == 0 ? 1.0f : 0.9f, i == 0 ? 0.95f : 0.9f, i == 0 ? 0.3f : 0.9f);
-        const std::string ok = mode_ == Mode::Error ? (identityChanged_ ? "Enter: Ok   F8: forget the old identity" : "Enter: Ok") : "Esc: cancel";
-        label(r, bank, ok, 320.0f - r.textWidth(bank, ok) / 2.0f, 180.0f + boxH - 30.0f, 0.4f, 1.0f, 1.0f);
+        // The items of the box: the chosen one on a lighter ground.
+        std::vector<std::string> items = {mode_ == Mode::Error ? "Ok" : "Cancel"};
+        if (mode_ == Mode::Error && identityChanged_) items.push_back("Forget the old identity");
+        float total = 30.0f * static_cast<float>(items.size() - 1);
+        for (const std::string& it : items) total += r.textWidth(bank, it);
+        float x = 320.0f - total / 2.0f;
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            const bool on = static_cast<int>(i) == (mode_ == Mode::Error ? errorItem_ : 0);
+            const float w = r.textWidth(bank, items[i]);
+            if (on) r.quad(x - 6.0f, 180.0f + boxH - 32.0f, w + 12.0f, 20.0f, 0.25f, 0.30f, 0.75f, 1.0f);
+            label(r, bank, items[i], x, 180.0f + boxH - 30.0f, on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
+            x += w + 30.0f;
+        }
     }
+    drawKeyboard(r, bank, frame);
     r.end();
 }
 
