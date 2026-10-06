@@ -688,3 +688,15 @@ Not a discovery about the original; a record of what was built and seen.
 - `src/app/screen_keyboard.*` and `src/app/net_ui.*`: on-screen keyboard; "Join this address", "Back", "Cancel", "Ok" / "Forget the old identity" as items; the lobby's row of actions; the match menu.
 - Validation: `ab_ui_tests` (Level 4 for the rules of these screens): a host and a guest do everything with pad keys alone over the loopback interface. Screens looked at from unattended runs with scripted pad buttons (`--script pad=a,...`): join with the keyboard, host, lobby as administrator and as guest, lobby chat keyboard, match menu.
 - Not done: any of it with a real controller (none available; `/dev/uinput` is not open to this user, so no simulated device either). SDL's own gamepad events therefore reached this code only by reading, not by running. Typing by touch on the on-screen keyboard (a phone uses its own keyboard). The changed-identity question by pad is not in the automated test.
+
+### Decision: trust by certificates and replayable records, tournaments without the master (2026-10-06)
+
+Not a discovery about the original. The user asked whether tournament servers could do without the master by signing a hash of the server binary and checking it in a PKI. Outcome, written into `docs/specifications/online-play.md` (section 7, phases 6 to 8):
+
+- A hash of the binary is not used: the machine being checked would report it itself, and the program is open source.
+- Kept from the idea: a PKI. An offline root key signs certificates for dedicated servers (operator, identity key, signing key, about 90 days); the game verifies them by itself.
+- Added: signed match records that anyone can replay with the deterministic core, a seed no single party chooses, inputs signed by the players, tournaments as files signed by an organiser, statistics summed from published records.
+- The master is reduced to finding games and passing connection details for casual play. Accounts are optional and undecided.
+- Stated limits: a server that drops or delays a player's inputs, or leaks hidden information, is not caught by a record.
+
+Nothing of it is implemented.
