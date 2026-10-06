@@ -37,7 +37,14 @@ The Linux commands on this page work the same on macOS.
 
 ## 2. Import the original game data (optional, once)
 
-Run the program with `--import-assets` and the path of the original game.
+**In the game.** The first time the game starts without original data it asks: **CHOOSE FOLDER** or **NOT NOW**. Choose the folder of your copy (the one that holds `COLOR.PAL` and `DATA`, or the one above it: an installed game or the CD). The game converts the data, showing its progress, and then plays with it.
+
+- "Not now" is not final: **Options → Original Game Data** opens the same folder chooser at any later time, also to change the folder. After the choice the game starts anew by itself, converts and uses the data.
+- **Options → Graphics And Sound** switches between the original data and the free set; nothing is deleted either way. Settings, key layouts and your own schemes are kept.
+- The folder is remembered. **Each new release converts the data again** from it by itself, so leave the original where it is. If it is not there then (the CD is out, the folder was removed), the data converted before stays in use and a note says so once.
+- The folder chooser is the system's own (on Linux it needs a desktop portal or `zenity`). Where there is none the game says so; use the command below.
+
+**With a command.** Run the program with `--import-assets` and the path of the original game. This does the same, and remembers the folder the same way.
 
 Linux:
 
@@ -141,6 +148,7 @@ To play over a network, one player chooses **Start Network Game** in the menu an
 ## Status of these instructions
 
 - The dedicated server and network play were run on Linux on one machine only (their automated tests also pass on Windows in CI); see the README for what that means.
+- The import from inside the game was run on Linux with the real data in every case but one: first-start offer, conversion from a remembered folder (260 data files, 971 sounds, 48 s), no conversion at the next start, a new release with the folder gone (note once, old data kept) and with the folder back, the game starting anew after a change under Options. **The folder dialog itself was not operated** (it cannot be driven unattended), and none of this was run on Windows or macOS.
 - The macOS package and the ARM packages for Linux and Windows are built by GitHub Actions, where the unit tests pass on Apple silicon and on ARM Linux and Windows machines and the programs answer `--version` and `--help`. None of them has been started on a real machine by the author: the game's window, graphics and sound are **untried** on macOS and on ARM. The Intel half of the macOS package is built but its tests are not run.
 
 - The disc holds about a thousand more sounds than the game ever plays (alternate takes and unused lines). They are left out unless you add `--all-sounds` to the import (about 180 MB more); **Options → Sound Test** then lists and plays them.

@@ -30,7 +30,7 @@ Things to know:
 
 **Without the chooser.** The app also looks on every start into `Android/data/io.github.elraro.atomicbomberman/files/original` (it creates the folder, with a note in it). A copy of the game put there (directly or one folder below) is converted the same way and wins over a chosen folder. That folder can be reached from a computer over USB or with `adb`; pushing straight into it may be refused, this works: `adb push GAME /data/local/tmp/ATOMIC`, then `adb shell cp -r /data/local/tmp/ATOMIC /sdcard/Android/data/io.github.elraro.atomicbomberman/files/original/`.
 
-On a desktop the folder way can be tried with `atomic --import-folder DIR` (there `--import-assets` is the usual way).
+The desktop game has the same screens, with the desktop's folder dialog (see `INSTALL.md`); there the folder is read where it is, without the copy, and the game starts anew by itself after a choice under Options. **Options, Graphics And Sound** switches between the original data and the free set (on Android at the next start).
 
 ## Building it
 

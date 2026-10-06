@@ -68,7 +68,7 @@ Without the original game the program uses its own free set (robots instead of t
    ./atomic
    ```
    That is all: with no original game on the machine it starts with the free asset set.
-3. **Optional, if you own the original game** (installed or on CD): import its data once for the original graphics, sounds, music and all its arenas.
+3. **Optional, if you own the original game** (installed or on CD): import its data once for the original graphics, sounds, music and all its arenas. The game offers this on its first start and under **Options → Original Game Data** (choose the folder, watch the progress bar); you can do it at any later time, and **Options → Graphics And Sound** switches back to the free set. Or with a command:
    ```sh
    ./atomic --import-assets /path/to/original/game
    ```

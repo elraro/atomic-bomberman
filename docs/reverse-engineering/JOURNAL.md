@@ -648,3 +648,20 @@ Not a discovery about the original; a record of what was built and seen.
 - `android/.../GameActivity.java` (extends SDL's activity): Android's folder chooser (`ACTION_OPEN_DOCUMENT_TREE`), the permission kept over restarts, the choice saved; the files the importer needs (listed sounds only, read from the game's `soundlst.res`) are copied into a staging folder, since a chosen folder cannot be read by path. `src/app/android_folder.*` calls it from C++.
 - First start offers CHOOSE FOLDER / NOT NOW; Options has "Original Game Data"; a release change reads the remembered folder again.
 - Seen on the emulator (API 34): choice of `Download/ATOMIC`, 1233 files read, 260 data files and 971 sounds converted, about 160 s in all; no conversion at the following start; choosing again from Options converts at the next start. Not run on a real device.
+
+## 2026-10-06
+
+### Modern: original data from a chosen folder on every platform
+
+Not a discovery about the original; a record of what was built and seen.
+
+- `src/app/original_folder.*` (was `android_folder.*`): on a desktop SDL's folder dialog, the choice kept in `original-folder.txt` in the per-user folder and read by path; on Android as before (Java side, staging copy).
+- `src/app/import_screen.*` now runs on every platform at start: first-start offer when no original data is found any way; conversion when a folder was chosen or the converted data is from another release. If the source is gone at a release change, the data converted before stays in use and this is told once per release (`import-told.txt`); with nothing converted to fall back on, the folder is asked for again.
+- Options: "Original Game Data" (all platforms) and "Graphics And Sound: Original / Free" (setting `free_assets`). The data is read at start, so on a desktop the program runs its whole start again in the same process (`runGame` in a loop); on Android the change takes effect at the next start.
+- `--import-assets` writes the release note and remembers its folder; the note also records `--all-sounds`.
+- Validation: unit tests for the note and the setting (Level 4 for those rules). Run on Linux in a separate data folder with the real data: offer screen, conversion from a remembered folder, no second conversion, release change with the folder gone / back, restart from Options. On the Android emulator: a pending conversion completed and the next start did not convert. Not done: operating the desktop folder dialog; Windows; macOS.
+
+### Modern: macOS and ARM builds in CI
+
+- The workflow builds Linux and Windows for x86-64 and ARM64 on runners of each type, and a universal macOS package. Two assumptions of the network tests did not hold on macOS and were corrected in the tests: clients connecting in the same instant reach the server in either order, and the predicted step settles five ahead (within the client's two steps of allowed drift) where four were asked for.
+- Not done: the game started by a person on macOS or on an ARM machine.
