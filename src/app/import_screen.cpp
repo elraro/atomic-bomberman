@@ -11,7 +11,7 @@
 #include <thread>
 #include <vector>
 
-#include "app/android_folder.hpp"
+#include "app/original_folder.hpp"
 #include "rendering/renderer.hpp"
 #include "rendering/sprites.hpp"
 #include "resources/asset_import.hpp"
@@ -212,12 +212,18 @@ public:
 
     // Waits for the system's folder chooser. True if a folder was chosen.
     bool pickFolder() {
-        folder::pick();
+        folder::pick(window_);
         while (!closed_ && folder::pickState() == folder::Pick::Open) {
             pump();
             draw({yellow("ORIGINAL GAME DATA"), kGap, Line{"Choose the folder that holds your copy of the game..."}}, -1.0f, "", {});
             show("");
             SDL_Delay(50);
+        }
+        if (!closed_ && folder::pickState() == folder::Pick::Failed) {
+            std::fprintf(stderr, "WARN  No folder chooser: %s\n", folder::pickError().c_str());
+            message({red("NO FOLDER CHOOSER ON THIS SYSTEM"), kGap, Line{"The data can be taken with a command instead:"}, kGap,
+                     white("atomic --import-assets FOLDER_OF_THE_ORIGINAL_GAME")},
+                    "");
         }
         return !closed_ && folder::pickState() == folder::Pick::Chosen;
     }
@@ -251,7 +257,7 @@ public:
 
     // The conversion, running beside the pictures. `steps` is 2, or 3 when the files were
     // fetched from a chosen folder first; `from` is what to show as the source.
-    ImportReport convert(const std::string& source, const std::string& from, int steps) {
+    ImportReport convert(const std::string& source, const std::string& from, int steps, bool allSounds) {
         struct Shared {
             std::mutex lock;
             ImportProgress progress;
@@ -263,7 +269,7 @@ public:
                 const std::lock_guard<std::mutex> guard(shared.lock);
                 shared.progress = p;
                 return !stop.load();
-            });
+            }, allSounds);
             {
                 const std::lock_guard<std::mutex> guard(shared.lock);
                 shared.report = std::move(r);
@@ -324,34 +330,54 @@ bool holdsOtherFiles(const std::string& folder) {
 
 bool runImportScreens(SDL_Window* window, const ImportScreens& setup) {
     std::error_code ec;
-    fs::create_directories(setup.folder, ec);
-    if (!fs::exists(fs::path(setup.folder) / kReadme, ec)) {
-        std::ofstream note(fs::path(setup.folder) / kReadme);
-        note << "Atomic Bomberman (modern)\n\n"
-                "If you own the original Atomic Bomberman (Interplay, 1997), copy its folder\n"
-                "into this one: the installed game or the whole CD, the folder that holds\n"
-                "COLOR.PAL and DATA. The next time the game starts it converts the data and\n"
-                "plays with the original graphics, sounds and levels.\n\n"
-                "Leave the files here: each new release of the game converts them again.\n";
+    if (!setup.folder.empty()) {
+        fs::create_directories(setup.folder, ec);
+        if (!fs::exists(fs::path(setup.folder) / kReadme, ec)) {
+            std::ofstream note(fs::path(setup.folder) / kReadme);
+            note << "Atomic Bomberman (modern)\n\n"
+                    "If you own the original Atomic Bomberman (Interplay, 1997), copy its folder\n"
+                    "into this one: the installed game or the whole CD, the folder that holds\n"
+                    "COLOR.PAL and DATA. The next time the game starts it converts the data and\n"
+                    "plays with the original graphics, sounds and levels.\n\n"
+                    "Leave the files here: each new release of the game converts them again.\n";
+        }
     }
-    // Two ways to the original: a copy put into the folder (always there; by USB or adb), and,
-    // where the system has a folder chooser, a folder chosen once and remembered.
-    const std::string dropped = findOriginalGame(setup.folder);
+    // Two ways to the original: a folder chosen once with the system's chooser and remembered,
+    // and (Android) a copy put into a fixed folder of the device, by USB or adb.
+    const std::string dropped = setup.folder.empty() ? std::string() : findOriginalGame(setup.folder);
     const bool chooser = folder::available();
     const bool remembered = chooser && !folder::saved().empty();
     const bool noticeShown = fs::exists(setup.noticeFile, ec);
     const bool asked = !setup.requestFile.empty() && fs::exists(setup.requestFile, ec);
-    const bool due = importIsDue(setup.converted, setup.release) || asked;
-    const bool unrecognised = dropped.empty() && !remembered && holdsOtherFiles(setup.folder);
-    const bool convertNow = due && (!dropped.empty() || remembered);
-    if (!convertNow && !unrecognised && noticeShown) return true;
+    const bool stale = importIsDue(setup.converted, setup.release);
+    // Data converted by an earlier release: kept in use when it cannot be made anew.
+    const std::string madeBy = importStamp(setup.converted);
+    const bool haveConverted = !madeBy.empty() && looksLikeOriginalGame(setup.converted);
+    // A conversion for a new release that cannot be done is told once per release.
+    std::string told;
+    if (!setup.toldFile.empty()) {
+        std::ifstream in(setup.toldFile);
+        std::getline(in, told);
+    }
+    // (Where looking is cheap, a copy that is there again is tried again all the same.)
+    const bool thereAgain = !dropped.empty() || (remembered && !folder::staged() && !findOriginalGame(folder::saved()).empty());
+    const bool alreadyTold = !asked && told == setup.release && !thereAgain;
+    const bool unrecognised = !setup.folder.empty() && dropped.empty() && !remembered && holdsOtherFiles(setup.folder);
+    const bool haveSource = !dropped.empty() || remembered;
+    const bool convertNow = (stale || asked) && haveSource && !alreadyTold;
+    const bool sourceGone = stale && !haveSource && haveConverted && !alreadyTold;
+    const bool offer = !noticeShown && !setup.otherData && !haveConverted;
+    if (!convertNow && !sourceGone && !unrecognised && !offer) return true;
 
     Screens screens(window, setup);
+    auto tellOnce = [&]() {
+        if (!setup.toldFile.empty()) std::ofstream(setup.toldFile) << setup.release << "\n";
+    };
     bool fromChosen = dropped.empty() && remembered;
     bool go = convertNow;
-    if (!go && !noticeShown && chooser) {
+    if (!go && offer && chooser) {
         const std::vector<Line> lines = {yellow("ORIGINAL GAME DATA"), kGap, Line{"The game plays with its own free graphics and sounds."}, kGap,
-                                         Line{"If you own the original Atomic Bomberman (1997) and its"}, Line{"folder (the one with COLOR.PAL and DATA) is on this device,"},
+                                         Line{"If you own the original Atomic Bomberman (1997) and its"}, Line{"folder (the one with COLOR.PAL and DATA) is at hand,"},
                                          Line{"choose it now: the game converts the data and plays with"}, Line{"the original graphics, sounds and levels."}, kGap,
                                          grey("Later: Options, Original Game Data.")};
         if (screens.choice(lines, "CHOOSE FOLDER", "NOT NOW", "notice") && screens.pickFolder()) go = fromChosen = true;
@@ -359,26 +385,36 @@ bool runImportScreens(SDL_Window* window, const ImportScreens& setup) {
         std::ofstream(setup.noticeFile) << "shown\n";
         if (!go) return true;
     }
-    if (go) {
+    // Asks again after a failure that leaves nothing to play the original with.
+    while (go) {
+        go = false;
         std::string source = dropped, from = dropped, problem;
         if (fromChosen) {
             from = folder::savedName();
             std::fprintf(stderr, "INFO  Reading the original game data from the chosen folder %s\n", from.c_str());
-            problem = screens.stage(from);
-            if (screens.closed()) return false;
-            if (problem.empty()) {
-                source = findOriginalGame(setup.staging);
-                if (source.empty()) problem = "No copy of Atomic Bomberman in the chosen folder: it has to be the folder that holds COLOR.PAL and DATA, or the one above it.";
+            if (folder::staged()) {
+                problem = screens.stage(from);
+                if (screens.closed()) return false;
+                if (problem.empty()) source = findOriginalGame(setup.staging);
+            } else {
+                source = findOriginalGame(folder::saved());
+            }
+            if (problem.empty() && source.empty()) {
+                source.clear();
+                problem = fs::exists(fs::path(folder::saved()), ec) || folder::staged()
+                              ? "No copy of Atomic Bomberman in the chosen folder: it has to be the folder that holds COLOR.PAL and DATA, or the one above it."
+                              : "The chosen folder is not there any more.";
             }
         }
         ImportReport r;
         if (problem.empty()) {
             std::fprintf(stderr, "INFO  Converting the original game data from %s\n", source.c_str());
-            r = screens.convert(source, from, fromChosen ? 3 : 2);
+            // A later release converts what the one before did: with or without the sounds the game never plays.
+            r = screens.convert(source, from, fromChosen && folder::staged() ? 3 : 2, importStampAllSounds(setup.converted));
         } else {
             r.error = problem;
         }
-        if (fromChosen) fs::remove_all(setup.staging, ec);
+        if (fromChosen && folder::staged()) fs::remove_all(setup.staging, ec);
         if (screens.closed()) return false;
         if (!setup.requestFile.empty()) fs::remove(setup.requestFile, ec);  // asked once; a failure is told, not repeated at every start
         char buf[160];
@@ -389,17 +425,40 @@ bool runImportScreens(SDL_Window* window, const ImportScreens& setup) {
                      Line{"The game now plays with the original graphics,"}, Line{"sounds and levels."}, kGap,
                      Line{"Leave the files where they are: each new release"}, Line{"of the game converts them again."}};
             std::fprintf(stderr, "INFO  Converted: %s\n", buf);
-        } else {
-            lines = {red("THE ORIGINAL GAME DATA COULD NOT BE CONVERTED"), kGap};
-            for (const std::string& piece : screens.wrap(r.error, 580.0f)) lines.push_back(white(piece));
-            lines.push_back(kGap);
-            lines.push_back(Line{fs::exists(fs::path(setup.converted), ec) ? "The data converted before stays in use."
-                                                                           : "The game goes on with its free graphics and sounds."});
-            lines.push_back(Line{fromChosen ? "Another folder can be chosen under Options, Original Game Data." : "The next start tries again."});
-            std::fprintf(stderr, "WARN  Conversion failed: %s\n", r.error.c_str());
+            if (!setup.toldFile.empty()) fs::remove(setup.toldFile, ec);
+            screens.message(lines, "done");
+            break;
         }
-        screens.message(lines, "done");
-    } else {
+        std::fprintf(stderr, "WARN  Conversion failed: %s\n", r.error.c_str());
+        tellOnce();
+        lines = {red("THE ORIGINAL GAME DATA COULD NOT BE CONVERTED"), kGap};
+        for (const std::string& piece : screens.wrap(r.error, 580.0f)) lines.push_back(white(piece));
+        lines.push_back(kGap);
+        if (haveConverted) {
+            lines.push_back(Line{"The data converted before (by release " + madeBy + ") stays in use."});
+            lines.push_back(Line{chooser ? "To convert it anew: Options, Original Game Data." : "A later start tries again."});
+            screens.message(lines, "failed");
+        } else if (chooser) {
+            // Nothing to fall back on but the free set: the folder is asked for again.
+            lines.push_back(Line{"The game goes on with its free graphics and sounds."});
+            lines.push_back(grey("Later: Options, Original Game Data."));
+            if (screens.choice(lines, "CHOOSE FOLDER", "NOT NOW", "failed") && screens.pickFolder()) go = fromChosen = true;
+        } else {
+            lines.push_back(Line{"The game goes on with its free graphics and sounds."});
+            lines.push_back(Line{"A later start tries again."});
+            screens.message(lines, "failed");
+        }
+    }
+    if (sourceGone && !convertNow) {
+        // A new release, and the copy of the original it would convert is not to be found.
+        tellOnce();
+        std::vector<Line> lines = {yellow("ORIGINAL GAME DATA"), kGap, Line{"This release would convert the original game data anew,"},
+                                   Line{"but the copy of the original game was not found."}, kGap,
+                                   Line{"The data converted before (by release " + madeBy + ") stays in use."}};
+        if (chooser) lines.push_back(Line{"To convert it anew: Options, Original Game Data."});
+        std::fprintf(stderr, "INFO  The original game was not found; the data converted by release %s stays in use\n", madeBy.c_str());
+        screens.message(lines, "kept");
+    } else if (!convertNow && (unrecognised || (offer && !chooser && !setup.folder.empty()))) {
         std::vector<Line> lines;
         if (unrecognised) {
             lines = {yellow("NO ORIGINAL GAME FOUND IN THE FOLDER"), kGap, Line{"There are files in"}};

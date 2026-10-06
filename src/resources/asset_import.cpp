@@ -274,26 +274,38 @@ std::string importStamp(const std::string& converted) {
     return release;
 }
 
+bool importStampAllSounds(const std::string& converted) {
+    std::ifstream in(fs::path(converted) / kStampFile);
+    std::string line;
+    std::getline(in, line);
+    while (std::getline(in, line))
+        if (line.rfind("all-sounds", 0) == 0) return true;
+    return false;
+}
+
+bool writeImportStamp(const std::string& converted, const std::string& release, bool allSounds) {
+    std::ofstream stamp(fs::path(converted) / kStampFile);
+    stamp << release << "\n";
+    if (allSounds) stamp << "all-sounds\n";
+    stamp.flush();
+    return static_cast<bool>(stamp);
+}
+
 bool importIsDue(const std::string& converted, const std::string& release) {
     return importStamp(converted) != release;
 }
 
 ImportReport importForRelease(const std::string& source, const std::string& converted, const std::string& release,
-                              const std::function<bool(const ImportProgress&)>& progress) {
+                              const std::function<bool(const ImportProgress&)>& progress, bool allSounds) {
     const fs::path target(converted);
     fs::path work = target;
     work += ".new";
     std::error_code ec;
     fs::remove_all(work, ec);  // what an interrupted conversion left behind
-    ImportReport report = importAssets(source, work.string(), false, progress);
-    if (report.ok) {
-        std::ofstream stamp(work / kStampFile);
-        stamp << release << "\n";
-        stamp.flush();
-        if (!stamp) {
-            report.ok = false;
-            report.error = "cannot write into " + work.string();
-        }
+    ImportReport report = importAssets(source, work.string(), allSounds, progress);
+    if (report.ok && !writeImportStamp(work.string(), release, allSounds)) {
+        report.ok = false;
+        report.error = "cannot write into " + work.string();
     }
     if (report.ok) {
         fs::remove_all(target, ec);

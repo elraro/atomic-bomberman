@@ -1,4 +1,4 @@
-#include "app/android_folder.hpp"
+#include "app/original_folder.hpp"
 
 #ifdef __ANDROID__
 
@@ -46,12 +46,17 @@ struct Call {
 
 }  // namespace
 
+void setStore(const std::string&) {}
+
 bool available() {
     Call c;
     return c.method("pickFolder", "()V") != nullptr;
 }
 
-void pick() { Call().run("pickFolder"); }
+void pick(SDL_Window*) { Call().run("pickFolder"); }
+std::string pickError() { return {}; }
+void remember(const std::string&) {}
+bool staged() { return true; }
 
 Pick pickState() {
     Call c;
@@ -96,13 +101,70 @@ void stopStaging() { Call().run("stopStaging"); }
 
 #else
 
+#include <SDL3/SDL.h>
+
+#include <atomic>
+#include <fstream>
+#include <mutex>
+
 namespace ab::folder {
 
-bool available() { return false; }
-void pick() {}
-Pick pickState() { return Pick::None; }
-std::string saved() { return {}; }
-std::string savedName() { return {}; }
+namespace {
+
+std::string g_store;
+std::atomic<int> g_state{0};  // a Pick value
+std::mutex g_lock;            // the dialog may answer from another thread
+std::string g_error;
+
+// SDL's answer: one folder, none (cancelled), or no list at all (no chooser on this system).
+void SDLCALL answered(void*, const char* const* list, int) {
+    if (list == nullptr) {
+        const std::lock_guard<std::mutex> guard(g_lock);
+        g_error = SDL_GetError();
+        g_state = static_cast<int>(Pick::Failed);
+    } else if (list[0] == nullptr) {
+        g_state = static_cast<int>(Pick::Cancelled);
+    } else {
+        remember(list[0]);
+        g_state = static_cast<int>(Pick::Chosen);
+    }
+}
+
+}  // namespace
+
+void setStore(const std::string& file) { g_store = file; }
+
+bool available() { return !g_store.empty(); }
+
+void pick(SDL_Window* window) {
+    g_state = static_cast<int>(Pick::Open);
+    const std::string before = saved();
+    SDL_ShowOpenFolderDialog(answered, nullptr, window, before.empty() ? nullptr : before.c_str(), false);
+}
+
+Pick pickState() { return static_cast<Pick>(g_state.load()); }
+
+std::string pickError() {
+    const std::lock_guard<std::mutex> guard(g_lock);
+    return g_error;
+}
+
+std::string saved() {
+    std::ifstream in(g_store);
+    std::string path;
+    std::getline(in, path);
+    while (!path.empty() && (path.back() == '\r' || path.back() == '\n')) path.pop_back();
+    return path;
+}
+
+std::string savedName() { return saved(); }
+
+void remember(const std::string& path) {
+    if (g_store.empty()) return;
+    std::ofstream(g_store) << path << "\n";
+}
+
+bool staged() { return false; }
 void startStaging(const std::string&) {}
 Staging staging() { return {}; }
 void stopStaging() {}

@@ -25,6 +25,7 @@ struct Settings {
     int musicVolume = 100;            // music_volume, sound_volume: 0-100 (not in the original, whose
     int soundVolume = 100;            // "Adjust Audio" screen was never made)
     bool assignKeyboards = true;      // assign_keyboards: a keyboard player in the default player list
+    bool freeAssets = false;          // free_assets: play with the free graphics and sounds although original data is there (not in the original)
     // Network play (this implementation's client-server mode; not the original's keys).
     std::string netName;              // net_name: the player's name; empty until first set
     std::string netAddress;           // net_address: the server last joined

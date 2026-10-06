@@ -52,14 +52,17 @@ ImportReport importAssets(const std::string& source, const std::string& destinat
 // the user leaves a copy of the original game in a folder, and the program converts it when
 // there is no converted folder yet or when that one was made by another release.
 //
-// The converted folder carries a note naming the release that made it.
+// The converted folder carries a note naming the release that made it, and whether the
+// sounds the game never plays were asked for too (so that a later release converts the same).
 std::string importStamp(const std::string& converted);  // empty: none (or not made this way)
+bool importStampAllSounds(const std::string& converted);
+bool writeImportStamp(const std::string& converted, const std::string& release, bool allSounds);
 // True if `converted` has to be (re)made for `release`.
 bool importIsDue(const std::string& converted, const std::string& release);
 // Converts `source` into `converted` for `release`. The work is done in a folder beside it
 // ("<converted>.new") that replaces the old one only when everything went well, so that a
 // conversion that fails or is stopped leaves what was there untouched.
 ImportReport importForRelease(const std::string& source, const std::string& converted, const std::string& release,
-                              const std::function<bool(const ImportProgress&)>& progress = {});
+                              const std::function<bool(const ImportProgress&)>& progress = {}, bool allSounds = false);
 
 }  // namespace ab

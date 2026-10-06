@@ -2375,8 +2375,22 @@ void testAssetImport() {
     // ...and one that goes through replaces it whole.
     r = importForRelease(cd.string(), conv, "1.1");
     CHECK(r.ok && importStamp(conv) == "1.1" && !fs::exists(conv + "/kept.txt") && !fs::exists(conv + ".new"));
-    // A folder made by --import-assets carries no stamp: the folder flow makes its own.
-    CHECK(importStamp(out).empty());
+    // The note also says whether the sounds the game never plays were taken, so that the
+    // next release takes the same.
+    CHECK(!importStampAllSounds(conv));
+    r = importForRelease(cd.string(), conv, "1.2", {}, true);
+    CHECK(r.ok && importStamp(conv) == "1.2" && importStampAllSounds(conv));
+    // importAssets by itself leaves no note; the --import-assets command writes it after.
+    CHECK(importStamp(out).empty() && !importStampAllSounds(out));
+    CHECK(writeImportStamp(out, "1.0", false));
+    CHECK(importStamp(out) == "1.0" && !importIsDue(out, "1.0") && !importStampAllSounds(out));
+    // Settings: the choice of the free set although original data is there.
+    Settings chosen;
+    CHECK(!chosen.freeAssets);
+    chosen.freeAssets = true;
+    Settings read;
+    read.parse(chosen.serialize());
+    CHECK(read.freeAssets);
     fs::remove_all(root);
 }
 

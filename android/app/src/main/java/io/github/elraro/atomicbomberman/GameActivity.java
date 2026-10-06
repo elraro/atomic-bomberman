@@ -28,7 +28,7 @@ import java.util.Locale;
  * the app ("staging"), where the C++ importer converts them. The choice is remembered, so that
  * a new release can read the folder again by itself.
  *
- * The static methods are called from the game's thread (src/app/android_folder.cpp).
+ * The static methods are called from the game's thread (src/app/original_folder.cpp).
  */
 public class GameActivity extends SDLActivity {
     private static final int REQUEST_FOLDER = 4711;
