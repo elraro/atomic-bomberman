@@ -325,6 +325,10 @@ void NetUi::key(unsigned key, bool ctrl) {
             sound(10);
             client_.sendStart();
         }
+        if (key == SDLK_F7 && !client_.isAdmin() && client_.lobby().phase == net::Phase::Lobby) {
+            sound(10);
+            client_.sendReady(!client_.ready());
+        }
         if (key == SDLK_F3) client_.sendTeam(0);
         if (key == SDLK_F4) client_.sendTeam(1);
         // More players at this computer (second key set, gamepads), or fewer.
@@ -557,6 +561,9 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
             label(r, bank, seat.team == 0 ? "white" : "red", 212, y, seat.team == 0 ? 0.95f : 0.9f, seat.team == 0 ? 0.95f : 0.2f, seat.team == 0 ? 0.95f : 0.2f);
         if (seat.kind == net::SeatKind::Human)
             if (const net::ClientInfo* info = lobby.client(seat.client)) {
+                // Ready (the administrator's start says it for them): a green mark before the seat number.
+                const bool ready = info->ready || seat.client == lobby.admin;
+                if (!waiting) r.quad(17, y + 6, 5, 5, ready ? 0.2f : 0.35f, ready ? 0.9f : 0.35f, ready ? 0.3f : 0.35f, 1.0f);
                 const std::string ping = std::to_string(info->pingMs) + "ms";
                 label(r, bank, ping, 304.0f - r.textWidth(bank, ping), y, 0.6f, 0.6f, 0.6f);
             }
@@ -565,7 +572,7 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
     for (const net::ClientInfo& c : lobby.clients)
         if (c.seat < 0) watching += (watching.empty() ? "Watching: " : ", ") + c.name;
     if (!watching.empty()) label(r, bank, wrap(r, bank, watching, 280).front(), 24, 260, 0.7f, 0.7f, 0.7f);
-    label(r, bank, "* administrator", 24, 278, 0.6f, 0.6f, 0.6f);
+    label(r, bank, "* administrator   green mark: ready", 24, 278, 0.6f, 0.6f, 0.6f);
     if (!client_.serverIdentity().empty()) {
         // On a line of its own: beside the note above the two ran into each other.
         label(r, bank, "server id " + client_.serverIdentity(), 24, 296, 0.6f, 0.6f, 0.6f);
@@ -578,7 +585,10 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
         std::string line;
         if (row == 0) {
             const net::ClientInfo* a = lobby.client(lobby.admin);
-            line = waiting ? (client_.sittingOut() ? "The match goes on without you" : "A match is being played") : admin ? "Start the match" : "Waiting for " + (a != nullptr ? a->name : std::string("the administrator"));
+            line = waiting ? (client_.sittingOut() ? "The match goes on without you" : "A match is being played")
+                   : admin ? "Start the match"
+                   : !client_.ready() ? "Press F7 when you are ready"
+                   : "Ready. Waiting for " + (a != nullptr ? a->name : std::string("the administrator"));
         } else {
             line = wrap(r, bank, optionText(lobby.settings, row - 1), 270).front();
         }
@@ -603,7 +613,7 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
     const bool leaving = escapeAt_ != 0 && nowMs - escapeAt_ < 3000;
     const std::string hint = leaving ? "Press Esc again to leave the server"
                              : admin ? "Arrows: settings  F2: start  F3/F4: team  F5/F6: players  Esc: leave"
-                                     : "F3/F4: team   F5/F6: players at this computer   Esc: leave";
+                                     : "F7: ready   F3/F4: team   F5/F6: players at this computer   Esc: leave";
     label(r, bank, hint, 24, 458, 0.4f, 1.0f, 1.0f);
 }
 

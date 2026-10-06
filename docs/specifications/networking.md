@@ -119,6 +119,7 @@ Client to server:
 | Chat | text | |
 | Option | `u8` option, `i8` direction | Administrator: change a match setting one step left or right. The server knows the choices (e.g. the scheme list). |
 | Start | | Administrator: start the match. |
+| Ready | `u8` flag | In the lobby: this client is ready, or no longer. |
 | Team | `u8` local player | That player of this computer changes team. |
 | Locals | `u8` count | Players at this computer, 1-4 (in the lobby). |
 | Kick | `u8` client id | Administrator. |
@@ -167,6 +168,7 @@ Phases: **Lobby** → **Round** → **Result** → (next round, or Lobby when th
 - Several players at one computer: a client may ask for up to four players; each gets a seat of its own while seats are free, its own input byte, and is named "Name (2)" and so on. The second uses the second key set, and each may use a gamepad.
 - Finding the port from outside: with `upnp` on (always for a game hosted from the menu, `--upnp` for the dedicated server) the server asks the home router, by UPnP, to pass its TCP and UDP port to this machine, and tells the lobby the outcome and, if the router says so, the public address. The mapping is removed when the server stops. Without a UPnP router the port must be forwarded by hand; failing that, a relay (below).
 - Administrator: the client that has been connected longest. Changes settings, the number of computer players, starts the match, kicks. In a game hosted from the menu this is the host.
+- Ready: every other player with a seat says when they are ready (and may take it back). The administrator's start is refused, naming who is missing, until all have; the administrator's own start says it for them, and watchers are not asked. After a match everybody is asked again.
 - Settings: level (or random each match), scheme, wins needed, team play, play time, enclosement depth, computer players, random start, conveyor speed, stomped bombs detonate, win by kills, diseases destroyable, gold bomberman (the roulette), campaign. The meanings are those of the local game (`game-modes.md`).
 - A match needs at least two occupied seats, and one player on each team in team play.
 - Round: starts 1 s after RoundStart was sent; one step every 50 ms of the server's clock (it catches up after a stall, at most 5 steps at once).

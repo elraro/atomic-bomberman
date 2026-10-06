@@ -17,7 +17,7 @@ namespace ab::net {
 
 inline constexpr std::uint32_t kTcpMagic = 0x4E4D4241u;  // "ABMN"
 inline constexpr std::uint32_t kUdpMagic = 0x554D4241u;  // "ABMU"
-inline constexpr std::uint16_t kProtocolVersion = 5;
+inline constexpr std::uint16_t kProtocolVersion = 6;
 inline constexpr std::uint16_t kDefaultPort = 27410;
 // Every server also listens here for searches on the local network, whatever its own port.
 inline constexpr std::uint16_t kDiscoveryPort = 27409;
@@ -29,7 +29,7 @@ inline constexpr std::uint8_t kServerSender = 255;
 inline constexpr int kMaxLocalPlayers = 4;  // players at one computer
 
 // Key is the one message sent unencrypted in each direction (and Reject, when the versions differ).
-enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, UdpState, NeedState, Continue, Pong, Locals, Ban, Unban, Admin, Login, LeaveMatch, KeyExchange = 100 };
+enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, UdpState, NeedState, Continue, Pong, Locals, Ban, Unban, Admin, Login, LeaveMatch, Ready, KeyExchange = 100 };
 enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Steps, RoundEnd, Snapshot, Ping, Roulette, KeyExchange = 100 };
 // A datagram of a connection: its contents are encrypted. Searches on the LAN stay in the clear.
 inline constexpr std::uint8_t kSealedDatagram = 0x80;
@@ -140,6 +140,7 @@ struct ClientInfo {
     int seat = -1;   // the first of its seats; -1: watching
     int players = 1; // players at this computer
     int pingMs = 0;
+    bool ready = false;  // has said so in the lobby (the administrator need not: starting says it)
 };
 
 struct LobbyState {

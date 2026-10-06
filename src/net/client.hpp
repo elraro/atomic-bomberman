@@ -81,6 +81,11 @@ public:
     void sendChat(const std::string& text);
     void sendOption(Option option, int direction);
     void sendStart();
+    // "Ready" in the lobby: the administrator can start only when every player has said it.
+    void sendReady(bool ready);
+    bool ready() const;
+    // For programs without a person at them (tests, the bot): say "ready" whenever the lobby asks.
+    void setAlwaysReady(bool on) { alwaysReady_ = on; }
     void sendTeam(int local = 0);
     void sendLocalPlayers(int count);  // 1-4 players at this computer (in the lobby)
     void sendKick(std::uint8_t id);
@@ -192,6 +197,9 @@ private:
     std::uint64_t lastStepAt_ = 0;
     std::array<std::uint8_t, kMaxLocalPlayers> input_{};
     bool prediction_ = true;
+    bool alwaysReady_ = false;
+    std::uint64_t readySentAt_ = 0;
+    std::uint64_t clock_ = 0;  // the time of the update being run
     int predictionSteps_ = 0;
     std::unique_ptr<World> predicted_;
     bool predictedValid_ = false;

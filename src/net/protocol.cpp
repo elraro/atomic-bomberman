@@ -245,6 +245,7 @@ void encode(ByteWriter& w, const LobbyState& m) {
         w.i8(c.seat);
         w.u8(static_cast<std::uint8_t>(c.players));
         w.u16(static_cast<std::uint16_t>(std::clamp(c.pingMs, 0, 65535)));
+        w.flag(c.ready);
     }
 }
 
@@ -286,6 +287,7 @@ bool decode(ByteReader& r, LobbyState& m) {
         c.seat = r.i8();
         c.players = r.u8();
         c.pingMs = r.u16();
+        c.ready = r.flag();
         if (c.seat < -1 || c.seat >= kMaxPlayers) return false;
         m.clients.push_back(std::move(c));
     }

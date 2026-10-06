@@ -20,6 +20,7 @@ int main(int argc, char** argv) {
     std::uint64_t startAfter = 1500;
     std::string password;
     ab::net::Client client;
+    client.setAlwaysReady(true);
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--start") start = true;

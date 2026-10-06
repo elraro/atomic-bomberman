@@ -210,6 +210,7 @@ struct Harness {
     std::uint64_t now = 100000;
     std::vector<std::string> log;
     std::string gameDir;  // game data for the server (empty: the built-in arena)
+    bool alwaysReady = true;  // clients say "ready" by themselves (testReady switches it off)
 
     bool start(const std::string& password = "", int computers = 1) {
         ServerConfig config;
@@ -231,6 +232,7 @@ struct Harness {
         // order (seen on macOS), so the ones before are let in first.
         for (int waited = 0; waited < 1000 && connecting(); waited += 5) turn();
         clients.push_back(std::make_unique<Client>());
+        clients.back()->setAlwaysReady(alwaysReady);
         if (!udp) clients.back()->disableUdp();
         clients.back()->connect("127.0.0.1:" + std::to_string(server.port()), name, password, now);
         return *clients.back();
@@ -440,6 +442,47 @@ void testRound(bool udp) {
 }
 
 // A player who leaves in the middle is played by the computer; the others go on.
+// The administrator can start only when every other player has said "ready"; the
+// question is asked again after each match.
+void testReady() {
+    Harness h;
+    h.alwaysReady = false;
+    CHECK(h.start("", 0));
+    Client& ann = h.join("Ann");
+    Client& bob = h.join("Bob");
+    Client& cat = h.join("Cat");
+    CHECK(h.until([&] { return ann.lobby().clients.size() == 3 && bob.state() == Client::State::Lobby && cat.state() == Client::State::Lobby; }));
+    CHECK(ann.isAdmin());
+    CHECK(!bob.ready());
+
+    ann.sendStart();
+    CHECK(h.until([&] { return !ann.chat().empty() && ann.chat().back().text == "Not ready yet: Bob, Cat"; }));
+    CHECK(h.server.phase() == Phase::Lobby);
+    bob.sendReady(true);
+    CHECK(h.until([&] { return bob.ready() && ann.lobby().client(bob.id())->ready; }));
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.chat().back().text == "Not ready yet: Cat"; }));
+    // Ready can be taken back.
+    bob.sendReady(false);
+    CHECK(h.until([&] { return !bob.ready(); }));
+    bob.sendReady(true);
+    cat.sendReady(true);
+    CHECK(h.until([&] { return bob.ready() && cat.ready(); }));
+    ann.sendStart();  // the administrator's own "ready" is not asked for
+    CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }));
+    bob.sendReady(false);  // not in the lobby: ignored
+    // Back in the lobby everybody is asked again.
+    ann.leaveMatch();
+    bob.leaveMatch();
+    cat.leaveMatch();
+    CHECK(h.until([&] { return h.server.phase() == Phase::Lobby && bob.state() == Client::State::Lobby && cat.state() == Client::State::Lobby; }));
+    CHECK(h.until([&] { return !bob.ready() && !cat.ready(); }));
+    // A client set to answer by itself (the bot) is ready without being asked.
+    Client& dan = h.join("Dan");
+    dan.setAlwaysReady(true);
+    CHECK(h.until([&] { return dan.state() == Client::State::Lobby && dan.ready(); }));
+}
+
 void testLeaveDuringRound() {
     Harness h;
     CHECK(h.start("", 1));
@@ -1421,6 +1464,7 @@ int main() {
         {"bans and limits", testBansAndLimits},
         {"server identity", testServerIdentity},
         {"relay", testRelay},
+        {"ready", testReady},
         {"round over udp", [] { testRound(true); }},
         {"round over tcp only", [] { testRound(false); }},
         {"leave during round", testLeaveDuringRound},

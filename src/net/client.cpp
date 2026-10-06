@@ -130,6 +130,11 @@ void Client::sendOption(Option option, int direction) {
 }
 
 void Client::sendStart() { socket_.send(static_cast<std::uint8_t>(ClientMsg::Start), {}); }
+void Client::sendReady(bool ready) { socket_.send(static_cast<std::uint8_t>(ClientMsg::Ready), {static_cast<std::uint8_t>(ready ? 1 : 0)}); }
+bool Client::ready() const {
+    const ClientInfo* me = lobby_.client(id_);
+    return me != nullptr && me->ready;
+}
 void Client::sendTeam(int local) { socket_.send(static_cast<std::uint8_t>(ClientMsg::Team), {static_cast<std::uint8_t>(local)}); }
 void Client::sendLocalPlayers(int count) { socket_.send(static_cast<std::uint8_t>(ClientMsg::Locals), {static_cast<std::uint8_t>(count)}); }
 void Client::sendContinue() { socket_.send(static_cast<std::uint8_t>(ClientMsg::Continue), {}); }
@@ -288,6 +293,10 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             if (!decode(r, m)) break;
             lobby_ = std::move(m);
             if (lobby_.phase == Phase::Lobby) rouletteOn_ = false, satOut_ = false;
+            if (alwaysReady_ && lobby_.phase == Phase::Lobby && !ready() && clock_ - readySentAt_ > 500) {
+                readySentAt_ = clock_;
+                sendReady(true);
+            }
             if (lobby_.phase == Phase::Lobby && (state_ == State::Round || state_ == State::Result)) {
                 world_.reset();
                 predicted_.reset();
@@ -365,6 +374,7 @@ void Client::sendInput(std::uint64_t nowMs) {
 
 void Client::update(std::uint64_t nowMs) {
     if (state_ == State::Idle || state_ == State::Failed) return;
+    clock_ = nowMs;
 
     const bool alive = socket_.pump();
     if (socket_.connected() && !helloSent_) {

@@ -65,6 +65,7 @@ struct Server::Peer {
     std::uint32_t sentStep = 0;    // steps sent over TCP
     std::array<std::uint8_t, kMaxLocalPlayers> input{};
     bool wantsContinue = false;
+    bool ready = false;            // said so in the lobby; asked again after every match
 };
 
 Server::Server() = default;
@@ -390,6 +391,7 @@ void Server::refreshLobby() {
                 if (p->seats[static_cast<std::size_t>(l)] >= 0) info.seat = p->seats[static_cast<std::size_t>(l)];
             info.players = p->wanted;
             info.pingMs = p->pingMs;
+            info.ready = p->ready;
             lobby_.clients.push_back(info);
         }
 }
@@ -586,6 +588,13 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
             if (&p == admin() && phase_ == Phase::Lobby)
                 if (const std::string why = startMatch(); !why.empty()) tell(p, why);
             break;
+        case ClientMsg::Ready: {
+            const bool ready = r.flag();
+            if (!r.ok() || phase_ != Phase::Lobby || p.ready == ready) break;
+            p.ready = ready;
+            lobbyDirty_ = true;
+            break;
+        }
         case ClientMsg::Team:
         {
             // Which of the computer's players changes team (the first if not said).
@@ -823,6 +832,12 @@ void Server::pumpRelay() {
 }
 
 std::string Server::startMatch() {
+    // Everybody who will play has to have said they are ready. The administrator says it by starting.
+    std::string waiting;
+    const Peer* a = admin();
+    for (const auto& p : peers_)
+        if (p->joined && !p->gone && p->seated() && p.get() != a && !p->ready) waiting += (waiting.empty() ? "" : ", ") + p->name;
+    if (!waiting.empty()) return "Not ready yet: " + waiting;
     int occupied = 0;
     std::array<int, 2> perTeam{};
     for (int s = 0; s < kMaxPlayers; ++s)
@@ -1098,7 +1113,7 @@ void Server::endRound() {
 
 void Server::toLobby() {
     phase_ = Phase::Lobby;
-    for (auto& p : peers_) p->out = false;
+    for (auto& p : peers_) p->out = false, p->ready = false;
     campaignMode_ = false;
     world_.reset();
     history_.clear();
