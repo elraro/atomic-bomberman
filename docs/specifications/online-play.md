@@ -8,7 +8,7 @@ Like `networking.md`, this is the project's own design. Nothing here is a claim 
 
 - Reliable internet play for up to 10 players, including players behind home routers (NAT) and carrier-grade NAT, without anybody forwarding ports by hand.
 - Games are found through a list or a code, not by exchanging addresses. An "invitation" is nothing more than that code passed on as text by whatever means the players already use; no chat platform is integrated.
-- Community tournaments and statistics are possible later without redesigning what is built now, and **without a central server having to be trusted or even running**: what a tournament needs is carried by signatures (section 7).
+- Community tournaments and statistics are possible later without redesigning what is built now, and **without a central server having to be trusted**: what a tournament needs is carried by signatures (section 7). The one thing that must be reachable is the signed configuration file (section 2).
 - The server stays the only authority over a match. Clients send inputs and draw; they never decide outcomes.
 - Everything normal in the online flow can be done with a gamepad.
 
@@ -22,7 +22,8 @@ Like `networking.md`, this is the project's own design. Nothing here is a claim 
 | Checking a result | Every recorded match leaves a **signed match record** that anyone can replay with the gameplay core. Statistics are worked out from published records, not kept by the master. |
 | Tournaments | **Signed files** issued by an organiser; no master involved. |
 | Accounts | Optional and undecided. Nothing above needs them: in a tournament a player is a key. |
-| Networks that block UDP | **TCP is kept as the last resort**, shown to the player as such. |
+| Networks that block UDP | **TURN over TCP** (and TLS on port 443) through coturn as the last resort, shown to the player as such. The project's own TCP relay is dropped (decided 2026-10-11). |
+| Configuration that cannot be fetched | **No cache**: online play is refused until it can be (decided 2026-10-11). |
 | Master server language | Go, with PostgreSQL. |
 | STUN / TURN | Existing implementations: a library in the game, `coturn` as the server. No protocol of our own. |
 
@@ -96,7 +97,7 @@ The master passes a certificate on as it got it; the game verifies it itself (se
 ### Rules for the master
 
 - Rate limits per address and per session on every write call.
-- The master may be down: LAN play, joining by address and tournaments keep working without it.
+- The master may be down: LAN play, joining by address and tournaments keep working without it. (Verified servers and tournaments need the configuration file, which is not the master: section 2.)
 
 ### Optional later: accounts
 
@@ -113,15 +114,15 @@ serial, issued, expires
 master: URL
 trust: root keys that may sign server certificates, revoked certificate serials
 stun: list of host:port
-turn: list of host:port (UDP), credentials come from the master
-tcp_relay: list of host:port
+turn: list of host:port with transport (UDP, TCP, TLS), credentials come from the master
 protocol: lowest and current game protocol accepted
 status: ok / maintenance, message
 flags: free-form switches
 ```
 
 - A document is used only if its signature verifies, it has not expired and its serial is not lower than the last one accepted (no replay of an old one).
-- The last good document is cached and used when the endpoint cannot be reached, **only until it expires**, and a document is issued for seven days at most. The screen then says which day's configuration is in use. (A reviewer argued for refusing instead; see the open points.)
+- **Nothing is cached.** If no current document can be fetched and verified, everything that rests on it is refused, with the reason shown: the list of games, joining by code, relayed connections, the "verified" mark of a server, tournaments. Outdated addresses or an outdated list of revoked certificates are worse than no connection. Playing on the local network and joining by address need no configuration and keep working.
+- Because of that the file must be easy to keep reachable: it is a static signed file, the bootstrap may name several URLs for it (mirrors on different hosts), and any one that verifies will do. A mirror cannot forge it; it can only serve an older one, which the expiry (seven days at most) bounds. The highest serial seen is remembered, as a number only, to refuse a step back.
 - A command-line option and a settings key point the game at another bootstrap URL and key, for a self-hosted community.
 - In the code this is one small interface (`OnlineConfig load()`), so that the source can change later without touching its users.
 
@@ -129,9 +130,9 @@ flags: free-form switches
 
 ### Library and server
 
-- In the game: **libjuice** (C, MPL-2.0, UDP only), which implements STUN, ICE connectivity checks and a TURN client. To be confirmed in phase 5 by building it for every target (Linux and Windows on x86-64 and ARM64, macOS universal, Android). If it fails a target, the fallback choice is `libnice` or `pjnath`; writing STUN ourselves is not an option.
+- In the game: **pjnath** (the NAT library of PJSIP; C; GPL-2.0-or-later, which this project's GPL-3.0 allows), which implements STUN, ICE connectivity checks and a TURN client over UDP, TCP and TLS. To be confirmed in phase 5 by building it for every target (Linux and Windows on x86-64 and ARM64, macOS universal, Android) and by a relayed connection over TCP against coturn. If it fails, the fallback is `libnice` (needs GLib). libjuice, named in an earlier version, is UDP only and so cannot reach the relay over TCP. Writing STUN or TURN ourselves is not an option.
 - On the server side: **coturn**, serving STUN and TURN on the owner's machine. TURN credentials are time-limited ones derived from a secret shared between coturn and the master (coturn's `use-auth-secret` mode), so a credential leaked from one session is useless an hour later.
-- Deployment: coturn listens on **3478 and 443**, and its range of relayed ports is set low (for instance 5000-9999). Reported, not verified by us: some mobile carriers drop UDP to high ports.
+- Deployment: coturn listens on **3478 (UDP and TCP) and 443 (TLS)**, and its range of relayed ports is set low (for instance 5000-9999). Reported, not verified by us: some mobile carriers drop UDP to high ports.
 
 ### Flow
 
@@ -158,7 +159,7 @@ Tried in this order; the first that works is used:
 
 1. **Direct UDP** (same LAN, public address, or hole punched through both routers).
 2. **TURN over UDP** through coturn.
-3. **TCP, last resort**: to the server's address if it has a reachable one, otherwise through the project's TCP relay (the existing `--relay-server`, kept for this). Chosen only when no UDP path came up within the time limit.
+3. **TURN over TCP**, then **over TLS on port 443**, through the same coturn: the client's leg to the relay is a TCP stream, the relay's leg to the game server stays UDP. Chosen only when no UDP path came up within the time limit. To a network it looks like a web connection, which is what gets through where UDP does not.
 4. No viable connection: said plainly, with what was tried.
 
 ### What the player sees
@@ -178,14 +179,11 @@ One abstraction, a **link** between a client and the server, with two services:
 - **Datagrams**: unreliable, unordered, each at most 1200 bytes.
 - **Messages**: reliable and ordered, for anything that must arrive.
 
-Two kinds of link provide it:
+There is **one kind of link**: datagrams over the path ICE chose, with messages built on top (sequence numbers, acknowledgements, resending). When the path is TURN over TCP the game still hands datagrams to the relay; only that leg rides a stream, so there a lost packet makes the following ones late instead of lost. The game needs no TCP code of its own for play.
 
-| Link | Datagrams | Messages |
-|---|---|---|
-| UDP link (direct or through TURN) | as they are | sequence numbers, acknowledgements and resending, built into the link |
-| TCP link (last resort) | written to the stream (so they arrive late rather than never) | written to the stream |
+Today's design has TCP beside UDP on a known address. A hole-punched path has no TCP beside it, which is why the reliable channel moves into the link. What goes away with it: a game joined by address on a network that blocks UDP (today it falls back to TCP). Such a player needs the relay, and so the master for its credentials.
 
-Today's design has TCP beside UDP on a known address. A hole-punched path has no TCP beside it, which is why the reliable channel moves into the link.
+The project's own relay (`--relay-server`, `CODE@relay` addresses; `networking.md`) stays until phase 5 works, and is removed then.
 
 What goes where:
 
@@ -196,7 +194,7 @@ What goes where:
 | Keepalive and delay measurement | Round start with the full state, round result |
 | | Anything a client must not miss |
 
-A new datagram never waits for an old one. Encryption stays as specified in `networking.md` (fresh keys per connection, every datagram and message authenticated); TURN and the TCP relay carry ciphertext only.
+A new datagram never waits for an old one. Encryption stays as specified in `networking.md` (fresh keys per connection, every datagram and message authenticated); TURN carries ciphertext only.
 
 Cryptography note: Ed25519 verification is new. It and, in time, the existing home-made primitives should come from **libsodium** rather than from this project's own code.
 
@@ -245,7 +243,7 @@ Cost of the change, stated plainly: the round part of `src/net` (steps, secrets,
 - A match is simulated in exactly one place: the game server.
 - Hosted from the menu, that server runs in the host's game. The host therefore can cheat in their own game; such games carry no certificate and count for nothing outside themselves.
 - Matches that count (tournaments, statistics) run on dedicated servers with a certificate and leave a signed match record (section 7).
-- Neither the master, nor TURN, nor the TCP relay ever simulates or alters a match.
+- Neither the master nor TURN ever simulates or alters a match.
 - Limits against misbehaving clients (message rate, connection attempts, bans) stay as in `networking.md`, with player keys added as something a ban can name.
 
 ## 7. Trust without the master: certificates, match records, tournaments
@@ -361,7 +359,7 @@ Each phase is usable on its own and ends with tests.
 | 2 | The link abstraction: reliable messages over UDP; today's protocol moved onto it | nothing |
 | 3 | Snapshot model replacing lockstep, with measurements of size and behaviour under loss | 2 |
 | 4 | Master server (guest sessions, lobbies, status), signed configuration, browse / create / join by code in the game | 1 |
-| 5 | libjuice + coturn: discovery, hole punching, TURN, the ladder with TCP last, connection display | 2, 4 |
+| 5 | pjnath + coturn: discovery, hole punching, TURN over UDP, TCP and TLS, the ladder, volume check, always-relay setting, connection display; the old relay removed | 2, 4 |
 | 6 | Server certificates and player keys: the tool that issues certificates, the certificate in the handshake, "verified" in the lobby, revocation through the configuration | 2 (revocation: 4) |
 | 7 | Signed match records: seed by commit and reveal, signed input statements, the record, `atomic_verify`, a tool that sums statistics from records | 3, 6 |
 | 8 | Tournaments as signed files: the format, the organiser's tool, the screen, servers admitting only listed players | 6, 7 |
@@ -374,10 +372,10 @@ Phases 6 to 8 do not depend on the master (4) or on NAT traversal (5): a tournam
 | Where | What | Note |
 |---|---|---|
 | Game | An HTTPS client | libcurl on desktop systems; on Android the platform's own through the Java side. To be settled in phase 4. |
-| Game | libjuice | Phase 5. |
+| Game | pjnath (PJSIP) | Phase 5. |
 | Game, server, tools | libsodium | Ed25519 for the configuration, certificates, records and tournament files; the existing primitives later. |
 | Master | Go toolchain, PostgreSQL | Separate program, own CI job. |
-| Owner's machine | master, PostgreSQL, coturn, the TCP relay, a domain with a certificate | |
+| Owner's machine | master, PostgreSQL, coturn, a domain with a certificate; the configuration file also on at least one other host | |
 
 ## 11. Tests
 
@@ -387,18 +385,18 @@ Phases 6 to 8 do not depend on the master (4) or on NAT traversal (5): a tournam
 - Certificates: a valid one is accepted; expired, revoked, signed by an unknown key, or naming another identity key than the one proven, each is refused (the server is then shown as ordinary).
 - Records: an honest record verifies; one with a changed result, a changed input, a changed seed or a wrong signature does not; the seed differs when any one contribution differs.
 - Tournaments: a file with a bad signature or a lower serial is refused; a server admits a listed player and refuses an unlisted key.
-- Connectivity: against a local coturn in CI, direct and relayed paths; the ladder steps down when UDP is blocked.
+- Connectivity: against a local coturn in CI, direct and relayed paths; with UDP blocked the ladder steps down to TURN over TCP and a round completes; a path that dies after 16 KB fails the volume check.
+- Configuration: with no reachable document the online screens refuse and say why; an expired one, a forged one and one with a lower serial are refused; a second URL is used when the first fails.
 - Screens: every online action reachable by scripted gamepad input alone.
 
 What automated tests cannot show, and must be tried by people: real routers and carrier-grade NAT, real loss and delay, ten players on ten connections, the owner's server under load.
 
 ## 12. Open points
 
-- **TURN over TCP instead of our own TCP relay?** coturn can take clients over TCP and TLS on port 443, which would replace the project's relay with a standard one and one service fewer. libjuice, chosen above, is UDP only, so this means another library (libnice or pjnath, both larger) or keeping the relay. To be settled at the start of phase 5 by trying the libraries.
-- **Cached configuration or none?** A reviewer's position: outdated data is worse than refusing. Kept for now, bounded to seven days, because without it a tournament on a third party's server could not be joined while the owner's site is down; the price is that a revoked certificate stays accepted for up to those seven days by a player who cannot reach the site.
 
 - Whether one datagram per snapshot is enough with ten players (phase 3 measures it).
-- Whether libjuice builds and works on every target (phase 5).
+- Whether pjnath builds on every target and how much of PJSIP has to come with it (phase 5).
+- Where the mirrors of the configuration file are hosted.
 - Region and delay hints in the lobby list need a way to measure delay to a host before joining.
 - Where the root key is kept and how certificates are renewed every 90 days without it becoming a chore.
 - Whether a dropped or delayed input can be made visible after the fact (for instance clients reporting what they sent and when), so that a dispute has evidence.

@@ -700,3 +700,15 @@ Not a discovery about the original. The user asked whether tournament servers co
 - Stated limits: a server that drops or delays a player's inputs, or leaks hidden information, is not caught by a record.
 
 Nothing of it is implemented.
+
+## 2026-10-11
+
+### Decisions: online play after an outside review
+
+Not a discovery about the original. A reviewer's comments on `online-play.md` led to (user decisions of this day marked):
+
+- Six-digit join codes from a cryptographic random source; no passwords on games made through the master; "invitation" defined as the code passed on as text; a volume check (about 64 KB each way) before a path counts as good; an always-relay setting; low TURN ports as a deployment note.
+- **User decision:** the configuration document is not cached. Without a current one, everything resting on it is refused. The file may be mirrored.
+- **User decision:** the last resort where UDP is blocked is TURN over TCP / TLS through coturn; the project's own TCP relay is removed when phase 5 works. Consequences written down: the ICE library changes from libjuice (UDP only) to pjnath, to be confirmed by building it; the link abstraction has a single kind (datagrams), which makes phase 2 smaller.
+
+Nothing of it is implemented.
