@@ -3,6 +3,7 @@
 // simulated (the server and clients take the clock as an argument), so a whole
 // round runs in well under a second.
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <functional>
 #include <map>
@@ -522,7 +523,19 @@ struct Harness {
             else c->advance(now, nullptr, nullptr);
         }
         now += 5;
+        pause();
+    }
+    // The clock here is made up (5 ms a turn) but the sockets are real. On Linux and Windows
+    // a datagram sent over the loopback interface can be read at once; on macOS it is handed
+    // over a moment later, which at full speed is many made-up milliseconds: a connection
+    // then looks as if it had seconds of delay. A short real pause per turn keeps the two
+    // clocks close enough there.
+    static void pause() {
+#ifdef __APPLE__
+        std::this_thread::sleep_for(std::chrono::microseconds(150));
+#else
         std::this_thread::yield();
+#endif
     }
     bool until(const std::function<bool()>& done, int maxMs = 20000) {
         for (int waited = 0; waited < maxMs; waited += 5) {
@@ -820,15 +833,18 @@ void testLossFromTheStart() {
     const bool joined = h.until([&] { return ann.state() == Client::State::Lobby && bob.state() == Client::State::Lobby && ann.lobby().clients.size() == 2 && bob.ready(); });
     CHECK(joined);
     CHECK(ann.udpActive() && bob.udpActive());
+    // One after the other has arrived (the server takes one chat line per 300 ms from a
+    // player, and a line held up by a lost packet could otherwise arrive on the heels of the next).
+    bool chatted = true;
     for (int i = 0; i < 5; ++i) {
         bob.sendChat("line " + std::to_string(i));
+        chatted = chatted && h.until([&] {
+            int lines = 0;
+            for (const ChatLine& line : ann.chat()) lines += !line.fromServer ? 1 : 0;
+            return lines == i + 1;
+        });
         h.spin(400);
     }
-    const bool chatted = h.until([&] {
-        int lines = 0;
-        for (const ChatLine& line : ann.chat()) lines += !line.fromServer ? 1 : 0;
-        return lines == 5;
-    });
     CHECK(chatted);
     int n = 0;
     bool order = true;

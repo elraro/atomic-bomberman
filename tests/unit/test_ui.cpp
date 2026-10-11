@@ -5,6 +5,7 @@
 #include <SDL3/SDL.h>
 
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <functional>
 #include <string>
@@ -230,7 +231,11 @@ struct Table {
         host.ui.update(now, idle);
         guest.ui.update(now, idle);
         now += 5;
+#ifdef __APPLE__
+        std::this_thread::sleep_for(std::chrono::microseconds(150));  // see the pause in test_net.cpp
+#else
         std::this_thread::yield();
+#endif
     }
     bool until(const std::function<bool()>& done, int maxMs = 20000) {
         for (int waited = 0; waited < maxMs; waited += 5) {
