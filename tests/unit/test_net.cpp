@@ -2097,6 +2097,93 @@ void testRecords() {
     CHECK(!dan.recorded() && dan.recordSerial() == 0);
 }
 
+// A carrier made of two queues: what one end sends the other receives, some of it lost.
+struct PipeEnd : Carrier {
+    std::shared_ptr<std::deque<Bytes>> out, in;
+    std::shared_ptr<bool> up;
+    std::shared_ptr<int> lossPercent;
+    std::shared_ptr<Rng> rng;
+    std::string name;
+    void send(const Bytes& packet) override {
+        if (*up && rng->below(100) >= *lossPercent) out->push_back(packet);
+    }
+    bool receive(Bytes& packet) override {
+        if (in->empty()) return false;
+        packet = std::move(in->front());
+        in->pop_front();
+        return true;
+    }
+    bool alive() const override { return *up; }
+    std::string remote() const override { return name; }
+    std::string kind() const override { return "Pipe"; }
+};
+
+// A connection over a carrier (a path somebody else made, as ICE does): the key exchange,
+// the lobby and a whole round, with a quarter of the packets lost; and its end.
+void testCarrier() {
+    Harness h;
+    CHECK(h.start("pass", 2));
+    auto a = std::make_shared<std::deque<Bytes>>(), b = std::make_shared<std::deque<Bytes>>();
+    auto up = std::make_shared<bool>(true);
+    auto loss = std::make_shared<int>(25);
+    auto rng = std::make_shared<Rng>(5);
+    auto end = [&](bool clientSide) {
+        auto e = std::make_unique<PipeEnd>();
+        e->out = clientSide ? a : b;
+        e->in = clientSide ? b : a;
+        e->up = up;
+        e->lossPercent = loss;
+        e->rng = rng;
+        e->name = clientSide ? "the server" : "203.0.113.7:4000";
+        return e;
+    };
+    CHECK(h.server.adopt(end(false)));
+    h.clients.push_back(std::make_unique<Client>());
+    Client& ann = *h.clients.back();
+    ann.setAlwaysReady(true);
+    ann.connectVia(end(true), "the server", "Ann", "pass", h.now);
+    CHECK(h.until([&] { return ann.state() == Client::State::Lobby && !ann.lobby().clients.empty(); }));
+    CHECK(ann.encrypted() && !ann.udpActive());
+    CHECK(ann.pathKind() == "Pipe");
+    bool logged = false;
+    for (const std::string& line : h.log) logged = logged || line.find("from 203.0.113.7:4000 (Pipe)") != std::string::npos;
+    CHECK(logged);
+    // An ordinary client beside it, over the server's own socket.
+    Client& bob = h.join("Bob", "pass");
+    CHECK(h.until([&] { return bob.state() == Client::State::Lobby && ann.lobby().clients.size() == 2 && bob.ready(); }));
+    CHECK(bob.pathKind() == "Direct");
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }));
+    const bool played = playToResult(h, {&ann, &bob});
+    CHECK(played);
+    if (!played) return;
+    CHECK_EQ(ann.world()->stateHash(true), h.server.world()->stateHash(true));
+    // A wrong password over a carrier is refused like any other.
+    auto c = std::make_shared<std::deque<Bytes>>(), d = std::make_shared<std::deque<Bytes>>();
+    auto second = [&](bool clientSide) {
+        auto e = end(clientSide);
+        e->out = clientSide ? c : d;
+        e->in = clientSide ? d : c;
+        return e;
+    };
+    CHECK(h.server.adopt(second(false)));
+    h.clients.push_back(std::make_unique<Client>());
+    Client& eve = *h.clients.back();
+    eve.connectVia(second(true), "the server", "Eve", "guess", h.now);
+    CHECK(h.until([&] { return eve.state() == Client::State::Failed; }));
+    CHECK(eve.error() == "Wrong password");
+    // The path dies: both ends notice.
+    *up = false;
+    CHECK(h.until([&] { return ann.state() == Client::State::Failed; }));
+    CHECK(h.until([&] { return h.server.players() == 1; }));
+    // A banned address is not adopted.
+    CHECK(h.server.kick("Bob", true));
+    auto banned = std::make_unique<PipeEnd>(*end(false));
+    banned->name = "127.0.0.1:9";
+    *up = true;
+    CHECK(!h.server.adopt(std::move(banned)));
+}
+
 // A server keeps its identity from one start to the next, and a client notices when the
 // server at an address is not the one it knows.
 void testServerIdentity() {
@@ -2295,6 +2382,7 @@ void testLanBrowser() {
 }  // namespace
 
 int main() {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"codec", testCodec},
         {"link", testLink},
@@ -2306,6 +2394,7 @@ int main() {
         {"server identity", testServerIdentity},
         {"player keys and certificate", testPlayerKeysAndCertificate},
         {"records", testRecords},
+        {"carrier", testCarrier},
         {"relay", testRelay},
         {"ready", testReady},
         {"round over udp", [] { testRound(true); }},

@@ -28,7 +28,8 @@ constexpr std::uint64_t kSilenceMs = 15000;  // the server sends something every
 }  // namespace
 
 void Client::transmit(const Bytes& packet) {
-    if (overTcp_) tcp_.send(kPacketFrame, packet);
+    if (carrier_) carrier_->send(packet);
+    else if (overTcp_) tcp_.send(kPacketFrame, packet);
     else udp_.sendTo(server_, packet);
 }
 
@@ -36,9 +37,16 @@ void Client::send(ClientMsg type, const Bytes& payload) {
     if (keyed_) link_.sendMessage(static_cast<std::uint8_t>(type), payload);
 }
 
+std::string Client::pathKind() const {
+    if (carrier_) return carrier_->kind();
+    if (viaRelay_) return "Relay (TCP)";
+    return overTcp_ ? "TCP" : "Direct";
+}
+
 void Client::fail(const std::string& why) {
     tcp_.close();
     udp_.close();
+    carrier_.reset();
     link_.reset();
     keyed_ = false;
     world_.reset();
@@ -58,6 +66,7 @@ void Client::disconnect() {
     }
     tcp_.close();
     udp_.close();
+    carrier_.reset();
     link_.reset();
     keyed_ = false;
     world_.reset();
@@ -107,6 +116,37 @@ void Client::connect(const std::string& address, const std::string& name, const 
         fail("Cannot connect to " + server_.text());
         return;
     }
+    state_ = State::Connecting;
+}
+
+// Over a path that is already there: no address to look up, no socket of our own, and no
+// falling back to TCP. The key exchange and everything after it are the same.
+void Client::connectVia(std::unique_ptr<Carrier> carrier, const std::string& label, const std::string& name, const std::string& password, std::uint64_t nowMs) {
+    disconnect();
+    clock_ = nowMs;
+    address_ = label;
+    identity_.clear();
+    identityKeyHex_.clear();
+    certificate_.clear();
+    identityKnown_ = false;
+    identityChanged_ = false;
+    name_ = name;
+    password_ = password;
+    connectAt_ = nowMs;
+    satOut_ = false;
+    keyed_ = false;
+    welcomed_ = false;
+    tcpIntro_ = false;
+    udpHeard_ = false;
+    answered_ = false;
+    keySentAt_ = 0;
+    cookie_.assign(kCookieBytes, 0);
+    viaRelay_ = false;
+    overTcp_ = false;
+    server_ = Address{};
+    randomBytes(secret_.data(), secret_.size());
+    public_ = x25519Base(secret_);
+    carrier_ = std::move(carrier);
     state_ = State::Connecting;
 }
 
@@ -512,7 +552,7 @@ void Client::handlePacket(const Bytes& packet, std::uint64_t nowMs) {
         if (!fromHex(expectedIdentity_, expected) || expected != identity) return fail("This is not the game server the master server named (another identity)");
     }
     // (Not through a relay either: its codes are new each time, so there is nothing to remember by.)
-    if (expectedIdentity_.empty() && !knownFile_.empty() && !viaRelay_ && (!server_.loopback() || identityOnLoopback_)) {
+    if (expectedIdentity_.empty() && !carrier_ && !knownFile_.empty() && !viaRelay_ && (!server_.loopback() || identityOnLoopback_)) {
         std::map<std::string, std::string> known = readKnown(knownFile_);
         const auto it = known.find(server_.text());
         if (it != known.end() && it->second != identity_) {
@@ -547,7 +587,13 @@ void Client::update(std::uint64_t nowMs) {
     clock_ = nowMs;
     const auto over = [this]() { return state_ == State::Failed || state_ == State::Idle; };
 
-    if (overTcp_) {
+    if (carrier_) {
+        Bytes data;
+        for (int n = 0; n < 256 && !over() && carrier_ && carrier_->receive(data); ++n) handlePacket(data, nowMs);
+        if (over()) return;
+        if (!carrier_->alive()) return fail(welcomed_ ? "The connection to the server was lost" : "Cannot connect to " + address_);
+        if (!keyed_ && (keySentAt_ == 0 || nowMs - keySentAt_ >= 250)) sendKey(nowMs);
+    } else if (overTcp_) {
         const bool alive = tcp_.pump();
         if (tcp_.connected() && !tcpIntro_) {
             if (viaRelay_) {
@@ -587,7 +633,7 @@ void Client::update(std::uint64_t nowMs) {
             }
         }
     }
-    if (!welcomed_ && nowMs - connectAt_ > kConnectTimeoutMs) return fail("No answer from " + server_.text());
+    if (!welcomed_ && nowMs - connectAt_ > kConnectTimeoutMs) return fail("No answer from " + (carrier_ ? address_ : server_.text()));
     if (!keyed_) {
         if (overTcp_) tcp_.pump();
         return;

@@ -42,6 +42,8 @@ struct Server::Peer {
     Link link;
     bool viaTcp = false;           // the packets travel as frames of this TCP connection (no UDP path, or a relay)
     TcpSocket socket;
+    std::unique_ptr<Carrier> carrier;  // set: the packets travel this way (a path found by ICE), not through a socket of the server's
+    std::string label;             // for such a peer: what the other end is called in the log
     Address address{};             // where its packets come from and go to
     Key clientPublic{};            // the key it opened the connection with
     Bytes keyAnswer;               // what was answered, to say again if the answer got lost
@@ -81,12 +83,33 @@ Server::Server() = default;
 Server::~Server() { stop(); }
 
 void Server::transmit(Peer& p, const Bytes& packet) {
-    if (p.viaTcp) p.socket.send(kPacketFrame, packet);
+    if (p.carrier) p.carrier->send(packet);
+    else if (p.viaTcp) p.socket.send(kPacketFrame, packet);
     else udp_.sendTo(p.address, packet);
 }
 
 void Server::send(Peer& p, ServerMsg type, const Bytes& payload) {
     if (p.keyed) p.link.sendMessage(static_cast<std::uint8_t>(type), payload);
+}
+
+// Where a peer is, for the log.
+std::string Server::where(const Peer& p) const { return p.carrier ? p.label : p.address.text(); }
+
+// A connection that comes over a path somebody else has made (ICE): from here on it is a
+// peer like any other, starting with its key exchange. False if it is not let in (the
+// address is blocked, or too many are connected).
+bool Server::adopt(std::unique_ptr<Carrier> carrier) {
+    if (!running_ || !carrier) return false;
+    const std::string remote = carrier->remote();
+    const std::string host = remote.substr(0, remote.rfind(':'));
+    if (!admit(host)) return false;
+    auto p = std::make_unique<Peer>();
+    p->host = host;
+    p->label = remote + " (" + carrier->kind() + ")";
+    p->carrier = std::move(carrier);
+    p->connectedAt = 0;  // (set by the next update: this may be called between two of them, or before the first)
+    peers_.push_back(std::move(p));
+    return true;
 }
 
 void Server::log(const std::string& line) const {
@@ -495,7 +518,7 @@ void Server::handleHello(Peer& p, const std::vector<std::uint8_t>& payload) {
         if (!equalConstantTime(expected.data(), hello.proof.data(), expected.size())) {
             const bool none = hello.proof == Key{};
             reject(p, none ? "This server needs a password" : "Wrong password");
-            log("INFO  Refused (password) from " + p.address.text());
+            log("INFO  Refused (password) from " + where(p));
             passwordFailed(p);
             return;
         }
@@ -504,7 +527,7 @@ void Server::handleHello(Peer& p, const std::vector<std::uint8_t>& payload) {
     if (hello.playerKey != Key{} && config_.verifySignature) {
         if (!config_.verifySignature(hello.playerKey, playerProofMessage(p.keys.master), hello.playerSignature)) {
             reject(p, "The player key was not proved (bad signature)");
-            log("WARN  Refused (player key not proved) from " + p.address.text());
+            log("WARN  Refused (player key not proved) from " + where(p));
             return;
         }
         if (blocked("key:" + toHex(hello.playerKey))) {
@@ -515,7 +538,7 @@ void Server::handleHello(Peer& p, const std::vector<std::uint8_t>& payload) {
     }
     if (!config_.allowedKeys.empty() && (p.playerKey == Key{} || std::find(config_.allowedKeys.begin(), config_.allowedKeys.end(), p.playerKey) == config_.allowedKeys.end())) {
         reject(p, "This match is for its listed players only");
-        log("INFO  Refused (not a listed player) from " + p.address.text());
+        log("INFO  Refused (not a listed player) from " + where(p));
         return;
     }
     // One connection for each listed player: a second one under the same key is not let in.
@@ -545,7 +568,7 @@ void Server::handleHello(Peer& p, const std::vector<std::uint8_t>& payload) {
     p.seats = {-1, -1, -1, -1};
     p.wanted = 1;
     send(p, ServerMsg::Welcome, encoded(WelcomeMsg{p.id, p.token, config_.name}));
-    log("INFO  Joined id=" + std::to_string(p.id) + " name=\"" + p.name + "\" from " + p.address.text());
+    log("INFO  Joined id=" + std::to_string(p.id) + " name=\"" + p.name + "\" from " + where(p));
     if (phase_ == Phase::Lobby) {
         rebuildSeats();
     } else {
@@ -694,7 +717,7 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
             const Key b = sha256(reinterpret_cast<const std::uint8_t*>(config_.adminPassword.data()), config_.adminPassword.size());
             if (config_.adminPassword.empty() || !equalConstantTime(a.data(), b.data(), a.size())) {
                 tell(p, "That is not the administrator password");
-                log("INFO  Refused (administrator password) from " + p.address.text());
+                log("INFO  Refused (administrator password) from " + where(p));
                 passwordFailed(p);
                 break;
             }
@@ -799,14 +822,15 @@ void Server::handleKey(Peer* viaTcp, const Address& from, const std::vector<std:
         return;
     }
     auto answer = [&](const Bytes& packet) {
-        if (viaTcp != nullptr) viaTcp->socket.send(kPacketFrame, packet), viaTcp->socket.pump();
-        else udp_.sendTo(from, packet);
+        if (viaTcp == nullptr) return void(udp_.sendTo(from, packet));
+        transmit(*viaTcp, packet);
+        if (viaTcp->viaTcp) viaTcp->socket.pump();
     };
     Peer* p = viaTcp;
     if (p == nullptr) {
         // The same key from the same place again: our answer was lost. Say it again.
         for (auto& q : peers_)
-            if (!q->viaTcp && !q->gone && q->keyed && q->clientPublic == theirs && q->address == from) {
+            if (!q->viaTcp && !q->carrier && !q->gone && q->keyed && q->clientPublic == theirs && q->address == from) {
                 udp_.sendTo(from, q->keyAnswer);
                 return;
             }
@@ -825,6 +849,8 @@ void Server::handleKey(Peer* viaTcp, const Address& from, const std::vector<std:
             return;
         }
     } else if (p->keyed) {
+        // The same key again over a path that loses packets: our answer was lost. Say it again.
+        if (p->carrier && p->clientPublic == theirs) transmit(*p, p->keyAnswer);
         return;
     }
     if (version != kProtocolVersion) {
@@ -891,7 +917,7 @@ void Server::handleDatagram(const Address& from, const std::vector<std::uint8_t>
         if (viaDiscovery) return;
         for (auto* list : {&peers_, &closing_})
             for (auto& p : *list) {
-                if (!p->keyed || p->viaTcp || p->token != session) continue;
+                if (!p->keyed || p->viaTcp || p->carrier || p->token != session) continue;
                 // A packet that opens may come from a new address (a changed NAT mapping): only the key holder can cause this.
                 if (p->link.receive(data, now_)) p->address = from;
                 return;
@@ -1471,6 +1497,7 @@ void Server::update(std::uint64_t nowMs) {
     for (std::size_t i = 0; i < peers_.size(); ++i) {
         Peer& p = *peers_[i];
         if (p.gone) continue;
+        if (p.connectedAt == 0) p.connectedAt = now_;
         if (p.viaTcp) {
             // Inside a TCP connection each frame is one packet.
             const bool alive = p.socket.pump();
@@ -1486,6 +1513,16 @@ void Server::update(std::uint64_t nowMs) {
                 }
             }
             if (!alive) p.gone = true;
+        }
+        if (p.carrier) {
+            // Over a path found by ICE: the same packets, the first of them the client's key.
+            Bytes packet;
+            for (int n = 0; n < 256 && !p.gone && p.carrier->receive(packet); ++n) {
+                if (packet.size() < 5) continue;
+                if (packet[4] == kClientKey) handleKey(&p, p.address, packet);
+                else if (p.keyed) p.link.receive(packet, now_);
+            }
+            if (!p.carrier->alive()) p.gone = true;
         }
         std::uint8_t type = 0;
         Bytes payload;
@@ -1514,7 +1551,7 @@ void Server::update(std::uint64_t nowMs) {
         peers_.erase(peers_.begin() + static_cast<std::ptrdiff_t>(i));
         leave(*p);
         // What it was last told (why it has to go, for one) is still delivered.
-        if (p->keyed && !p->link.closedByPeer() && (!p->viaTcp || p->socket.open())) {
+        if (p->keyed && !p->link.closedByPeer() && (!p->viaTcp || p->socket.open()) && (!p->carrier || p->carrier->alive())) {
             p->link.close();
             p->closeUntil = now_ + 2000;
             closing_.push_back(std::move(p));

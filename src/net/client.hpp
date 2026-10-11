@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "net/carrier.hpp"
 #include "net/link.hpp"
 #include "net/protocol.hpp"
 #include "net/record.hpp"
@@ -42,6 +43,11 @@ public:
 
     // `address` is "host" or "host:port". The name lookup may block briefly.
     void connect(const std::string& address, const std::string& name, const std::string& password, std::uint64_t nowMs);
+    // The same over a path somebody else has found (ICE: carrier.hpp). `label` is what the
+    // other end is called in messages.
+    void connectVia(std::unique_ptr<Carrier> carrier, const std::string& label, const std::string& name, const std::string& password, std::uint64_t nowMs);
+    // What kind of path the connection runs over: "Direct", "Relay", "TCP".
+    std::string pathKind() const;
     void disconnect();
     // Where the identities of servers visited are remembered ("address fingerprint" lines).
     // A server whose identity differs from the remembered one is refused; forgetServer()
@@ -106,7 +112,7 @@ public:
     const LobbyState& lobby() const { return lobby_; }
     const std::deque<ChatLine>& chat() const { return chat_; }
     // The connection runs over UDP (otherwise inside a TCP connection: no UDP path, or a relay).
-    bool udpActive() const { return keyed_ && !overTcp_; }
+    bool udpActive() const { return keyed_ && !overTcp_ && !carrier_; }
     int linkRttMs() const { return link_.rttMs(); }
     std::size_t linkUnacknowledged() const { return link_.unacknowledged(); }
     bool viaRelay() const { return viaRelay_; }
@@ -199,6 +205,7 @@ private:
     Link link_;
     UdpSocket udp_;
     TcpSocket tcp_;
+    std::unique_ptr<Carrier> carrier_;  // set: the packets go this way, not through the sockets above
     bool overTcp_ = false;     // the packets travel as frames of a TCP connection
     bool tcpIntro_ = false;    // that connection is up (and the relay has been told what is wanted)
     bool udpHeard_ = false;    // the server has answered over UDP

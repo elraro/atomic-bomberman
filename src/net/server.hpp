@@ -13,6 +13,7 @@
 
 #include "game/ai.hpp"
 #include "game/match.hpp"
+#include "net/carrier.hpp"
 #include "net/link.hpp"
 #include "net/protocol.hpp"
 #include "net/record.hpp"
@@ -80,6 +81,9 @@ public:
     // The code players give to join through the relay (empty until the relay has answered).
     const std::string& relayCode() const { return relayCode_; }
 
+    // Takes in a connection that arrives over a path made elsewhere (carrier.hpp).
+    bool adopt(std::unique_ptr<Carrier> carrier);
+
     // Network and game logic up to the given time (ms of a monotonic clock).
     void update(std::uint64_t nowMs);
 
@@ -116,6 +120,7 @@ private:
     bool admit(const std::string& host);  // may this address open one more connection?
     Key cookieFor(const Address& from, std::uint64_t period) const;
     void transmit(Peer& p, const Bytes& packet);
+    std::string where(const Peer& p) const;
     void send(Peer& p, ServerMsg type, const Bytes& payload);
     void applyInput(Peer& p, const InputMsg& m);
     void changeOption(Option option, int direction);
