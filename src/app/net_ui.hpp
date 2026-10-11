@@ -21,6 +21,7 @@
 #include "online/announcer.hpp"
 #include "online/bootstrap.hpp"
 #include "online/certificate.hpp"
+#include "online/record_check.hpp"
 #endif
 #include "rendering/renderer.hpp"
 #include "rendering/sprites.hpp"
@@ -82,6 +83,12 @@ public:
     const std::string& verifiedOperator() const { return verifiedOperator_; }
     const std::string& certificateProblem() const { return certificateProblem_; }
     std::string playerKeyHex() const;  // this player's lasting key, as others see it
+    // The program's release number, which a match record names (a record can only be judged
+    // by the release that made it).
+    void setGameVersion(const std::string& version) { gameVersion_ = version; }
+    // The records received so far that held / did not hold (for automated checks).
+    int recordsHeld() const { return recordsHeld_; }
+    int recordsFailed() const { return recordsFailed_; }
 
     // The SDL keycode a gamepad's key is passed to key() as. (Start has a key of its own,
     // the "menu" key of a keyboard.)
@@ -108,6 +115,7 @@ private:
     void askJoin(const std::string& lobbyId, const std::string& code);
     void updateOnline(std::uint64_t nowMs);
     void judgeCertificate();
+    void takeRecord(std::uint64_t nowMs);
     void showError(const std::string& why);
     void drawBrowse(Renderer& r, SpriteBank& bank, int frame);
     void drawCode(Renderer& r, SpriteBank& bank, int frame);
@@ -183,6 +191,9 @@ private:
     bool hostOnline_ = false;             // the hosted game is announced to the master
     std::string onlineNote_;
     std::string verifiedOperator_, certificateProblem_;
+    std::string gameVersion_;
+    std::uint64_t recordSeen_ = 0;        // the last record of the client that was looked at
+    int recordsHeld_ = 0, recordsFailed_ = 0;
     std::string judgedCertificate_;       // the certificate those two were worked out for...
     long long judgedSerial_ = -1;         // ...and the configuration it was judged by
 #ifdef AB_ONLINE

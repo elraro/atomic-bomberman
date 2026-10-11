@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <cstdlib>
 #include <ctime>
 
@@ -70,6 +72,42 @@ NetUi::NetUi(Settings& settings, std::string gameDir, std::string userSchemesDir
             return online::sign(seed, std::string(message.begin(), message.end()));
         });
     }
+#endif
+}
+
+// A recorded round's record has arrived: held against what this game knows of the round,
+// played again, and kept. A record that does not hold is said so in the chat.
+void NetUi::takeRecord(std::uint64_t nowMs) {
+#ifdef AB_ONLINE
+    if (client_.recordSerial() == recordSeen_) return;
+    recordSeen_ = client_.recordSerial();
+    const std::vector<online::PublicKey> roots = online_.haveConfig() ? online_.config().roots : std::vector<online::PublicKey>{};
+    const std::vector<long long> revoked = online_.haveConfig() ? online_.config().revoked : std::vector<long long>{};
+    const online::RecordReport report = online::examineRecord(client_.lastRecord(), gameVersion_, roots, revoked, &client_);
+    if (!report.holds) {
+        ++recordsFailed_;
+        client_.note("The record of that round does not hold: " + (report.problems.empty() ? std::string("unreadable") : report.problems.front()), nowMs);
+        return;
+    }
+    ++recordsHeld_;
+    if (userSchemesDir_.empty()) return;
+    // Kept beside the settings, the newest two hundred.
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::path(userSchemesDir_) / ".." / "records";
+    fs::create_directories(dir, ec);
+    char stamp[32];
+    const std::time_t at = static_cast<std::time_t>(report.record.startedUnix);
+    std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", std::gmtime(&at));
+    std::ofstream out(dir / (std::string(stamp) + "-round" + std::to_string(report.record.start.roundId) + ".abrec"), std::ios::binary);
+    out << client_.lastRecord();
+    std::vector<fs::path> kept;
+    for (const auto& entry : fs::directory_iterator(dir, ec))
+        if (entry.path().extension() == ".abrec") kept.push_back(entry.path());
+    std::sort(kept.begin(), kept.end());
+    for (std::size_t i = 0; i + 200 < kept.size(); ++i) fs::remove(kept[i], ec);
+#else
+    (void)nowMs;
 #endif
 }
 
@@ -831,6 +869,7 @@ void NetUi::update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxL
     updateOnline(nowMs);
     if (mode_ != Mode::Connecting && mode_ != Mode::Session) return;
     judgeCertificate();
+    takeRecord(nowMs);
 
     client_.update(nowMs);
     if (client_.state() == State::Round) {

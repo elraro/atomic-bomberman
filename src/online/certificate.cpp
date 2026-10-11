@@ -48,7 +48,7 @@ bool readCertificate(const std::string& envelope, const std::vector<PublicKey>& 
     }
     std::string proven = provenIdentityHex;
     for (char& ch : proven) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    if (proven != c.identityKey) {
+    if (!proven.empty() && proven != c.identityKey) {
         error = "the certificate was made out to another server";
         return false;
     }

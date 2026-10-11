@@ -2,7 +2,7 @@
 
 What the owner of an online service for the game has to set up, and what a group that wants its own has to do. The design is in [`../specifications/online-play.md`](../specifications/online-play.md); the master server's own notes are in [`../../master/README.md`](../../master/README.md).
 
-State of things: this covers what exists (the master server, the signed configuration, games found by list or by code, server certificates and player keys). Reaching players behind routers without forwarded ports (STUN / TURN, phase 5), match records and tournaments are not built yet; where a step below prepares for them it says so.
+State of things: this covers what exists (the master server, the signed configuration, games found by list or by code, server certificates, player keys, match records). Reaching players behind routers without forwarded ports (STUN / TURN, phase 5) and tournaments are not built yet; where a step below prepares for them it says so.
 
 ## The parts
 
@@ -119,9 +119,22 @@ To take a certificate back before it runs out, add its serial to `trust.revoked`
 
 A game hosted from the menu never has a certificate: its host could alter their own game, and nobody answers for it.
 
-## 7. Checking it
+## 7. Match records
 
-`tests/integration/online.sh BUILD_DIR master/bin` runs all of the above on one machine with made-up keys: master over TLS, signed configuration, two game servers (one with a certificate), clients that find them by code and in the list and play, and the refusals (wrong code, configuration signed by another key, master with another key than the pinned one, a certificate used by another server, a revoked certificate). The CI job `master` runs it on every change.
+A dedicated server keeps a signed record of every round in `records/` in its per-user folder (`--records-dir DIR` for another place): about 6 KB for a short round. Its players are handed the same record and check it themselves.
+
+```sh
+atomic_verify --root "$(cat root.pub)" records/*.abrec            # does each hold?
+atomic_verify --root "$(cat root.pub)" --stats records/*.abrec    # and who won what
+```
+
+`atomic_verify` plays each round again from its seed and inputs and compares hashes and result, checks the seed's shares and the players' signed input logs, and says whose certificate vouches for the server that signed. With `--root`, only records from servers with a certificate that counts go into the statistics. It must be the same release of the game as the server that made the records.
+
+Publishing a tournament's records lets anybody check them; nothing has to be believed on the organiser's word.
+
+## 8. Checking it
+
+`tests/integration/online.sh BUILD_DIR master/bin` runs all of the above on one machine with made-up keys: master over TLS, signed configuration, two game servers (one with a certificate), clients that find them by code and in the list and play, and the refusals (wrong code, configuration signed by another key, master with another key than the pinned one, a certificate used by another server, a revoked certificate), and the match records: handed to the players, verified with `atomic_verify`, a changed one found out. The CI job `master` runs it on every change.
 
 ## What has not been done
 

@@ -827,6 +827,7 @@ int runGame(int argc, char** argv, bool& again) {
         netHooks.settingsChanged = [&]() { saveSettings(); };
         ab::NetUi net(cfg, opt.gameDir, userSchemesDir, netHooks);
         net.setOnlineConfig(opt.onlineConfig, opt.onlineKey);
+        net.setGameVersion(AB_VERSION);
         // What the original resets once per match (0x421793): scores, kills and, with
         // "random start", the start positions: 200 swaps of two of the ten.
         auto newMatch = [&]() {

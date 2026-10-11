@@ -1809,6 +1809,244 @@ void testPlayerKeysAndCertificate() {
     CHECK(dan.certificate().empty());
 }
 
+// Recorded rounds: the seed is nobody's choice, every player's inputs are in their own signed
+// log, and the record plays again to the same result. Whatever is changed in it shows.
+void testRecords() {
+    // The pieces by themselves.
+    {
+        Key r1{}, r2{}, r3{};
+        r1.fill(1), r2.fill(2), r3.fill(3);
+        std::vector<SeedShare> shares = {{kServerSender, commitOf(r1), r1, true}, {4, commitOf(r2), r2, true}, {2, commitOf(r3), r3, true}};
+        const std::uint32_t seed = seedOf(7, shares);
+        CHECK(seed != 0);
+        // The order they are listed in does not matter; any one number, or the round, does.
+        std::vector<SeedShare> swapped = {shares[2], shares[0], shares[1]};
+        CHECK_EQ(seedOf(7, swapped), seed);
+        CHECK(recordIdOf(7, swapped) == recordIdOf(7, shares));
+        for (std::size_t i = 0; i < shares.size(); ++i) {
+            std::vector<SeedShare> other = shares;
+            other[i].reveal[5] ^= 1;
+            CHECK(seedOf(7, other) != seed);
+            other = shares;
+            other[i].commit[5] ^= 1;
+            CHECK(recordIdOf(7, other) != recordIdOf(7, shares));
+        }
+        CHECK(seedOf(8, shares) != seed);
+        // A number that was promised and never shown has no part in it.
+        std::vector<SeedShare> silent = shares;
+        silent[1].revealed = false;
+        CHECK(seedOf(7, silent) != seed);
+        silent[1].reveal.fill(9);
+        CHECK_EQ(seedOf(7, silent), seedOf(7, {shares[0], shares[2]}));
+        CHECK(commitOf(r1) != commitOf(r2) && commitOf(r1) != r1);
+        // The running hash of a log: every value and the order count.
+        const std::vector<InputTuple> log = {{1, 0, 0, 0}, {2, 0, 0, 0}, {1, 0, 0, 0}};
+        CHECK(logChain(log, 0) == Key{} && logChain(log, 1) != logChain(log, 2) && logChain(log, 3) != logChain(log, 2));
+        CHECK(logChain({log[1], log[0]}, 2) != logChain(log, 2));
+        CHECK(logStatement(r1, 2, logChain(log, 2)) != logStatement(r2, 2, logChain(log, 2)));
+        CHECK(logStatement(r1, 2, logChain(log, 2)) != logStatement(r1, 3, logChain(log, 2)));
+    }
+    // Inputs against a log: a walk forward through it, values may be passed over, never invented or gone back to.
+    {
+        MatchRecord r;
+        r.seats[2] = {SeatKind::Human, 5, 0};
+        r.seats[6] = {SeatKind::Human, 5, 1};
+        PlayerLog log;
+        log.client = 5;
+        log.values = {{1, 0, 0, 0}, {1, 8, 0, 0}, {4, 8, 0, 0}, {0, 0, 0, 0}, {2, 0, 0, 0}};
+        log.signedCount = 4;
+        auto steps = [&](const std::vector<std::pair<int, int>>& applied) {
+            r.inputs.clear();
+            r.computer.clear();
+            for (const auto& [a, b] : applied) {
+                StepInputs in{};
+                in[2] = static_cast<std::uint8_t>(a);
+                in[6] = static_cast<std::uint8_t>(b);
+                in[0] = 63;  // somebody else's seat: none of this client's business
+                r.inputs.push_back(in);
+                r.computer.push_back(0);
+            }
+        };
+        std::size_t uncovered = 9;
+        steps({{0, 0}, {0, 0}, {1, 0}, {1, 0}, {1, 8}, {4, 8}, {4, 8}, {0, 0}});
+        CHECK(inputsFollowLog(r, log, &uncovered) && uncovered == 0);
+        steps({{0, 0}, {4, 8}, {4, 8}, {2, 0}});  // two values passed over; the last is beyond the signed part
+        CHECK(inputsFollowLog(r, log, &uncovered) && uncovered == 1);
+        steps({{1, 0}, {4, 8}, {1, 8}});          // back to an earlier value
+        CHECK(!inputsFollowLog(r, log));
+        steps({{1, 0}, {16, 0}});                 // a bomb the player never laid
+        CHECK(!inputsFollowLog(r, log));
+        steps({{0, 8}});                          // never held in that combination
+        CHECK(!inputsFollowLog(r, log));
+        // A seat the computer played for a while is not held against the player.
+        steps({{1, 0}, {16, 0}, {16, 0}, {1, 8}});
+        CHECK(!inputsFollowLog(r, log));
+        r.computer[1] = r.computer[2] = 1u << 2;  // the computer had the first seat in those two steps
+        CHECK(inputsFollowLog(r, log));
+        steps({{1, 0}, {16, 4}, {1, 8}});
+        r.computer[1] = 1u << 2;                  // ...but the player's other seat is still held to the log
+        CHECK(!inputsFollowLog(r, log));
+    }
+
+    // A server that records, two players with keys and a computer player.
+    Harness h;
+    ServerConfig config;
+    config.port = 0;
+    config.discoverable = false;
+    config.seed = 99;
+    config.settings.computers = 1;
+    config.settings.winsNeeded = 1;
+    config.settings.enclosementDepth = 3;
+    config.settings.playTime = 60;
+    config.gameVersion = "test-version";
+    config.certificate = "a certificate, as it is";
+    const VerifyFn verify = [](const Key& key, const Bytes& message, const SignatureBytes& signature) { return standInSign(key, message) == signature; };
+    config.verifySignature = verify;
+    std::vector<std::string> documents;
+    std::vector<MatchRecord> records;
+    config.signRecord = [](const Bytes& bytes) { return "signed:" + std::string(bytes.begin(), bytes.end()); };
+    config.recordSink = [&](const std::string& document, const MatchRecord& record) {
+        documents.push_back(document);
+        records.push_back(record);
+    };
+    config.log = [&h](const std::string& line) { h.log.push_back(line); };
+    CHECK(h.server.start(config));
+    auto withKey = [&](const std::string& name, std::uint8_t fill) -> Client& {
+        for (int waited = 0; waited < 1000 && h.connecting(); waited += 5) h.turn();
+        h.clients.push_back(std::make_unique<Client>());
+        Client& c = *h.clients.back();
+        c.setAlwaysReady(true);
+        Key key{};
+        key.fill(fill);
+        c.setPlayerKey(key, [key](const Bytes& message) { return standInSign(key, message); });
+        c.connect("127.0.0.1:" + std::to_string(h.server.port()), name, "", h.now);
+        return c;
+    };
+    Client& ann = withKey("Ann", 0x11);
+    Client& bob = withKey("Bob", 0x22);
+    CHECK(h.until([&] { return ann.lobby().clients.size() == 2 && bob.state() == Client::State::Lobby && bob.ready(); }));
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }));
+    CHECK(ann.recorded() && bob.recorded());
+    CHECK(ann.roundStart().seed == 0);  // the seed is not told
+    // Both walk about and lay bombs, each in their own way.
+    for (int i = 0; i < 400 && ann.state() == Client::State::Round; ++i) {
+        PlayerInput a, b;
+        a.dir[static_cast<std::size_t>((i / 7) % 4)] = true;
+        a.button1 = i % 23 == 0;
+        b.dir[static_cast<std::size_t>((i / 11 + 1) % 4)] = true;
+        b.button2 = i % 31 == 0;
+        ann.setInput(a);
+        bob.setInput(b);
+        h.spin(50);
+    }
+    ann.setInput({});
+    bob.setInput({});
+    CHECK(playToResult(h, {&ann, &bob}));
+    CHECK(h.until([&] { return documents.size() == 1 && ann.recordSerial() == 1 && bob.recordSerial() == 1; }, 5000));
+    if (records.empty()) return;
+    const MatchRecord& made = records[0];
+    // Everybody in the round got the record as the server signed it.
+    CHECK(ann.lastRecord() == documents[0] && bob.lastRecord() == documents[0]);
+    // It survives being written down and read again.
+    MatchRecord record;
+    CHECK(documents[0].rfind("signed:", 0) == 0);
+    const Bytes bytes(documents[0].begin() + 7, documents[0].end());
+    CHECK(decodeRecord(bytes, record));
+    CHECK(encodeRecord(record) == bytes);
+    CHECK(record.gameVersion == "test-version" && record.certificate == config.certificate && record.inputs.size() == made.inputs.size());
+    for (std::size_t cut = 0; cut < bytes.size(); cut += 97) CHECK(!decodeRecord(Bytes(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(cut)), record));
+    CHECK(decodeRecord(bytes, record));
+
+    // The seed: three shares (the server's and both players'), all shown, and each player
+    // finds the number they gave and the promises they were shown.
+    CHECK_EQ(record.shares.size(), 3u);
+    for (const SeedShare& s : record.shares) CHECK(s.revealed && commitOf(s.reveal) == s.commit);
+    CHECK_EQ(record.start.seed, seedOf(record.start.roundId, record.shares));
+    CHECK(ann.roundStart().recordId == recordIdOf(record.start.roundId, record.shares));
+    for (Client* c : {&ann, &bob}) {
+        bool own = false;
+        for (const SeedShare& s : record.shares) own = own || (s.client == c->id() && s.reveal == c->ownSeedReveal());
+        CHECK(own);
+        CHECK_EQ(c->seenCommits().size(), 3u);
+        for (const auto& [client, commit] : c->seenCommits()) {
+            bool there = false;
+            for (const SeedShare& s : record.shares) there = there || (s.client == client && s.commit == commit);
+            CHECK(there);
+        }
+    }
+    // The logs: what each player kept is what the record holds, signed to the end.
+    CHECK_EQ(record.players.size(), 2u);
+    for (const PlayerLog& p : record.players) {
+        const Client& c = p.client == ann.id() ? ann : bob;
+        CHECK(p.haveStatement && p.signedCount == p.values.size() && p.values == c.ownLog() && p.values.size() > 20);
+        std::size_t uncovered = 9;
+        CHECK(inputsFollowLog(record, p, &uncovered) && uncovered == 0);
+    }
+    // Played again it is the same round.
+    RecordVerdict verdict = checkRecord(record, "test-version", verify);
+    for (const std::string& p : verdict.problems) std::printf("     problem: %s\n", p.c_str());
+    CHECK(verdict.ok && verdict.problems.empty());
+    CHECK(record.inputs.size() > 100 && record.hashes.size() == record.inputs.size() / 20);
+    CHECK(!checkRecord(record, "another-version", verify).ok);
+
+    // Whatever is changed shows.
+    auto broken = [&](const std::function<void(MatchRecord&)>& change, const std::string& expected) {
+        MatchRecord altered = record;
+        change(altered);
+        const RecordVerdict v = checkRecord(altered, "test-version", verify);
+        bool said = false;
+        for (const std::string& p : v.problems) said = said || p.find(expected) != std::string::npos;
+        CHECK(!v.ok);
+        if (!said) {
+            ++g_failures;
+            std::printf("  FAIL expected a problem with \"%s\"; got:", expected.c_str());
+            for (const std::string& p : v.problems) std::printf(" [%s]", p.c_str());
+            std::printf("\n");
+        }
+    };
+    broken([](MatchRecord& r) { r.end.winner = r.end.winner == 0 ? 1 : 0; }, "the winner is");
+    broken([](MatchRecord& r) { r.end.score.kills[0] += 1; }, "score");
+    broken([](MatchRecord& r) { r.start.seed ^= 1; }, "seed is not the one");
+    broken([](MatchRecord& r) { r.shares[1].reveal[0] ^= 1; }, "does not fit what was promised");
+    broken([](MatchRecord& r) { r.shares.erase(r.shares.begin()); }, "server's share");
+    broken([](MatchRecord& r) { r.finalHash ^= 1; }, "another state");
+    broken([](MatchRecord& r) { r.inputs.pop_back(); }, "steps");
+    // An input changed in the middle: the round goes another way, and it is not what the player logged.
+    const int annSeat = ann.seat();
+    broken([&](MatchRecord& r) {
+        for (std::size_t i = 40; i < 60; ++i) r.inputs[i][static_cast<std::size_t>(annSeat)] ^= 16;
+    }, "not the recorded one");
+    broken([&](MatchRecord& r) {
+        for (std::size_t i = 40; i < 60; ++i) r.inputs[i][static_cast<std::size_t>(annSeat)] = 32 | 16 | 1;
+    }, "not the ones in their own log");
+    // A log with another value in it: the signature no longer fits.
+    broken([](MatchRecord& r) { r.players[0].values[3][0] ^= 1; }, "signature on the inputs");
+    broken([](MatchRecord& r) { r.players[1].signature[9] ^= 1; }, "signature on the inputs");
+    // A computer player's inputs are held to nothing but the replay.
+    int computerSeat = -1;
+    for (int s = 0; s < kMaxPlayers; ++s)
+        if (record.seats[static_cast<std::size_t>(s)].kind == SeatKind::Computer) computerSeat = s;
+    CHECK(computerSeat >= 0);
+    broken([&](MatchRecord& r) {
+        for (std::size_t i = 60; i + 25 < r.inputs.size(); ++i) r.inputs[i][static_cast<std::size_t>(computerSeat)] ^= 15;  // every direction turned round
+    }, "not the recorded one");
+
+    // The next round has a seed of its own and a record of its own.
+    ann.sendContinue();
+    bob.sendContinue();
+    CHECK(h.until([&] { return ann.state() == Client::State::Lobby || (ann.state() == Client::State::Round && ann.roundId() == record.start.roundId + 1); }));
+
+    // A server without a signing key records nothing, and its rounds start as before.
+    Harness plain;
+    CHECK(plain.start("", 2));
+    Client& dan = plain.join("Dan");
+    CHECK(plain.until([&] { return dan.state() == Client::State::Lobby && !dan.lobby().clients.empty(); }));
+    dan.sendStart();
+    CHECK(plain.until([&] { return dan.state() == Client::State::Round; }));
+    CHECK(!dan.recorded() && dan.recordSerial() == 0);
+}
+
 // A server keeps its identity from one start to the next, and a client notices when the
 // server at an address is not the one it knows.
 void testServerIdentity() {
@@ -2017,6 +2255,7 @@ int main() {
         {"bans and limits", testBansAndLimits},
         {"server identity", testServerIdentity},
         {"player keys and certificate", testPlayerKeysAndCertificate},
+        {"records", testRecords},
         {"relay", testRelay},
         {"ready", testReady},
         {"round over udp", [] { testRound(true); }},

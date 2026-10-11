@@ -432,6 +432,54 @@ void encode(ByteWriter& w, const RoundStartMsg& m) {
     w.text(m.stageName);
     w.u8(static_cast<std::uint8_t>(m.stage));
     w.u8(static_cast<std::uint8_t>(m.stages));
+    w.flag(m.recorded);
+    for (std::uint8_t b : m.recordId) w.u8(b);
+}
+
+void encode(ByteWriter& w, const SeedCommitsMsg& m) {
+    w.u32(m.roundId);
+    w.u8(static_cast<std::uint8_t>(m.commits.size()));
+    for (const auto& [client, commit] : m.commits) {
+        w.u8(client);
+        for (std::uint8_t b : commit) w.u8(b);
+    }
+}
+
+bool decode(ByteReader& r, SeedCommitsMsg& m) {
+    m.roundId = r.u32();
+    const int n = r.u8();
+    m.commits.clear();
+    for (int i = 0; i < n && r.ok(); ++i) {
+        std::pair<std::uint8_t, Key> c;
+        c.first = r.u8();
+        for (std::uint8_t& b : c.second) b = r.u8();
+        m.commits.push_back(c);
+    }
+    return r.ok();
+}
+
+void encode(ByteWriter& w, const InputLogMsg& m) {
+    w.u32(m.roundId);
+    w.u32(m.firstIndex);
+    w.u16(static_cast<std::uint16_t>(m.values.size()));
+    for (const auto& v : m.values)
+        for (std::uint8_t b : v) w.u8(b);
+    w.u32(m.signedCount);
+    for (std::uint8_t b : m.signature) w.u8(b);
+    w.flag(m.final);
+}
+
+bool decode(ByteReader& r, InputLogMsg& m) {
+    m.roundId = r.u32();
+    m.firstIndex = r.u32();
+    const int n = r.u16();
+    m.values.assign(static_cast<std::size_t>(n), {});
+    for (auto& v : m.values)
+        for (std::uint8_t& b : v) b = r.u8() & 0x3f;
+    m.signedCount = r.u32();
+    for (std::uint8_t& b : m.signature) b = r.u8();
+    m.final = r.flag();
+    return r.ok();
 }
 
 bool decode(ByteReader& r, RoundStartMsg& m) {
@@ -450,6 +498,8 @@ bool decode(ByteReader& r, RoundStartMsg& m) {
     m.stageName = r.text(64);
     m.stage = r.u8();
     m.stages = r.u8();
+    m.recorded = r.flag();
+    for (std::uint8_t& b : m.recordId) b = r.u8();
     return r.ok();
 }
 

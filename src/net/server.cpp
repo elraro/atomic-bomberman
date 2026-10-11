@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <ctime>
 
 #include <filesystem>
 #include <fstream>
@@ -25,6 +26,9 @@ constexpr std::uint64_t kKickBlockMs = 5 * 60 * 1000;       // a kicked player's
 constexpr std::size_t kConnectsPerTenSeconds = 20;          // more from one address: blocked for a minute
 constexpr std::size_t kPasswordTriesPerMinute = 5;          // more wrong passwords: blocked for five minutes
 constexpr std::size_t kStatesKept = 64;                     // differences are made from states up to this many steps old
+constexpr std::uint64_t kSeedStageMs = 1500;                // for the promises, and again for the numbers
+constexpr std::uint64_t kRecordWaitMs = 1200;               // for the players' last statements, before the record is sealed
+constexpr std::uint32_t kRecordHashEvery = 20;
 constexpr int kFramesPerSecond = 400;                       // a client sends about 40
 
 // "a.b.c.d" or "[x::y]" without the port: what bans and limits go by.
@@ -198,6 +202,8 @@ void Server::stop() {
         }
     peers_.clear();
     closing_.clear();
+    seeding_ = Seeding{};
+    recordPending_ = false;
     mapper_.stop();
     relayControl_.close();
     adopting_.clear();
@@ -691,6 +697,43 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
             break;
         }
         case ClientMsg::Continue: p.wantsContinue = true; break;
+        case ClientMsg::SeedCommit: {
+            const std::uint32_t round = r.u32();
+            Key commit{};
+            for (std::uint8_t& b : commit) b = r.u8();
+            if (!r.ok() || !seeding_.active || seeding_.stage != 1 || round != seeding_.roundId) break;
+            if (std::find(seeding_.asked.begin(), seeding_.asked.end(), p.id) == seeding_.asked.end()) break;
+            bool had = false;
+            for (const SeedShare& s : seeding_.shares) had = had || s.client == p.id;
+            if (!had) seeding_.shares.push_back({p.id, commit, {}, false});
+            break;
+        }
+        case ClientMsg::SeedReveal: {
+            const std::uint32_t round = r.u32();
+            Key reveal{};
+            for (std::uint8_t& b : reveal) b = r.u8();
+            if (!r.ok() || !seeding_.active || seeding_.stage != 2 || round != seeding_.roundId) break;
+            for (SeedShare& s : seeding_.shares)
+                if (s.client == p.id && !s.revealed && commitOf(reveal) == s.commit) s.reveal = reveal, s.revealed = true;  // a number that does not fit the promise is no number
+            break;
+        }
+        case ClientMsg::InputLog: {
+            InputLogMsg m;
+            if (!decode(r, m) || m.roundId != roundId_ || phase_ == Phase::Lobby) break;
+            const auto it = logs_.find(p.id);
+            if (it == logs_.end()) break;  // had no seat when the round began
+            PlayerLog& log = it->second;
+            // In order, as the link delivers them; anything else is dropped (and the record will show the gap).
+            if (m.firstIndex != log.values.size() || log.values.size() + m.values.size() > 200000) break;
+            log.values.insert(log.values.end(), m.values.begin(), m.values.end());
+            if (m.signedCount <= log.values.size()) {
+                log.signedCount = m.signedCount;
+                log.signature = m.signature;
+                log.haveStatement = true;
+            }
+            if (m.final) logFinal_[p.id] = true;
+            break;
+        }
         case ClientMsg::Pong: {
             const std::uint32_t sent = r.u32();
             if (!r.ok()) break;
@@ -947,6 +990,7 @@ void Server::pumpRelay() {
 }
 
 std::string Server::startMatch() {
+    if (seeding_.active) return {};  // a round is already being set up
     // Everybody who will play has to have said they are ready. The administrator says it by starting.
     std::string waiting;
     const Peer* a = admin();
@@ -1034,11 +1078,79 @@ std::string Server::startMatch() {
     return {};
 }
 
+// A round begins. If it is to be recorded, its seed is first agreed on: the server and
+// every player promise a random number, then show it (stepSeeding() goes on from here).
 void Server::startRound() {
+    sealRecord();  // the round before, if its record is still open
+    if (!config_.signRecord) {
+        beginRound((static_cast<std::uint32_t>(rng_.next()) << 16) ^ static_cast<std::uint32_t>(rng_.next()), {});
+        return;
+    }
+    seeding_ = Seeding{};
+    seeding_.active = true;
+    seeding_.stage = 1;
+    seeding_.deadline = now_ + kSeedStageMs;
+    seeding_.roundId = roundId_ + 1;
+    randomBytes(seeding_.serverReveal.data(), seeding_.serverReveal.size());
+    seeding_.shares.push_back({kServerSender, commitOf(seeding_.serverReveal), {}, false});
+    ByteWriter w;
+    w.u32(seeding_.roundId);
+    for (auto& p : peers_)
+        if (p->joined && !p->gone && p->playing()) {
+            seeding_.asked.push_back(p->id);
+            send(*p, ServerMsg::SeedAsk, w.data());
+        }
+    if (seeding_.asked.empty()) stepSeeding();  // nobody to wait for
+}
+
+void Server::stepSeeding() {
+    auto present = [&](std::uint8_t id) { return peerById(id) != nullptr; };
+    if (seeding_.stage == 1) {
+        bool all = true;
+        for (std::uint8_t id : seeding_.asked) {
+            bool had = false;
+            for (const SeedShare& s : seeding_.shares) had = had || s.client == id;
+            all = all && (had || !present(id));
+        }
+        if (!all && now_ < seeding_.deadline) return;
+        // Everybody's promise is told to everybody (so nobody's can be changed afterwards), the server's among them.
+        SeedCommitsMsg m;
+        m.roundId = seeding_.roundId;
+        for (const SeedShare& s : seeding_.shares) m.commits.emplace_back(s.client, s.commit);
+        const Bytes bytes = encoded(m);
+        for (const SeedShare& s : seeding_.shares)
+            if (Peer* p = s.client != kServerSender ? peerById(s.client) : nullptr) send(*p, ServerMsg::SeedCommits, bytes);
+        seeding_.stage = 2;
+        seeding_.deadline = now_ + kSeedStageMs;
+    }
+    bool all = true;
+    for (const SeedShare& s : seeding_.shares)
+        if (s.client != kServerSender) all = all && (s.revealed || !present(s.client));
+    if (!all && now_ < seeding_.deadline) return;
+    // The server's own number is shown only in the record: until the round is over the seed stays its secret.
+    bool anyone = false;
+    for (auto& p : peers_) anyone = anyone || (p->joined && !p->gone && p->playing());
+    if (!anyone) {
+        // Everybody left while the round was being set up: there is no round.
+        seeding_ = Seeding{};
+        if (phase_ != Phase::Lobby) toLobby();
+        return;
+    }
+    seeding_.shares[0].reveal = seeding_.serverReveal;
+    seeding_.shares[0].revealed = true;
+    const std::vector<SeedShare> shares = seeding_.shares;
+    const std::uint32_t seed = seedOf(seeding_.roundId, shares);
+    seeding_ = Seeding{};
+    beginRound(seed, shares);
+}
+
+void Server::beginRound(std::uint32_t roundSeed, const std::vector<SeedShare>& shares) {
     ++roundId_;
     RoundStartMsg start;
     start.roundId = roundId_;
-    start.seed = (static_cast<std::uint32_t>(rng_.next()) << 16) ^ static_cast<std::uint32_t>(rng_.next());
+    start.seed = roundSeed;
+    start.recorded = !shares.empty();
+    if (start.recorded) start.recordId = recordIdOf(roundId_, shares);
     start.values = values_.entries();
     start.winsNeeded = settings_.winsNeeded;
     start.score = score_;
@@ -1094,6 +1206,32 @@ void Server::startRound() {
     states_.clear();
     stepEvents_.clear();
     states_.push_back({0, world_->snapshotFields()});
+    // What the record of this round starts from.
+    roundShares_ = shares;
+    recordStart_ = start;
+    recordStart_.seed = seed;
+    recordStartedUnix_ = static_cast<std::uint64_t>(std::time(nullptr));
+    logs_.clear();
+    logFinal_.clear();
+    computerMask_.clear();
+    recordHashes_.clear();
+    recordPending_ = false;
+    for (int s = 0; s < kMaxPlayers; ++s) {
+        RecordSeat& seat = recordSeats_[static_cast<std::size_t>(s)];
+        seat = RecordSeat{};
+        seat.kind = roundKind_[static_cast<std::size_t>(s)];
+        int local = 0;
+        if (const Peer* p = seat.kind == SeatKind::Human ? peerAtSeat(s, &local) : nullptr) {
+            seat.client = p->id;
+            seat.local = static_cast<std::uint8_t>(local);
+            PlayerLog& log = logs_[p->id];
+            log.client = p->id;
+            log.name = p->name;
+            log.playerKey = p->playerKey;
+        } else if (seat.kind == SeatKind::Human) {
+            seat.kind = SeatKind::Computer;  // nobody sits there any more
+        }
+    }
     decided_ = false;
     winner_ = -1;
     afterSteps_ = 0;
@@ -1135,17 +1273,21 @@ void Server::stepRound() {
         }
         StepInputs bytes{};
         std::array<PlayerInput, kMaxPlayers> input{};
+        std::uint16_t computer = 0;  // the seats the computer plays in this step (for the record)
         for (int s = 0; s < kMaxPlayers; ++s) {
             const auto i = static_cast<std::size_t>(s);
             if (!world_->player(s).present) continue;
             int local = 0;
             const Peer* human = roundKind_[i] == SeatKind::Human ? peerAtSeat(s, &local) : nullptr;
             if (human != nullptr && human->out) human = nullptr;  // back in the lobby: the computer plays the seat
+            if (human == nullptr) computer = static_cast<std::uint16_t>(computer | (1u << s));
             bytes[i] = human != nullptr ? human->input[static_cast<std::size_t>(local)] : packInput(ai_[i].decide(*world_, s, kStepMs));
             input[i] = unpackInput(bytes[i]);
         }
         world_->tick(kStepMs, input);
         history_.push_back(bytes);
+        computerMask_.push_back(computer);
+        if (!roundShares_.empty() && history_.size() % kRecordHashEvery == 0) recordHashes_.push_back(world_->stateHash(false));
         // What clients are told: the public state after the step, and what happened in it.
         for (const Event& e : world_->takeEvents()) stepEvents_.push_back({step, e});
         states_.push_back({step, world_->snapshotFields()});
@@ -1223,6 +1365,10 @@ void Server::endRound() {
     }
     roundEnd_ = encoded(end);
     broadcast(ServerMsg::RoundEnd, roundEnd_);
+    // The record is sealed a moment later, when the players' last statements are in.
+    recordEnd_ = end;
+    recordPending_ = !roundShares_.empty();
+    recordDueAt_ = now_ + kRecordWaitMs;
     phase_ = Phase::Result;
     resultAt_ = now_;
     lobbyDirty_ = true;
@@ -1231,7 +1377,44 @@ void Server::endRound() {
         (score_.matchWinner >= 0 ? " (match decided)" : ""));
 }
 
+// The record of the round just played: put together, signed, kept, and handed to everybody who was in it.
+void Server::sealRecord() {
+    if (!recordPending_) return;
+    recordPending_ = false;
+    if (!config_.signRecord || !world_) return;
+    MatchRecord record;
+    record.gameVersion = config_.gameVersion;
+    record.serverName = config_.name;
+    record.startedUnix = recordStartedUnix_;
+    record.start = recordStart_;
+    record.shares = roundShares_;
+    record.seats = recordSeats_;
+    for (const auto& [id, log] : logs_) record.players.push_back(log);
+    record.inputs = history_;
+    record.computer = computerMask_;
+    record.hashEvery = kRecordHashEvery;
+    record.hashes = recordHashes_;
+    record.finalHash = world_->stateHash(false);
+    record.end = recordEnd_;
+    record.certificate = config_.certificate;
+    const Bytes bytes = encodeRecord(record);
+    const std::string document = config_.signRecord(bytes);
+    if (document.empty()) {
+        log("WARN  The record of round " + std::to_string(roundId_) + " could not be signed");
+        return;
+    }
+    if (config_.recordSink) config_.recordSink(document, record);
+    ByteWriter w;
+    w.u32(roundId_);
+    w.bytes(Bytes(document.begin(), document.end()));
+    for (auto& p : peers_)
+        if (p->joined && !p->gone && !p->out) send(*p, ServerMsg::Record, w.data());
+    log("INFO  Record of round " + std::to_string(roundId_) + " sealed bytes=" + std::to_string(bytes.size()) + " players=" + std::to_string(record.players.size()));
+}
+
 void Server::toLobby() {
+    sealRecord();
+    seeding_ = Seeding{};
     phase_ = Phase::Lobby;
     for (auto& p : peers_) p->out = false, p->ready = false;
     campaignMode_ = false;
@@ -1322,7 +1505,18 @@ void Server::update(std::uint64_t nowMs) {
         }
     }
 
-    if (phase_ == Phase::Round) {
+    // A finished round's record waits a moment for the players' last statements.
+    if (recordPending_) {
+        bool all = true;
+        for (const auto& [id, log] : logs_) {
+            const Peer* p = peerById(id);
+            all = all && (p == nullptr || p->out || logFinal_.count(id) != 0 || log.playerKey == Key{});
+        }
+        if (all || now_ >= recordDueAt_) sealRecord();
+    }
+    if (seeding_.active) {
+        stepSeeding();
+    } else if (phase_ == Phase::Round) {
         stepRound();
     } else if (phase_ == Phase::Roulette) {
         if (now_ >= rouletteUntil_) {

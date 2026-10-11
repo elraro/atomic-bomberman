@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -91,6 +92,7 @@ const char* const kUsage =
     "  --identity-file FILE   the server's lasting key (default: server.key in the per-user folder)\n"
     "  --certificate FILE     this server's certificate (who answers for it), shown to every player\n"
     "  --signing-key-file FILE  the key match records are signed with (default: server.sign.key in the per-user folder)\n"
+    "  --records-dir DIR      where the signed record of every round is kept (default: records in the per-user folder)\n"
     "  --show-keys            print the two keys a certificate is made out to, and exit\n"
     "  --online listed|code   announce the game on the master server: in its list, or to be found by its code only\n"
     "  --online-config URL    where the signed configuration of online play is (several: commas)\n"
@@ -107,7 +109,7 @@ int main(int argc, char** argv) {
     bool schemesDirGiven = false;
     bool relayServer = false, portGiven = false;
     std::string onlineMode, onlineConfig, onlineKey;
-    std::string certificateFile, signingKeyFile;
+    std::string certificateFile, signingKeyFile, recordsDir;
     bool showKeys = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -148,6 +150,7 @@ int main(int argc, char** argv) {
         else if (a == "--relay-server") relayServer = true;
         else if (a == "--certificate") certificateFile = next();
         else if (a == "--signing-key-file") signingKeyFile = next();
+        else if (a == "--records-dir") recordsDir = next();
         else if (a == "--show-keys") showKeys = true;
         else if (a == "--online") onlineMode = next();
         else if (a == "--online-config") onlineConfig = next();
@@ -203,6 +206,24 @@ int main(int argc, char** argv) {
         std::copy(key.begin(), key.end(), k.begin());
         return ab::online::verify(k, std::string(message.begin(), message.end()), signature);
     };
+    // With a signing key every round leaves a signed record, kept here and handed to its players.
+    if (recordsDir.empty() && !userDataDir().empty()) recordsDir = userDataDir() + "records";
+    config.gameVersion = AB_VERSION;
+    if (haveSigningKey && !showKeys) {
+        config.signRecord = [signingSeed](const std::vector<std::uint8_t>& bytes) { return ab::online::signDocument(signingSeed, std::string(bytes.begin(), bytes.end())); };
+        config.recordSink = [recordsDir](const std::string& document, const ab::net::MatchRecord& record) {
+            if (recordsDir.empty()) return;
+            std::error_code ec;
+            std::filesystem::create_directories(recordsDir, ec);
+            char stamp[32];
+            const std::time_t at = static_cast<std::time_t>(record.startedUnix);
+            std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", std::gmtime(&at));
+            const std::string file = recordsDir + "/" + stamp + "-round" + std::to_string(record.start.roundId) + ".abrec";
+            std::ofstream out(file, std::ios::binary);
+            out << document;
+            logLine(out ? "INFO  Record kept: " + file : "WARN  Cannot write the record " + file);
+        };
+    }
     if (!certificateFile.empty()) {
         std::ifstream in(certificateFile, std::ios::binary);
         config.certificate.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());

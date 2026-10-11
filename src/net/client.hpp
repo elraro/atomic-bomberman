@@ -15,6 +15,7 @@
 
 #include "net/link.hpp"
 #include "net/protocol.hpp"
+#include "net/record.hpp"
 #include "net/relay.hpp"
 #include "net/snapshot.hpp"
 #include "net/socket.hpp"
@@ -55,6 +56,21 @@ public:
         playerKey_ = publicKey;
         signWithPlayerKey_ = std::move(sign);
     }
+    // --- recorded rounds (record.hpp) ---
+    bool recorded() const { return start_.recorded; }  // the round in hand is being recorded
+    // The record of the last round, as the server signed it (a signed document, unjudged).
+    // `recordSerial()` goes up with every one received.
+    const std::string& lastRecord() const { return lastRecord_; }
+    std::uint64_t recordSerial() const { return recordSerial_; }
+    // What this client knows of that round at first hand, to hold the record against:
+    // its own log of inputs, the number it gave towards the seed, and the promises it was shown.
+    const std::vector<InputTuple>& ownLog() const { return recordedLog_; }
+    const Key& ownSeedReveal() const { return recordedReveal_; }
+    const std::vector<std::pair<std::uint8_t, Key>>& seenCommits() const { return recordedCommits_; }
+    std::uint32_t recordedRound() const { return recordedRound_; }
+    // A line in the chat list from this program itself (a warning about a record, say).
+    void note(const std::string& text, std::uint64_t nowMs);
+
     // What the server sent as its certificate (a signed document, unjudged; empty: none), and
     // the identity key it proved in the key exchange (hex).
     const std::string& certificate() const { return certificate_; }
@@ -171,6 +187,8 @@ private:
     void accept(std::uint32_t step, Fields fields, std::vector<Event> events);
     void beginRound(const RoundStartMsg& m, std::uint64_t nowMs);
     void sendInput(std::uint64_t nowMs);
+    void sendLog(bool final);
+    void logInput();
     bool applyState(const Received& state, const EventSink& events);
     void predict(const EventSink& events);
     bool ownAction(const Event& e) const;
@@ -196,6 +214,21 @@ private:
     Key playerKey_{};
     std::function<std::array<std::uint8_t, 64>(const std::vector<std::uint8_t>&)> signWithPlayerKey_;
     std::string certificate_, identityKeyHex_;
+    // The seed exchange and the input log of a recorded round.
+    std::uint32_t seedRound_ = 0;
+    Key seedReveal_{};
+    std::vector<std::pair<std::uint8_t, Key>> seedCommits_;
+    std::vector<InputTuple> log_;
+    std::size_t logSent_ = 0;
+    std::uint64_t logAt_ = 0;
+    bool logFinalSent_ = false;
+    // The same, kept for the round whose record is still to come.
+    std::vector<InputTuple> recordedLog_;
+    Key recordedReveal_{};
+    std::vector<std::pair<std::uint8_t, Key>> recordedCommits_;
+    std::uint32_t recordedRound_ = 0;
+    std::string lastRecord_;
+    std::uint64_t recordSerial_ = 0;
     std::string identity_;
     bool identityKnown_ = false;
     bool identityChanged_ = false;

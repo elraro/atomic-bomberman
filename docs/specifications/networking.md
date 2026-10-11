@@ -77,7 +77,7 @@ Every server, whatever its own port, also listens on UDP **27409** (a port sever
 
 IPv4 and IPv6: a server listens for both on one port where the system allows it (IPv4 alone otherwise); a client uses whichever the address it was given resolves to. An IPv6 literal with a port is written `[address]:port`. A link-local IPv6 address is given with its interface, `[fe80::1%eth0]:port`.
 
-Protocol version 9 (1: one player per client; 2: several players, prizes, campaign stages; 3: encryption; 4: secrets kept on the server; 5: server identity; 6: ready state; 7: the link, everything over UDP; 8: snapshots instead of lockstep; 9: player keys, the certificate message).
+Protocol version 10 (1: one player per client; 2: several players, prizes, campaign stages; 3: encryption; 4: secrets kept on the server; 5: server identity; 6: ready state; 7: the link, everything over UDP; 8: snapshots instead of lockstep; 9: player keys, the certificate message; 10: recorded rounds).
 
 ## Encryption and the password
 

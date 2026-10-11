@@ -17,7 +17,7 @@ namespace ab::net {
 
 inline constexpr std::uint32_t kTcpMagic = 0x4E4D4241u;  // "ABMN"
 inline constexpr std::uint32_t kUdpMagic = 0x554D4241u;  // "ABMU"
-inline constexpr std::uint16_t kProtocolVersion = 9;
+inline constexpr std::uint16_t kProtocolVersion = 10;
 inline constexpr std::uint16_t kDefaultPort = 27410;
 // Every server also listens here for searches on the local network, whatever its own port.
 inline constexpr std::uint16_t kDiscoveryPort = 27409;
@@ -28,8 +28,8 @@ inline constexpr std::uint8_t kServerSender = 255;
 inline constexpr int kMaxLocalPlayers = 4;  // players at one computer
 
 // Messages and datagrams of a connection, all of them carried by its link.
-enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, Continue, Pong, Locals, Ban, Unban, Admin, Login, LeaveMatch, Ready };
-enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Delta, RoundEnd, Snapshot, Ping, Roulette, Certificate };
+enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, Continue, Pong, Locals, Ban, Unban, Admin, Login, LeaveMatch, Ready, SeedCommit, SeedReveal, InputLog };
+enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Delta, RoundEnd, Snapshot, Ping, Roulette, Certificate, SeedAsk, SeedCommits, Record };
 // A datagram of a connection: its contents are encrypted. Searches on the LAN stay in the clear.
 inline constexpr std::uint8_t kSealedDatagram = 0x80;
 // In the clear, before a connection has keys: the client's key (with the cookie the server
@@ -202,6 +202,27 @@ struct RoundStartMsg {
     std::string stageName;
     int stage = 0;
     int stages = 0;
+    // The round is being recorded (the server has a signing key): players with a key keep a
+    // signed log of their inputs. `recordId` names the round to them (recordIdOf()).
+    bool recorded = false;
+    Key recordId{};
+};
+
+// The seed of a recorded round is nobody's choice: every player and the server promise a
+// random number (send its hash), then show it; the seed follows from all of them.
+struct SeedCommitsMsg {
+    std::uint32_t roundId = 0;
+    std::vector<std::pair<std::uint8_t, Key>> commits;  // client id (kServerSender: the server) and its promise
+};
+
+// More of a player's log, and a signature over all of it so far.
+struct InputLogMsg {
+    std::uint32_t roundId = 0;
+    std::uint32_t firstIndex = 0;  // where `values` go in the log
+    std::vector<std::array<std::uint8_t, kMaxLocalPlayers>> values;
+    std::uint32_t signedCount = 0;
+    std::array<std::uint8_t, 64> signature{};
+    bool final = false;            // the round is over: nothing more will come
 };
 
 // An event of a step, as clients are told it (they no longer work events out themselves).
@@ -285,6 +306,10 @@ void encode(ByteWriter& w, const RoundSetup& m);
 bool decode(ByteReader& r, RoundSetup& m);
 void encode(ByteWriter& w, const RoundStartMsg& m);
 bool decode(ByteReader& r, RoundStartMsg& m);
+void encode(ByteWriter& w, const SeedCommitsMsg& m);
+bool decode(ByteReader& r, SeedCommitsMsg& m);
+void encode(ByteWriter& w, const InputLogMsg& m);
+bool decode(ByteReader& r, InputLogMsg& m);
 void encode(ByteWriter& w, const DeltaMsg& m);
 bool decode(ByteReader& r, DeltaMsg& m);
 void encode(ByteWriter& w, const InputMsg& m);

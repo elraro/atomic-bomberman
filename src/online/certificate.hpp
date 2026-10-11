@@ -20,8 +20,9 @@ struct ServerCertificate {
 
 // The certificate in `envelope`, if it is one that counts: signed by one of `roots`, of the
 // right kind, within its dates at `now`, not among the `revoked` serials, and made out to
-// the identity key the server has just proved (`provenIdentityHex`). Otherwise false, and
-// `error` says which of these failed.
+// the identity key the server has just proved (`provenIdentityHex`; empty where no
+// connection is at hand, as when a record is read later: what counts there is the signing
+// key). Otherwise false, and `error` says which of these failed.
 bool readCertificate(const std::string& envelope, const std::vector<PublicKey>& roots, const std::vector<long long>& revoked, long long now,
                      const std::string& provenIdentityHex, ServerCertificate& out, std::string& error);
 

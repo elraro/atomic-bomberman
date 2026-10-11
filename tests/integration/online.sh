@@ -6,7 +6,7 @@
 #
 #   tests/integration/online.sh BUILD_DIR MASTER_BIN_DIR
 #
-# BUILD_DIR holds atomic_server and net_bot; MASTER_BIN_DIR holds master and abconfig.
+# BUILD_DIR holds atomic_server, net_bot and atomic_verify; MASTER_BIN_DIR holds master and abconfig.
 set -u
 BUILD=${1:?build directory}
 BIN=${2:?directory of the master programs}
@@ -66,9 +66,9 @@ SIGNING=$(sed -n 's/^signing key: *//p' "$WORK/keys.txt")
 grep -q "not a certificate for this server's keys" "$WORK/thief.log" || fail "a server should refuse to start with somebody else's certificate"
 
 # A game server that is found by its code only (the one with the certificate), and one that is listed.
-"$BUILD/atomic_server" --port "$GAME_PORT" --name "By code" --hidden --computers 1 --wins 1 --online code "${ONLINE[@]}" "${KEYFILES[@]}" --certificate "$WORK/server.cert" >"$WORK/server-code.log" 2>&1 </dev/null &
+"$BUILD/atomic_server" --port "$GAME_PORT" --name "By code" --hidden --computers 1 --wins 1 --online code "${ONLINE[@]}" "${KEYFILES[@]}" --certificate "$WORK/server.cert" --records-dir "$WORK/records" >"$WORK/server-code.log" 2>&1 </dev/null &
 pids+=($!)
-"$BUILD/atomic_server" --port $((GAME_PORT + 1)) --name "Listed game" --hidden --computers 1 --wins 1 --online listed "${ONLINE[@]}" >"$WORK/server-listed.log" 2>&1 </dev/null &
+"$BUILD/atomic_server" --port $((GAME_PORT + 1)) --name "Listed game" --hidden --computers 1 --wins 1 --online listed "${ONLINE[@]}" --identity-file "$WORK/id2.key" --signing-key-file "$WORK/sign2.key" --records-dir "$WORK/records2" >"$WORK/server-listed.log" 2>&1 </dev/null &
 pids+=($!)
 for _ in $(seq 100); do grep -q "Online: code, code" "$WORK/server-code.log" && grep -q "Online: listed, code" "$WORK/server-listed.log" && break; sleep 0.1; done
 CODE=$(sed -n 's/.*Online: code, code \([0-9]*\).*/\1/p' "$WORK/server-code.log" | head -n 1)
@@ -77,10 +77,10 @@ grep -q "Online: listed, code" "$WORK/server-listed.log" || fail "the listed gam
 echo "ok   announced: code $CODE"
 
 # By code: Ann starts the match, Bob joins it; both play it to the end.
-timeout 150 "$BUILD/net_bot" "code:$CODE" Ann --start-after 3000 --matches 1 "${ONLINE[@]}" >"$WORK/ann.log" 2>&1 &
+timeout 150 "$BUILD/net_bot" "code:$CODE" Ann --start-after 3000 --matches 1 --player-key-file "$WORK/ann.key" "${ONLINE[@]}" >"$WORK/ann.log" 2>&1 &
 ANN=$!
 sleep 1
-timeout 150 "$BUILD/net_bot" "code:$CODE" Bob --matches 1 "${ONLINE[@]}" >"$WORK/bob.log" 2>&1 &
+timeout 150 "$BUILD/net_bot" "code:$CODE" Bob --matches 1 --player-key-file "$WORK/bob.key" "${ONLINE[@]}" >"$WORK/bob.log" 2>&1 &
 BOB=$!
 # In the list: only the listed game, found by its name.
 timeout 150 "$BUILD/net_bot" "listed:Listed game" Cat --start-after 1000 --matches 1 "${ONLINE[@]}" >"$WORK/cat.log" 2>&1 &
@@ -96,6 +96,35 @@ grep -q 'certificate: verified, operator "Integration Test", serial 424242' "$WO
 grep -q "certificate: none" "$WORK/cat.log" || fail "the listed server has no certificate"
 grep -q "Certificate 424242 of \"Integration Test\": [0-9]* days left" "$WORK/server-code.log" || fail "the server should say whose certificate it shows"
 echo "ok   the server's certificate is verified by the players' games"
+
+# Match records: every round of the certified server left one; the players were handed
+# theirs and found it to hold; anybody can play it again, and a changed one is found out.
+sleep 2
+RECORD=$(ls "$WORK/records"/*.abrec 2>/dev/null | head -n 1)
+[ -n "$RECORD" ] || fail "the server kept no record"
+grep -q "record of round 1: holds, certified by \"Integration Test\"" "$WORK/ann.log" || fail "Ann should have been handed a record that holds"
+grep -q "record of round 1: holds" "$WORK/bob.log" || fail "Bob should have been handed a record that holds"
+"$BUILD/atomic_verify" --root "$KEY" --stats "$WORK/records"/*.abrec >"$WORK/verify.log" 2>&1 || fail "the records should hold"
+grep -q "HOLDS" "$WORK/verify.log" && grep -q "certificate of \"Integration Test\"" "$WORK/verify.log" || fail "atomic_verify should name the certificate"
+grep -Eq "^Ann +[0-9]+ +[0-9]+ +-?[0-9]+" "$WORK/verify.log" && grep -Eq "^Bob +[0-9]+" "$WORK/verify.log" || fail "the statistics should list both players"
+grep -q "problem" "$WORK/verify.log" && fail "a record that holds should have no problem"
+# The server without a certificate keeps records too; they hold, but nobody answers for them,
+# and with root keys given they do not count towards the statistics.
+"$BUILD/atomic_verify" --root "$KEY" --stats "$WORK/records2"/*.abrec >"$WORK/verify2.log" 2>&1 || fail "the other server's records should hold"
+grep -q "showed no certificate" "$WORK/verify2.log" || fail "a record without a certificate should say so"
+grep -q "Players in 0 record" "$WORK/verify2.log" || fail "records nobody answers for should not count"
+# One changed character in the middle of the record: found out.
+python3 - "$RECORD" "$WORK/forged.abrec" <<'PY'
+import base64, json, sys
+env = json.load(open(sys.argv[1]))
+doc = bytearray(base64.b64decode(env["document"]))
+doc[len(doc) // 2] ^= 1
+env["document"] = base64.b64encode(bytes(doc)).decode()
+json.dump(env, open(sys.argv[2], "w"))
+PY
+"$BUILD/atomic_verify" --root "$KEY" "$WORK/forged.abrec" >"$WORK/verify3.log" 2>&1 && fail "a changed record should not hold"
+grep -q "DOES NOT HOLD" "$WORK/verify3.log" || fail "a changed record should be said not to hold"
+echo "ok   records: handed to the players, hold when played again, a changed one does not"
 
 # What must not work.
 timeout 30 "$BUILD/net_bot" "code:000000" Dan "${ONLINE[@]}" >"$WORK/dan.log" 2>&1

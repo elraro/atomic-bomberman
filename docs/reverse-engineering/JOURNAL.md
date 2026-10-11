@@ -754,3 +754,15 @@ Not a discovery about the original; a record of what was built and seen.
 - The network library still has no signature code: the program around it hands in a function to check signatures, and one to sign.
 - Validation (Level 4): `ab_online_tests` "server certificates and key files" (expired, revoked, unknown root, other identity, wrong kind, incomplete); `ab_net_tests` "player keys and certificate"; `tests/integration/online.sh` (a certified server verified by two clients, the certificate refused on another server, a revoked one no longer accepted).
 - Not done: a certificate seen in the game's lobby by a person (the screen line was not captured); renewal in practice.
+
+### Modern: signed match records (online play, phase 7)
+
+Not a discovery about the original; a record of what was built and seen.
+
+- `src/net/record.*`: the record of a round (setup with the seed, the seed's shares, seats, each player's log and its signature, every step's inputs, hashes of the whole state every 20 steps, the result, the certificate), the seed from promised-then-shown numbers, the replay, and the check that the inputs applied are a walk through each player's own log.
+- The server (when it can sign): the seed exchange before each round, the logs gathered as they come, the record sealed about a second after the round and sent to its players. The client: its share in the seed, its log, a signature about once a second and at the end. Protocol version 10.
+- `tools/verify/atomic_verify`: signature, certificate, replay, statistics. The game and the test client check the record they are handed against what they know at first hand, and keep it.
+- Seen: a round of 134 steps with two players and a computer player makes a record of 6.2 KB.
+- Validation (Level 4): `ab_net_tests` "records" (the seed's dependence on every share, the walk through a log, a real round recorded and replayed, twelve ways of changing a record each found out); `tests/integration/online.sh` (records handed to two clients hold; `atomic_verify` with the root key; a record from a server without a certificate holds but does not count; one changed byte is found out).
+- Not done: a recorded round with a player leaving half way, with several players at one computer, in a campaign, or in team play (the code handles them; no test plays them); the warning in the game's chat when a record does not hold has not been seen on screen.
+- Stated limits: a record does not show a dropped or delayed input, nor a leak of hidden information; a server can abandon a round whose seed it does not like.

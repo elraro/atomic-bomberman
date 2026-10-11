@@ -59,7 +59,7 @@ jobs:
       - name: Build the game server and the test client (no window needed)
         run: |
           cmake -S . -B build-online -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-online --target atomic_server net_bot --parallel
+          cmake --build build-online --target atomic_server net_bot atomic_verify --parallel
       - name: Online play end to end
         run: tests/integration/online.sh build-online master/bin
 
@@ -99,11 +99,11 @@ jobs:
       - name: Package
         run: |
           mkdir -p package/atomic-bomberman-modern
-          cp build/atomic build/atomic_server README.md INSTALL.md LICENSE package/atomic-bomberman-modern/
+          cp build/atomic build/atomic_server build/atomic_verify README.md INSTALL.md LICENSE package/atomic-bomberman-modern/
           tar -C package -czf atomic-bomberman-modern-linux-${{ matrix.arch }}.tar.gz atomic-bomberman-modern
           # The dedicated network server on its own: no window, no SDL.
           mkdir -p package/atomic-bomberman-server
-          cp build/atomic_server README.md INSTALL.md LICENSE package/atomic-bomberman-server/
+          cp build/atomic_server build/atomic_verify README.md INSTALL.md LICENSE package/atomic-bomberman-server/
           tar -C package -czf atomic-bomberman-server-linux-${{ matrix.arch }}.tar.gz atomic-bomberman-server
 
       - uses: actions/upload-artifact@v7
@@ -147,11 +147,11 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force package/atomic-bomberman-modern | Out-Null
-          Copy-Item build/Release/atomic.exe, build/Release/atomic_server.exe, README.md, INSTALL.md, LICENSE package/atomic-bomberman-modern/
+          Copy-Item build/Release/atomic.exe, build/Release/atomic_server.exe, build/Release/atomic_verify.exe, README.md, INSTALL.md, LICENSE package/atomic-bomberman-modern/
           Compress-Archive -Path package/atomic-bomberman-modern -DestinationPath atomic-bomberman-modern-windows-${{ matrix.arch }}.zip
           # The dedicated network server on its own: no window, no SDL.
           New-Item -ItemType Directory -Force package/atomic-bomberman-server | Out-Null
-          Copy-Item build/Release/atomic_server.exe, README.md, INSTALL.md, LICENSE package/atomic-bomberman-server/
+          Copy-Item build/Release/atomic_server.exe, build/Release/atomic_verify.exe, README.md, INSTALL.md, LICENSE package/atomic-bomberman-server/
           Compress-Archive -Path package/atomic-bomberman-server -DestinationPath atomic-bomberman-server-windows-${{ matrix.arch }}.zip
 
       - name: Check that the server starts
@@ -237,12 +237,12 @@ jobs:
         run: |
           mkdir -p package/atomic-bomberman-modern
           cp -R "$APP" package/atomic-bomberman-modern/
-          cp build/atomic_server README.md INSTALL.md LICENSE package/atomic-bomberman-modern/
+          cp build/atomic_server build/atomic_verify README.md INSTALL.md LICENSE package/atomic-bomberman-modern/
           # ditto keeps what a signed app needs (a plain zip may not).
           ditto -c -k --keepParent package/atomic-bomberman-modern atomic-bomberman-modern-macos-universal.zip
           # The dedicated network server on its own: no window, no SDL.
           mkdir -p package/atomic-bomberman-server
-          cp build/atomic_server README.md INSTALL.md LICENSE package/atomic-bomberman-server/
+          cp build/atomic_server build/atomic_verify README.md INSTALL.md LICENSE package/atomic-bomberman-server/
           tar -C package -czf atomic-bomberman-server-macos-universal.tar.gz atomic-bomberman-server
 
       - name: Check that the programs start

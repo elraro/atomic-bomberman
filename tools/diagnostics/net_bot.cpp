@@ -4,6 +4,7 @@
 //   net_bot ADDRESS NAME [--start] [--start-after MS] [--tcp] [--password TEXT] [--matches N]
 // With --online-config URL --online-key HEX the address may be "code:123456" (a game found
 // on the master server by its code) or "listed:NAME" (the game of that name on its list).
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -17,6 +18,7 @@
 #include "online/bootstrap.hpp"
 #include "online/certificate.hpp"
 #include "online/online.hpp"
+#include "online/record_check.hpp"
 #endif
 
 int main(int argc, char** argv) {
@@ -27,7 +29,7 @@ int main(int argc, char** argv) {
     bool start = false;
     int matches = 1;
     std::uint64_t startAfter = 1500;
-    std::string password, onlineConfig, onlineKey;
+    std::string password, onlineConfig, onlineKey, playerKeyFile, gameVersion = AB_VERSION;
     ab::net::Client client;
     client.setAlwaysReady(true);
     for (int i = 3; i < argc; ++i) {
@@ -39,9 +41,23 @@ int main(int argc, char** argv) {
         else if (a == "--matches" && i + 1 < argc) matches = std::atoi(argv[++i]);
         else if (a == "--online-config" && i + 1 < argc) onlineConfig = argv[++i];
         else if (a == "--online-key" && i + 1 < argc) onlineKey = argv[++i];
+        else if (a == "--player-key-file" && i + 1 < argc) playerKeyFile = argv[++i];
+        else if (a == "--game-version" && i + 1 < argc) gameVersion = argv[++i];
     }
     using State = ab::net::Client::State;
     const std::string name = argv[2];
+#ifdef AB_ONLINE
+    // A player key (a lasting one from a file, as the game keeps it): shown to the server,
+    // and the inputs of a recorded round are signed with it.
+    ab::online::Seed playerSeed{};
+    if (!playerKeyFile.empty() && ab::online::loadOrCreateSeed(playerKeyFile, playerSeed)) {
+        ab::net::Key key{};
+        const ab::online::PublicKey pub = ab::online::publicKeyOf(playerSeed);
+        std::copy(pub.begin(), pub.end(), key.begin());
+        client.setPlayerKey(key, [playerSeed](const std::vector<std::uint8_t>& message) { return ab::online::sign(playerSeed, std::string(message.begin(), message.end())); });
+    }
+    std::uint64_t recordSeen = 0;
+#endif
     std::string address = argv[1];
     std::vector<std::string> candidates;  // the ways to the server the master named
     if (address.rfind("code:", 0) == 0 || address.rfind("listed:", 0) == 0) {
@@ -137,6 +153,17 @@ int main(int argc, char** argv) {
             else if (ab::online::readCertificate(client.certificate(), trust.config().roots, trust.config().revoked, static_cast<long long>(std::time(nullptr)), client.serverIdentityKey(), cert, why))
                 std::printf("[%s] certificate: verified, operator \"%s\", serial %lld\n", name.c_str(), cert.operatorName.c_str(), cert.serial);
             else std::printf("[%s] certificate: not accepted (%s)\n", name.c_str(), why.c_str());
+        }
+#endif
+#ifdef AB_ONLINE
+        // A recorded round's record: held against what this client knows, and played again.
+        if (client.recordSerial() != recordSeen) {
+            recordSeen = client.recordSerial();
+            const ab::online::RecordReport report = ab::online::examineRecord(client.lastRecord(), gameVersion, trust.haveConfig() ? trust.config().roots : std::vector<ab::online::PublicKey>{},
+                                                                               trust.haveConfig() ? trust.config().revoked : std::vector<long long>{}, &client);
+            std::printf("[%s] record of round %u: %s%s\n", name.c_str(), report.record.start.roundId, report.holds ? "holds" : "DOES NOT HOLD",
+                        report.certified ? (", certified by \"" + report.operatorName + "\"").c_str() : "");
+            for (const std::string& p : report.problems) std::printf("[%s]   problem: %s\n", name.c_str(), p.c_str());
         }
 #endif
         // "--matches 0": only here to look. The lobby is reached (and the certificate judged): done.

@@ -206,8 +206,45 @@ void Client::sendLogin(const std::string& password) {
     send(ClientMsg::Login, w.data());
 }
 
+void Client::note(const std::string& text, std::uint64_t nowMs) {
+    chat_.push_back({true, "", text, nowMs});
+    while (chat_.size() > kChatKept) chat_.pop_front();
+}
+
+void Client::logInput() {
+    if (!start_.recorded || ended_ || seat() < 0) return;
+    if (log_.empty() ? input_ != InputTuple{} : input_ != log_.back()) log_.push_back(input_);
+}
+
+// More of the log to the server, with a signature over all of it so far.
+void Client::sendLog(bool final) {
+    if (!start_.recorded || !signWithPlayerKey_) return;
+    InputLogMsg m;
+    m.roundId = start_.roundId;
+    m.firstIndex = static_cast<std::uint32_t>(logSent_);
+    m.values.assign(log_.begin() + static_cast<std::ptrdiff_t>(logSent_), log_.end());
+    m.signedCount = static_cast<std::uint32_t>(log_.size());
+    m.signature = signWithPlayerKey_(logStatement(start_.recordId, m.signedCount, logChain(log_, log_.size())));
+    m.final = final;
+    send(ClientMsg::InputLog, encoded(m));
+    logSent_ = log_.size();
+    logAt_ = clock_;
+    recordedLog_ = log_;
+}
+
 void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     start_ = m;
+    log_.clear();
+    logSent_ = 0;
+    logAt_ = nowMs;
+    logFinalSent_ = false;
+    if (m.recorded) {
+        // What is kept to hold the record against, when it comes.
+        recordedRound_ = m.roundId;
+        recordedLog_.clear();
+        recordedReveal_ = seedRound_ == m.roundId ? seedReveal_ : Key{};
+        recordedCommits_ = seedRound_ == m.roundId ? seedCommits_ : std::vector<std::pair<std::uint8_t, Key>>{};
+    }
     rouletteOn_ = false;
     end_ = RoundEndMsg{};
     ended_ = false;
@@ -285,6 +322,41 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             break;
         }
         case ServerMsg::Reject: fail(r.text(256)); break;
+        case ServerMsg::SeedAsk: {
+            // A share in the next round's seed: a random number, promised now and shown when everybody has promised.
+            const std::uint32_t round = r.u32();
+            if (!r.ok()) break;
+            seedRound_ = round;
+            seedCommits_.clear();
+            randomBytes(seedReveal_.data(), seedReveal_.size());
+            ByteWriter w;
+            w.u32(round);
+            for (std::uint8_t b : commitOf(seedReveal_)) w.u8(b);
+            send(ClientMsg::SeedCommit, w.data());
+            break;
+        }
+        case ServerMsg::SeedCommits: {
+            SeedCommitsMsg m;
+            if (!decode(r, m) || m.roundId != seedRound_ || !seedCommits_.empty()) break;
+            // Shown only if our own promise is among them as we made it (and once only).
+            bool ours = false;
+            for (const auto& [client, commit] : m.commits) ours = ours || (client == id_ && commit == commitOf(seedReveal_));
+            if (!ours) break;
+            seedCommits_ = m.commits;
+            ByteWriter w;
+            w.u32(m.roundId);
+            for (std::uint8_t b : seedReveal_) w.u8(b);
+            send(ClientMsg::SeedReveal, w.data());
+            break;
+        }
+        case ServerMsg::Record: {
+            const std::uint32_t round = r.u32();
+            const Bytes text = r.bytes(1u << 20);
+            if (!r.ok() || round != recordedRound_) break;
+            lastRecord_.assign(text.begin(), text.end());
+            ++recordSerial_;
+            break;
+        }
         case ServerMsg::Certificate: {
             const Bytes text = r.bytes(8192);
             if (r.ok()) certificate_.assign(text.begin(), text.end());
@@ -339,6 +411,11 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             if (!decode(r, m) || m.roundId != start_.roundId) break;
             end_ = m;
             ended_ = true;
+            // The last word on what was pressed, for the record.
+            if (!logFinalSent_ && seat() >= 0) {
+                logFinalSent_ = true;
+                sendLog(true);
+            }
             break;
         }
         case ServerMsg::Snapshot: {
@@ -357,6 +434,10 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
 }
 
 void Client::sendInput(std::uint64_t nowMs) {
+    // A recorded round: every different thing held down goes into the log before it is sent,
+    // and the log goes to the server about once a second.
+    logInput();
+    if (start_.recorded && !ended_ && seat() >= 0 && log_.size() > logSent_ && nowMs - logAt_ >= 1000) sendLog(false);
     if (input_ == inputSent_ && newest_ == ackSent_ && nowMs - inputSentAt_ < static_cast<std::uint64_t>(kStepMs) && inputSentAt_ != 0) return;
     InputMsg m;
     m.roundId = start_.roundId;
@@ -590,6 +671,7 @@ void Client::predict(const EventSink& events) {
     // has drifted from where the confirmed step and the delay say it should be.
     ++target_;
     if (target_ + 2 < wanted || target_ > wanted + 2 || target_ <= applied_) target_ = wanted;
+    logInput();  // whatever is sent for a step is in the log first
     mine_[target_] = input_;
     mine_.erase(mine_.begin(), mine_.upper_bound(applied_));
     if (!predicted_) predicted_ = std::make_unique<World>(*world_);

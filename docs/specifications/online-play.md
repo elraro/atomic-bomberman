@@ -1,6 +1,6 @@
 # Online play over the internet (target design)
 
-Status: **phases 1 to 4 and 6 are implemented** (1: the screens worked with a gamepad, the on-screen keyboard, the ready state; 2: the link; 3: snapshots, all three described in `networking.md`; 4: the master server, the signed configuration, games found by list or by code: `master/README.md`, `../operations/online.md`; 6: server certificates and player keys, section 7 below). Phase 5 (reaching players behind routers) and phases 7 and 8 are not implemented yet. Where what was built differs from what this document first said, the difference is noted in place. It describes where the network mode is going. What the game does today is in `networking.md` (snapshots over the link, to an address, a TCP relay), which stays valid until the phases below replace its parts.
+Status: **phases 1 to 4, 6 and 7 are implemented** (1: the screens worked with a gamepad, the on-screen keyboard, the ready state; 2: the link; 3: snapshots, all three described in `networking.md`; 4: the master server, the signed configuration, games found by list or by code: `master/README.md`, `../operations/online.md`; 6: server certificates and player keys; 7: signed match records, both in section 7 below). Phase 5 (reaching players behind routers) and phase 8 (tournaments) are not implemented yet. Where what was built differs from what this document first said, the difference is noted in place. It describes where the network mode is going. What the game does today is in `networking.md` (snapshots over the link, to an address, a TCP relay), which stays valid until the phases below replace its parts.
 
 Like `networking.md`, this is the project's own design. Nothing here is a claim about the original game, whose IPX/serial network mode is not reproduced.
 
@@ -315,6 +315,17 @@ the server's certificate and signature
 - Size, estimated: ten input bytes per step at 20 steps a second is about 12 KB a minute before compression. To be measured when the format exists.
 - The exact layout of the record and of the statements is settled in the phase that builds them, not here.
 
+As built (protocol version 10; `src/net/record.*`, `src/online/record_check.hpp`, `tools/verify/`):
+
+- **One record per round**, not per match: a round is what has one seed and can be played again. A match is its rounds' records in a row; each carries the score before and after.
+- A server records when it has a signing key (every `atomic_server` makes one on first start). A game hosted from the menu records nothing, and then none of what follows happens.
+- **Seed.** Before the round the server asks every player with a seat for a promise (the hash of a random number), then tells everybody all the promises, its own among them, then collects the numbers. A player who promised and does not show within 1.5 s has no part in the seed. The server's own number stays its secret until the record: the seed tells where the powerups are. Each player's game keeps the promises it was shown and the number it gave, and looks for them in the record. Known limit: a server sees the seed before the round starts and could give up a round it does not like and start another; players would see that as rounds that begin twice.
+- **Inputs.** A player's game logs every different combination of keys held, in order, and about once a second sends the new part with one signature over the whole log so far (its running hash, the count, and the round's name, which is a hash of the promises); a last one when the round ends. The record holds each log and its last signature. The check: the inputs the server applied for that player's seats must be a walk forward through the log: values may be passed over (a datagram lost, a key held too briefly) but none invented and none gone back to. Steps in which the computer had the seat (the player had left) are marked and not held against the log.
+- **Hashes** of the whole state (hidden powerups and random generator included) every 20 steps, and at the end.
+- The record is a signed document like the others (its bytes inside the envelope), signed with the server's signing key, and carries the server's certificate if it has one. About 6 KB for a round of 150 steps with two players.
+- **Who checks.** Every player's game, on being handed the record: the signature, the certificate if root keys are at hand, the replay, its own log and seed share. A record that does not hold is said so in the chat; one that holds is kept (`records/` beside the settings, the newest 200). The server keeps its own (`--records-dir`). Anybody, later: `atomic_verify [--root KEY] [--stats] FILES`.
+- A record can be played again only by the release that made it (it names the release and the protocol version).
+
 ### What this catches, and what it does not
 
 | A dishonest server that... | |
@@ -374,7 +385,7 @@ Each phase is usable on its own and ends with tests.
 | 4 | Master server (guest sessions, lobbies, status), signed configuration, browse / create / join by code in the game. **Done**; a player reaches a host at the address the master saw, so the host must be reachable until phase 5. | 1 |
 | 5 | pjnath + coturn: discovery, hole punching, TURN over UDP, TCP and TLS, the ladder, volume check, always-relay setting, connection display; the old relay removed | 2, 4 |
 | 6 | Server certificates and player keys: the tool that issues certificates, the certificate in the handshake, "verified" in the lobby, revocation through the configuration. **Done.** | 2 (revocation: 4) |
-| 7 | Signed match records: seed by commit and reveal, signed input statements, the record, `atomic_verify`, a tool that sums statistics from records | 3, 6 |
+| 7 | Signed match records: seed by commit and reveal, signed input statements, the record, `atomic_verify`, a tool that sums statistics from records. **Done** (per round; `atomic_verify --stats` is the tool that sums). | 3, 6 |
 | 8 | Tournaments as signed files: the format, the organiser's tool, the screen, servers admitting only listed players | 6, 7 |
 | - | Accounts on the master: optional, undecided | 4 |
 

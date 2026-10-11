@@ -15,6 +15,7 @@
 #include "game/match.hpp"
 #include "net/link.hpp"
 #include "net/protocol.hpp"
+#include "net/record.hpp"
 #include "net/relay.hpp"
 #include "net/snapshot.hpp"
 #include "net/socket.hpp"
@@ -47,6 +48,12 @@ struct ServerConfig {
     // code of its own; the program that owns the server hands it in. Empty: player keys are
     // not looked at, and every player counts as having none.
     std::function<bool(const Key&, const std::vector<std::uint8_t>&, const std::array<std::uint8_t, 64>&)> verifySignature;
+    // Match records (record.hpp): with a way to sign, every round leaves one. `signRecord`
+    // turns the record's bytes into the signed document that is handed out; `recordSink`
+    // is given each one (to keep it); `gameVersion` goes into it.
+    std::function<std::string(const std::vector<std::uint8_t>&)> signRecord;
+    std::function<void(const std::string& signedRecord, const MatchRecord& record)> recordSink;
+    std::string gameVersion;
     std::function<void(const std::string&)> log;  // one line per event; may be empty
 };
 
@@ -120,7 +127,10 @@ private:
     void refreshLobby();
     void broadcast(ServerMsg type, const std::vector<std::uint8_t>& payload);
     std::string startMatch();  // empty, or why not
-    void startRound();
+    void startRound();  // by way of the seed exchange when the round is recorded
+    void beginRound(std::uint32_t seed, const std::vector<SeedShare>& shares);
+    void stepSeeding();
+    void sealRecord();
     void stepRound();
     void sendState(Peer& p);
     void sendSnapshot(Peer& p);
@@ -215,6 +225,29 @@ private:
     int afterSteps_ = 0;
     std::uint64_t resultAt_ = 0;
     std::uint64_t resendAt_ = 0;
+
+    // The seed exchange before a recorded round: promises first, then the numbers.
+    struct Seeding {
+        bool active = false;
+        int stage = 0;  // 1: waiting for promises, 2: for the numbers
+        std::uint64_t deadline = 0;
+        std::uint32_t roundId = 0;
+        Key serverReveal{};
+        std::vector<SeedShare> shares;       // the server's first
+        std::vector<std::uint8_t> asked;     // the clients that were asked
+    } seeding_;
+    // The record of the round being played.
+    std::vector<SeedShare> roundShares_;
+    std::array<RecordSeat, kMaxPlayers> recordSeats_{};
+    std::map<std::uint8_t, PlayerLog> logs_;     // by client id: everybody who had a seat when the round began
+    std::map<std::uint8_t, bool> logFinal_;      // their last statement has come
+    std::vector<std::uint16_t> computerMask_;
+    std::vector<std::uint32_t> recordHashes_;
+    RoundStartMsg recordStart_;
+    RoundEndMsg recordEnd_;
+    std::uint64_t recordStartedUnix_ = 0;
+    bool recordPending_ = false;
+    std::uint64_t recordDueAt_ = 0;
 };
 
 }  // namespace ab::net
