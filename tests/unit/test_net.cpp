@@ -17,6 +17,7 @@
 #include "game/roulette.hpp"
 #include "net/client.hpp"
 #include "net/crypto.hpp"
+#include "net/link.hpp"
 #include "net/protocol.hpp"
 #include "net/relay.hpp"
 #include "net/server.hpp"
@@ -200,6 +201,157 @@ void testCodec() {
     if (const auto local = resolveHostPort("[fe80::1%1]:9", 5)) {
         CHECK(local->v6 && local->zone == 1 && local->port == 9);
         CHECK(local->text() == "[fe80::1%1]:9");
+    }
+}
+
+// Two ends of a link joined by a line that loses, repeats and delays packets.
+struct Line {
+    Link a, b;
+    Rng rng{99};
+    int lossPercent = 0, repeatPercent = 0, delayPercent = 0;
+    std::uint64_t now = 1000;
+    struct Flying {
+        std::uint64_t at;
+        Bytes packet;
+        bool toB;
+    };
+    std::vector<Flying> flying;
+    int sentPackets = 0;
+    std::size_t sentBytes = 0;
+
+    Line() {
+        Key ab{}, ba{};
+        randomBytes(ab.data(), 32);
+        randomBytes(ba.data(), 32);
+        a.start(ab, ba, 77, now);
+        b.start(ba, ab, 77, now);
+    }
+    void carry(const Bytes& packet, bool toB) {
+        ++sentPackets;
+        sentBytes += packet.size();
+        if (rng.below(100) < lossPercent) return;
+        const int copies = rng.below(100) < repeatPercent ? 2 : 1;
+        for (int i = 0; i < copies; ++i) flying.push_back({now + 10 + (rng.below(100) < delayPercent ? static_cast<std::uint64_t>(rng.below(80)) : 0), packet, toB});
+    }
+    void turn() {
+        a.update(now, [&](const Bytes& p) { carry(p, true); });
+        b.update(now, [&](const Bytes& p) { carry(p, false); });
+        now += 5;
+        for (std::size_t i = 0; i < flying.size();) {
+            if (flying[i].at > now) {
+                ++i;
+                continue;
+            }
+            (flying[i].toB ? b : a).receive(flying[i].packet, now);
+            flying.erase(flying.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+    }
+};
+
+// The link: messages complete and in order whatever the line does; datagrams as they come.
+void testLink() {
+    auto message = [](int n) {
+        // Sizes from nothing to several packets, contents that show a mix-up.
+        Bytes m(static_cast<std::size_t>((n * 677) % 4200));
+        for (std::size_t i = 0; i < m.size(); ++i) m[i] = static_cast<std::uint8_t>(n * 31 + static_cast<int>(i) * 7);
+        return m;
+    };
+    for (int kind = 0; kind < 3; ++kind) {
+        Line line;
+        if (kind >= 1) line.lossPercent = 40;
+        if (kind == 2) line.repeatPercent = 30, line.delayPercent = 50;
+        const int count = 300;
+        int sentA = 0, gotB = 0, sentB = 0, gotA = 0;
+        bool order = true;
+        for (int turns = 0; turns < 40000 && (gotB < count || gotA < count); ++turns) {
+            // A few at a time, both ways, while the line is at work.
+            if (sentA < count && turns % 3 == 0) line.a.sendMessage(static_cast<std::uint8_t>(sentA), message(sentA)), ++sentA;
+            if (sentB < count && turns % 5 == 0) line.b.sendMessage(static_cast<std::uint8_t>(sentB), message(sentB + 1000)), ++sentB;
+            line.turn();
+            std::uint8_t type = 0;
+            Bytes payload;
+            while (line.b.nextMessage(type, payload)) order = order && type == static_cast<std::uint8_t>(gotB) && payload == message(gotB), ++gotB;
+            while (line.a.nextMessage(type, payload)) order = order && type == static_cast<std::uint8_t>(gotA) && payload == message(gotA + 1000), ++gotA;
+        }
+        CHECK_EQ(gotB, count);
+        CHECK_EQ(gotA, count);
+        CHECK(order);
+        CHECK(!line.a.broken() && !line.b.broken());
+        // Everything is acknowledged in the end.
+        for (int i = 0; i < 2000 && (!line.a.idle() || !line.b.idle()); ++i) line.turn();
+        CHECK(line.a.idle() && line.b.idle());
+        if (kind == 0) CHECK(line.a.rttMs() >= 5 && line.a.rttMs() <= 40);  // the line takes 10 ms each way
+    }
+    {
+        // Datagrams: none is held back by a lost one or by a message being repeated; a lost
+        // one stays lost; none arrives twice.
+        Line line;
+        line.lossPercent = 40;
+        line.repeatPercent = 30;
+        int got = 0, last = -1;
+        bool twice = false;
+        std::vector<bool> seen(400, false);
+        std::uint64_t worst = 0;
+        std::vector<std::uint64_t> sentAt(400, 0);
+        for (int n = 0; n < 400; ++n) {
+            ByteWriter w;
+            w.u32(static_cast<std::uint32_t>(n));
+            CHECK(line.a.sendDatagram(9, w.data()));
+            sentAt[static_cast<std::size_t>(n)] = line.now;
+            if (n % 10 == 0) line.a.sendMessage(1, Bytes(3000, 1));
+            line.turn();
+            std::uint8_t type = 0;
+            Bytes payload;
+            while (line.b.nextDatagram(type, payload)) {
+                ByteReader r(payload);
+                const auto id = static_cast<int>(r.u32());
+                CHECK(type == 9 && r.ok() && id >= 0 && id < 400);
+                twice = twice || seen[static_cast<std::size_t>(id)];
+                seen[static_cast<std::size_t>(id)] = true;
+                worst = std::max(worst, line.now - sentAt[static_cast<std::size_t>(id)]);
+                last = id;
+                ++got;
+            }
+        }
+        CHECK(!twice);
+        CHECK(got > 180 && got < 300);  // about 60 % of 400
+        CHECK(last > 390);
+        CHECK(worst <= 20);             // the line's 10 ms and a turn: never the wait for a repeat
+        CHECK(!line.a.sendDatagram(9, Bytes(Link::kMaxDatagram + 1)));
+        CHECK(line.a.sendDatagram(9, Bytes(Link::kMaxDatagram)));
+    }
+    {
+        // A packet altered, from another connection, or played again is not taken.
+        Line line;
+        std::vector<Bytes> packets;
+        line.a.sendMessage(5, {1, 2, 3});
+        line.a.update(line.now, [&](const Bytes& p) { packets.push_back(p); });
+        CHECK(!packets.empty());
+        CHECK(packets[0].size() <= Link::kMaxPacket);
+        Bytes bad = packets[0];
+        bad.back() ^= 1;
+        CHECK(!line.b.receive(bad, line.now));
+        Bytes other = packets[0];
+        other[5] ^= 1;  // the connection's number
+        CHECK(!line.b.receive(other, line.now));
+        CHECK(line.b.receive(packets[0], line.now));
+        CHECK(!line.b.receive(packets[0], line.now));
+        std::uint8_t type = 0;
+        Bytes payload;
+        CHECK(line.b.nextMessage(type, payload) && type == 5 && payload.size() == 3);
+        CHECK(!line.b.nextMessage(type, payload));
+        // Going away is told to the other side, after what was still to be delivered.
+        line.a.sendMessage(6, Bytes(2500, 7));
+        line.a.close();
+        for (int i = 0; i < 400 && !line.b.closedByPeer(); ++i) line.turn();
+        CHECK(line.b.closedByPeer());
+        CHECK(line.b.nextMessage(type, payload) && type == 6 && payload.size() == 2500);
+        CHECK(line.a.idle());
+        // A silent line: a packet a second all the same, so that silence means the other side is gone.
+        Line quiet;
+        for (int i = 0; i < 1000; ++i) quiet.turn();  // five seconds
+        CHECK(quiet.sentPackets >= 8 && quiet.sentPackets <= 14);
+        CHECK(quiet.now - quiet.a.lastHeard() < 1100);
     }
 }
 
@@ -1458,6 +1610,7 @@ void testLanBrowser() {
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"codec", testCodec},
+        {"link", testLink},
         {"cryptography test vectors", testCrypto},
         {"lobby", testLobby},
         {"encryption on the wire", testEncryptionOnTheWire},

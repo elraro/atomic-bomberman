@@ -33,6 +33,16 @@ enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick
 enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Steps, RoundEnd, Snapshot, Ping, Roulette, KeyExchange = 100 };
 // A datagram of a connection: its contents are encrypted. Searches on the LAN stay in the clear.
 inline constexpr std::uint8_t kSealedDatagram = 0x80;
+// In the clear, before a connection has keys: the client's key (with the cookie the server
+// asked it to repeat), the server's key and the connection's number, a refusal, a cookie.
+inline constexpr std::uint8_t kClientKey = 0x81;
+inline constexpr std::uint8_t kServerKey = 0x82;
+inline constexpr std::uint8_t kClearReject = 0x83;
+inline constexpr std::uint8_t kCookie = 0x84;
+inline constexpr std::size_t kCookieBytes = 16;
+// Where the packets travel inside a TCP connection (a network without UDP, or a relay):
+// each is one frame of this type.
+inline constexpr std::uint8_t kPacketFrame = 0x7E;
 enum class UdpMsg : std::uint8_t { Probe = 1, ProbeAck, Input, Steps, Query, Info };
 
 enum class Phase : std::uint8_t { Lobby = 0, Round = 1, Result = 2, Roulette = 3 };

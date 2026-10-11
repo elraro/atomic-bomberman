@@ -50,7 +50,7 @@ endif()
 # Network play: sockets, protocol, server and client. No SDL: the dedicated
 # server is built from this alone.
 find_package(Threads REQUIRED)
-add_library(ab_net src/net/socket.cpp src/net/protocol.cpp src/net/server.cpp src/net/client.cpp src/net/upnp.cpp src/net/crypto.cpp src/net/relay.cpp)
+add_library(ab_net src/net/socket.cpp src/net/protocol.cpp src/net/server.cpp src/net/client.cpp src/net/upnp.cpp src/net/crypto.cpp src/net/relay.cpp src/net/link.cpp)
 target_link_libraries(ab_net PUBLIC ab_game ab_resources Threads::Threads)
 if(WIN32)
     target_link_libraries(ab_net PUBLIC ws2_32)
