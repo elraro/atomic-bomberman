@@ -64,9 +64,11 @@ bool Link::sendDatagram(std::uint8_t type, const Bytes& payload) {
 }
 
 std::uint64_t Link::timeoutOf(const Segment& s) const {
-    double t = std::clamp(srtt_ * 2.0 + 20.0, 60.0, 1000.0);
-    for (int i = 1; i < s.sends && t < 3000.0; ++i) t *= 1.5;
-    return static_cast<std::uint64_t>(std::min(t, 3000.0));
+    // One and a half round trips, a quarter longer with each repeat, a second at most: this
+    // carries a game's small messages, where waiting costs more than a packet sent twice.
+    double t = std::clamp(srtt_ * 1.5 + 10.0, 40.0, 500.0);
+    for (int i = 1; i < s.sends && t < 1000.0; ++i) t *= 1.25;
+    return static_cast<std::uint64_t>(std::min(t, 1000.0));
 }
 
 void Link::acknowledged(std::uint32_t ack, std::uint32_t mask, std::uint64_t nowMs) {

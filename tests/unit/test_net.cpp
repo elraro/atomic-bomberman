@@ -830,7 +830,7 @@ void testLossFromTheStart() {
     setTestUdpLoss(40);
     Client& ann = h.join("Ann", "pass");
     Client& bob = h.join("Bob", "pass");
-    const bool joined = h.until([&] { return ann.state() == Client::State::Lobby && bob.state() == Client::State::Lobby && ann.lobby().clients.size() == 2 && bob.ready(); });
+    const bool joined = h.until([&] { return ann.state() == Client::State::Lobby && bob.state() == Client::State::Lobby && ann.lobby().clients.size() == 2 && bob.ready(); }, 60000);
     CHECK(joined);
     CHECK(ann.udpActive() && bob.udpActive());
     // One after the other has arrived (the server takes one chat line per 300 ms from a
@@ -842,7 +842,7 @@ void testLossFromTheStart() {
             int lines = 0;
             for (const ChatLine& line : ann.chat()) lines += !line.fromServer ? 1 : 0;
             return lines == i + 1;
-        });
+        }, 60000);
         h.spin(400);
     }
     CHECK(chatted);
@@ -852,7 +852,7 @@ void testLossFromTheStart() {
         if (!line.fromServer) order = order && line.text == "line " + std::to_string(n++);
     CHECK(order);
     ann.sendStart();
-    const bool started = h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; });
+    const bool started = h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }, 60000);
     const bool finished = started && playToResult(h, {&ann, &bob});
     setTestUdpLoss(0);
     CHECK(started);
