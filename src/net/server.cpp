@@ -513,6 +513,18 @@ void Server::handleHello(Peer& p, const std::vector<std::uint8_t>& payload) {
         }
         p.playerKey = hello.playerKey;
     }
+    if (!config_.allowedKeys.empty() && (p.playerKey == Key{} || std::find(config_.allowedKeys.begin(), config_.allowedKeys.end(), p.playerKey) == config_.allowedKeys.end())) {
+        reject(p, "This match is for its listed players only");
+        log("INFO  Refused (not a listed player) from " + p.address.text());
+        return;
+    }
+    // One connection for each listed player: a second one under the same key is not let in.
+    if (!config_.allowedKeys.empty())
+        for (auto& q : peers_)
+            if (q.get() != &p && q->joined && !q->gone && q->playerKey == p.playerKey) {
+                reject(p, "That player is already here");
+                return;
+            }
     // A free id and a name nobody else has.
     for (int id = 0; id < 255; ++id)
         if (peerById(static_cast<std::uint8_t>(id)) == nullptr) {
@@ -602,6 +614,10 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
             const int option = r.u8();
             const int direction = r.i8();
             if (!r.ok() || &p != admin() || phase_ != Phase::Lobby || option >= static_cast<int>(Option::Count)) break;
+            if (config_.lockSettings) {
+                tell(p, "The settings of this match are fixed");
+                break;
+            }
             changeOption(static_cast<Option>(option), direction);
             break;
         }

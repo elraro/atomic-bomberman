@@ -23,6 +23,7 @@
 #include "online/bootstrap.hpp"
 #include "online/certificate.hpp"
 #include "online/json.hpp"
+#include "online/tournament.hpp"
 #endif
 #include "net/server.hpp"
 #include "resources/settings.hpp"
@@ -93,6 +94,8 @@ const char* const kUsage =
     "  --certificate FILE     this server's certificate (who answers for it), shown to every player\n"
     "  --signing-key-file FILE  the key match records are signed with (default: server.sign.key in the per-user folder)\n"
     "  --records-dir DIR      where the signed record of every round is kept (default: records in the per-user folder)\n"
+    "  --tournament FILE#KEY  serve a match of that tournament (a file or an address, and the organiser's key)\n"
+    "  --match ID             which one: only its players are let in, and its rules cannot be changed\n"
     "  --show-keys            print the two keys a certificate is made out to, and exit\n"
     "  --online listed|code   announce the game on the master server: in its list, or to be found by its code only\n"
     "  --online-config URL    where the signed configuration of online play is (several: commas)\n"
@@ -109,13 +112,13 @@ int main(int argc, char** argv) {
     bool schemesDirGiven = false;
     bool relayServer = false, portGiven = false;
     std::string onlineMode, onlineConfig, onlineKey;
-    std::string certificateFile, signingKeyFile, recordsDir;
+    std::string certificateFile, signingKeyFile, recordsDir, tournamentAt, matchId;
     bool showKeys = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
         if (a == "--version") {
-            std::puts("Atomic Bomberman (modern) server " AB_VERSION);
+            std::printf("Atomic Bomberman (modern) server " AB_VERSION " (protocol %d)\n", static_cast<int>(ab::net::kProtocolVersion));
             return 0;
         }
         if (a == "--help" || a == "-h") {
@@ -151,6 +154,8 @@ int main(int argc, char** argv) {
         else if (a == "--certificate") certificateFile = next();
         else if (a == "--signing-key-file") signingKeyFile = next();
         else if (a == "--records-dir") recordsDir = next();
+        else if (a == "--tournament") tournamentAt = next();
+        else if (a == "--match") matchId = next();
         else if (a == "--show-keys") showKeys = true;
         else if (a == "--online") onlineMode = next();
         else if (a == "--online-config") onlineConfig = next();
@@ -233,9 +238,61 @@ int main(int argc, char** argv) {
         }
     }
 #else
-    if (!certificateFile.empty() || showKeys) {
-        logLine("ERROR this server was built without online play: no certificates");
+    if (!certificateFile.empty() || showKeys || !tournamentAt.empty()) {
+        logLine("ERROR this server was built without online play: no certificates, no tournaments");
         return 2;
+    }
+#endif
+#ifdef AB_ONLINE
+    // A tournament's match: its players only, its rules, and this server must be the one the file names for it.
+    ab::online::Tournament tournament;
+    const ab::online::TournamentMatch* tournamentMatch = nullptr;
+    if (!tournamentAt.empty() && !showKeys) {
+        std::string location, keyHex, envelope, why;
+        ab::online::splitInvitation(tournamentAt, location, keyHex);
+        ab::online::PublicKey organiser{};
+        if (!ab::online::fromHex(keyHex, organiser.data(), organiser.size())) {
+            logLine("ERROR --tournament needs the organiser's key after a #: FILE#KEY");
+            return 2;
+        }
+        if (!ab::online::fetchTournament(location, envelope, why) || !ab::online::readTournament(envelope, &organiser, 0, tournament, why)) {
+            logLine("ERROR tournament: " + why);
+            return 2;
+        }
+        tournamentMatch = tournament.match(matchId);
+        if (tournamentMatch == nullptr) {
+            logLine("ERROR the tournament has no match \"" + matchId + "\" (see --match)");
+            return 2;
+        }
+        if (tournament.rules.gameVersion != AB_VERSION || tournament.rules.protocol != ab::net::kProtocolVersion) {
+            logLine("ERROR the tournament is played with release " + tournament.rules.gameVersion + " (protocol " + std::to_string(tournament.rules.protocol) + "); this is " AB_VERSION " (protocol " +
+                    std::to_string(ab::net::kProtocolVersion) + ")");
+            return 2;
+        }
+        for (const std::string& who : tournamentMatch->players) {
+            const ab::online::TournamentPlayer* player = tournament.player(who);
+            if (player == nullptr) {
+                logLine("ERROR match " + matchId + " is not ready: " + who + " has not been decided");
+                return 2;
+            }
+            ab::net::Key key{};
+            std::copy(player->key.begin(), player->key.end(), key.begin());
+            config.allowedKeys.push_back(key);
+        }
+        config.lockSettings = true;
+        config.password.clear();
+        config.name = ab::net::cleanText(tournament.name + " " + matchId, 32);
+        config.scheme = tournament.rules.scheme;
+        config.settings.winsNeeded = tournament.rules.wins;
+        config.settings.level = tournament.rules.level;
+        config.settings.playTime = tournament.rules.playTime;
+        config.settings.enclosementDepth = tournament.rules.enclosement;
+        config.settings.teamPlay = tournament.rules.teamPlay;
+        config.settings.computers = tournament.rules.computers;
+        if (!haveSigningKey) {
+            logLine("ERROR a tournament match needs a signing key for its records");
+            return 2;
+        }
     }
 #endif
     if (showKeys) {
@@ -257,6 +314,16 @@ int main(int argc, char** argv) {
                     haveSigningKey ? ab::online::toHex(ab::online::publicKeyOf(signingSeed)).c_str() : "(none)");
         server.stop();
         return haveSigningKey ? 0 : 1;
+    }
+    if (tournamentMatch != nullptr) {
+        const ab::online::TournamentServer* named = tournament.server(tournamentMatch->server);
+        if (named == nullptr || named->identityKey != server.identityKeyHex() || named->signingKey != ab::online::publicKeyOf(signingSeed)) {
+            logLine("ERROR this is not the server the tournament names for match " + matchId + " (other keys; see --show-keys)");
+            return 2;
+        }
+        std::string who;
+        for (const std::string& name : tournamentMatch->players) who += (who.empty() ? "" : ", ") + name;
+        logLine("INFO  Tournament \"" + tournament.name + "\" match " + matchId + ": " + who + " (first to " + std::to_string(tournament.rules.wins) + " rounds)");
     }
     if (!config.certificate.empty()) {
         // Is it this server's? (Whether it holds is for the players' games to judge: they have the root keys.)

@@ -57,6 +57,9 @@ void Settings::parse(const std::string& text) {
         else if (key == "online_config_url") onlineConfigUrl = value.substr(0, 1024);
         else if (key == "online_config_key") onlineConfigKey = value.substr(0, 64);
         else if (key == "net_online") netOnline = std::clamp(std::atoi(value.c_str()), 0, 2);
+        else if (key == "tournament") tournament = value.substr(0, 400);
+        else if (key == "tournament_key") tournamentKey = value.substr(0, 64);
+        else if (key == "tournament_serial") tournamentSerial = std::atoll(value.c_str());
         else if (key == "keydef") {
             int set = -1, slot = -1, code = 0;
             if (std::sscanf(value.c_str(), "%d,%d,%d", &set, &slot, &code) == 3 && set >= 0 && set < kKeySets && slot >= 0 &&
@@ -86,7 +89,8 @@ std::string Settings::serialize() const {
         << "\ndisable_game_music=" << disableGameMusic << "\nassign_keyboards=" << assignKeyboards << "\nfree_assets=" << freeAssets << "\nsmallmemory=" << smallMemory
         << "\nmusic_volume=" << musicVolume << "\nsound_volume=" << soundVolume << "\nnet_name=" << netName << "\nnet_address="
         << netAddress << "\nnet_server_name=" << netServerName << "\nnet_port=" << netPort << "\nnet_prediction=" << netPrediction << "\nnet_relay=" << netRelay << "\nnet_online=" << netOnline
-        << "\nonline_config_url=" << onlineConfigUrl << "\nonline_config_key=" << onlineConfigKey << "\n";
+        << "\nonline_config_url=" << onlineConfigUrl << "\nonline_config_key=" << onlineConfigKey << "\ntournament=" << tournament << "\ntournament_key=" << tournamentKey
+        << "\ntournament_serial=" << tournamentSerial << "\n";
     for (int set = 0; set < kKeySets; ++set)
         for (int slot = 0; slot < kKeysPerSet; ++slot)
             out << "keydef=" << set << "," << slot << "," << keys[static_cast<std::size_t>(set)][static_cast<std::size_t>(slot)] << "\n";

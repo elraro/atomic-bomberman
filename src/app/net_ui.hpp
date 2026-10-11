@@ -22,6 +22,7 @@
 #include "online/bootstrap.hpp"
 #include "online/certificate.hpp"
 #include "online/record_check.hpp"
+#include "online/tournament.hpp"
 #endif
 #include "rendering/renderer.hpp"
 #include "rendering/sprites.hpp"
@@ -74,6 +75,8 @@ public:
     }
     const std::string& errorText() const { return error_; }
     bool onlineBusy() const;  // the master server is being asked something
+    // The tournament screen's standing, in a line (for the screen and for automated checks).
+    const std::string& tournamentNote() const { return tournamentNote_; }
     // For automated checks: the hosted game's port and identity key (empty when not hosting).
     int hostPort() const { return hosting_ ? server_.port() : 0; }
     std::string hostIdentityKey() const { return hosting_ ? server_.identityKeyHex() : std::string(); }
@@ -103,7 +106,7 @@ public:
     void draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int frame, std::uint64_t nowMs);
 
 private:
-    enum class Mode { Closed, Join, Host, Connecting, Session, Error, Browse, Code };
+    enum class Mode { Closed, Join, Host, Connecting, Session, Error, Browse, Code, Tournament };
 
     void close();
     void connectTo(const std::string& address, bool remember);
@@ -119,6 +122,12 @@ private:
     void showError(const std::string& why);
     void drawBrowse(Renderer& r, SpriteBank& bank, int frame);
     void drawCode(Renderer& r, SpriteBank& bank, int frame);
+    // Tournaments: a signed file names the players' matches and their servers.
+    void openTournament();
+    void loadTournament();
+    void readTournamentFile(const std::string& envelope);
+    void playTournamentMatch();
+    void drawTournament(Renderer& r, SpriteBank& bank, int frame);
     void leave();
     void submitChat();
     void edit(std::string* value, std::size_t maxLength, bool digitsOnly, bool pad);
@@ -190,6 +199,8 @@ private:
     std::string expectIdentity_;          // the identity that server must show
     bool hostOnline_ = false;             // the hosted game is announced to the master
     std::string onlineNote_;
+    std::string tournamentNote_, tournamentOpened_;
+    bool tournamentLoaded_ = false, tournamentTrusted_ = false, tournamentLoading_ = false;
     std::string verifiedOperator_, certificateProblem_;
     std::string gameVersion_;
     std::uint64_t recordSeen_ = 0;        // the last record of the client that was looked at
@@ -201,6 +212,8 @@ private:
     bool havePlayerKey_ = false;
     online::Online online_;
     online::HostAnnouncer announcer_;
+    online::Tournament tournament_;
+    online::HttpJob tournamentJob_;
 #endif
     std::string chatText_;
     bool chatOpen_ = false;      // the chat line during a match

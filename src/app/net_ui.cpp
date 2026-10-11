@@ -19,7 +19,8 @@ namespace {
 
 using State = net::Client::State;
 
-constexpr int kJoinFields = 6;   // name, address, password, join, browse online, join by code; then the servers found, then back
+constexpr int kJoinFields = 7;   // name, address, password, join, browse online, join by code, tournament; then the servers found, then back
+constexpr int kTournamentRows = 5;  // the file, open, play my match, trust the organiser, back
 constexpr int kHostRows = 8;     // name, server name, port, password, relay, announce online, start, back
 constexpr int kHostOnlineRow = 5;
 constexpr int kHostStartRow = 6;
@@ -210,7 +211,7 @@ void NetUi::leave() {
     const Mode back = entry_;
     close();
     mode_ = entry_ = back;
-    row_ = back == Mode::Host ? kHostStartRow : back == Mode::Join ? 1 : 0;
+    row_ = back == Mode::Host ? kHostStartRow : back == Mode::Join ? 1 : back == Mode::Tournament ? 2 : 0;
     if (back == Mode::Browse) openBrowse();  // with a fresh list
     if (hooks_.lobbyEntered) hooks_.lobbyEntered();
 }
@@ -235,6 +236,7 @@ const char* NetUi::screenName() const {
         case Mode::Error: return "error";
         case Mode::Browse: return "browse";
         case Mode::Code: return "code";
+        case Mode::Tournament: return "tournament";
         case Mode::Session: break;
     }
     if (client_.roulette() != nullptr) return "wheel";
@@ -272,6 +274,12 @@ void NetUi::finishKeyboard(bool submit) {
     if (editing_ != nullptr) {
         // A field keeps what was typed either way, as with Esc on a real keyboard.
         if (mode_ == Mode::Code) row_ = codeText_.size() == 6 ? 1 : 0;
+        if (mode_ == Mode::Tournament) {
+            editing_ = nullptr;
+            if (submit) loadTournament();
+            row_ = 1;
+            return;
+        }
         editing_ = nullptr;
         cfg_.netName = net::cleanText(cfg_.netName, net::kMaxName);
         if (hooks_.settingsChanged) hooks_.settingsChanged();
@@ -431,6 +439,108 @@ void NetUi::openCode(bool pad) {
     edit(&codeText_, 6, true, pad);  // straight to typing it
 }
 
+// --- tournaments ---
+
+void NetUi::openTournament() {
+    mode_ = entry_ = Mode::Tournament;
+    row_ = cfg_.tournament.empty() ? 0 : 1;
+    if (!cfg_.tournament.empty() && !tournamentLoaded_ && !tournamentLoading_) loadTournament();
+}
+
+// Fetches the file named on the screen (a path is read at once; an address on a thread of its own).
+void NetUi::loadTournament() {
+#ifdef AB_ONLINE
+    std::string location, keyHex;
+    online::splitInvitation(cfg_.tournament, location, keyHex);
+    // An invitation "location#key" says whose signature to expect; another file than last time starts without a key.
+    if (!keyHex.empty() || location != tournamentOpened_) {
+        if (location != tournamentOpened_ && keyHex.empty() && !tournamentOpened_.empty()) cfg_.tournamentKey.clear(), cfg_.tournamentSerial = 0;
+        if (!keyHex.empty() && keyHex != cfg_.tournamentKey) cfg_.tournamentKey = keyHex, cfg_.tournamentSerial = 0;
+    }
+    cfg_.tournament = location;
+    tournamentOpened_ = location;
+    if (hooks_.settingsChanged) hooks_.settingsChanged();
+    tournamentLoaded_ = false;
+    tournamentNote_ = "Reading...";
+    if (location.empty()) {
+        tournamentNote_ = "Name a tournament file or its address";
+        return;
+    }
+    if (location.rfind("http://", 0) == 0 || location.rfind("https://", 0) == 0) {
+        online::HttpRequest q;
+        q.url = location;
+        tournamentJob_.start(q);
+        tournamentLoading_ = true;
+        return;
+    }
+    std::string envelope, why;
+    if (!online::fetchTournament(location, envelope, why)) tournamentNote_ = why;
+    else readTournamentFile(envelope);
+#else
+    tournamentNote_ = "This copy of the game was built without online play";
+#endif
+}
+
+void NetUi::readTournamentFile(const std::string& envelope) {
+#ifdef AB_ONLINE
+    online::PublicKey trusted{};
+    const bool haveKey = online::fromHex(cfg_.tournamentKey, trusted.data(), trusted.size());
+    online::Tournament t;
+    std::string why;
+    bool otherKey = false;
+    if (!online::readTournament(envelope, haveKey ? &trusted : nullptr, haveKey ? cfg_.tournamentSerial : 0, t, why)) {
+        // Signed, but not with the key chosen before (another tournament, or the organiser has
+        // a new key): shown as any file whose signer the player has not yet chosen to believe.
+        otherKey = haveKey && why == "not signed by the organiser whose key you hold" && online::readTournament(envelope, nullptr, 0, t, why);
+        if (!otherKey) {
+            tournamentLoaded_ = false;
+            tournamentNote_ = "Not opened: " + why;
+            return;
+        }
+    }
+    tournament_ = std::move(t);
+    tournamentLoaded_ = true;
+    tournamentTrusted_ = haveKey && !otherKey;
+    if (haveKey && tournament_.serial != cfg_.tournamentSerial) {
+        cfg_.tournamentSerial = tournament_.serial;
+        if (hooks_.settingsChanged) hooks_.settingsChanged();
+    }
+    // What it means for this player.
+    online::PublicKey mine{};
+    if (havePlayerKey_) mine = online::publicKeyOf(playerSeed_);
+    const online::TournamentPlayer* me = havePlayerKey_ ? tournament_.playerByKey(mine) : nullptr;
+    const std::vector<const online::TournamentMatch*> open = tournament_.openMatchesOf(mine);
+    if (!tournamentTrusted_)
+        tournamentNote_ = std::string(otherKey ? "Not the key you chose before. " : "") + "Signed by " + online::keyFingerprint(tournament_.organiserKey) + ". Is that your organiser's key?";
+    else if (me == nullptr) tournamentNote_ = "You are not among its players";
+    else if (open.empty()) tournamentNote_ = me->name + ": no match left to play";
+    else if (!tournament_.ready(*open.front())) tournamentNote_ = me->name + ": match " + open.front()->id + " waits for an earlier match";
+    else {
+        std::string others;
+        for (const std::string& who : open.front()->players)
+            if (who != me->name) others += (others.empty() ? "" : ", ") + who;
+        tournamentNote_ = me->name + ": match " + open.front()->id + " against " + others;
+    }
+#else
+    (void)envelope;
+#endif
+}
+
+// To the server the file names for this player's next match; it must show the identity the file names.
+void NetUi::playTournamentMatch() {
+#ifdef AB_ONLINE
+    if (!tournamentLoaded_ || !tournamentTrusted_ || !havePlayerKey_) return;
+    const std::vector<const online::TournamentMatch*> open = tournament_.openMatchesOf(online::publicKeyOf(playerSeed_));
+    if (open.empty() || !tournament_.ready(*open.front())) return;
+    const online::TournamentServer* server = tournament_.server(open.front()->server);
+    candidates_ = {server->address};
+    candidate_ = 0;
+    expectIdentity_ = server->identityKey;
+    password_.clear();
+    connectTo(server->address, false);
+#endif
+}
+
 // The master server is asked how to reach that game; update() goes on from its answer.
 void NetUi::askJoin(const std::string& lobbyId, const std::string& code) {
 #ifdef AB_ONLINE
@@ -457,6 +567,12 @@ void NetUi::updateOnline(std::uint64_t nowMs) {
         announcer_.update(nowMs, online_, server_, net::cleanText(cfg_.netServerName, 32), cfg_.netOnline == 1);
         if (online_.announced()) onlineNote_ = std::string(cfg_.netOnline == 1 ? "Listed, code " : "Code ") + online_.code();
         else onlineNote_ = online_.error().empty() ? "Announcing..." : "Not announced online";
+    }
+    if (tournamentLoading_ && tournamentJob_.finished()) {
+        tournamentLoading_ = false;
+        const online::HttpResponse r = tournamentJob_.take();
+        if (r.ok()) readTournamentFile(r.body);
+        else tournamentNote_ = "Not fetched: " + (r.status == 0 ? r.error : "the server answered " + std::to_string(r.status));
     }
     if (asking_ == Asking::Nothing || online_.busy()) return;
     if (!online_.error().empty()) return showError(online_.error());
@@ -628,7 +744,7 @@ void NetUi::key(unsigned key, bool ctrl, bool pad) {
         if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE || key == SDLK_ESCAPE) {
             errorItem_ = 0;
             mode_ = entry_;
-            row_ = entry_ == Mode::Host ? kHostStartRow : entry_ == Mode::Join ? 1 : 0;
+            row_ = entry_ == Mode::Host ? kHostStartRow : entry_ == Mode::Join ? 1 : entry_ == Mode::Tournament ? 2 : 0;
             if (entry_ == Mode::Browse) openBrowse();
         }
         return;
@@ -678,6 +794,7 @@ void NetUi::key(unsigned key, bool ctrl, bool pad) {
                 else if (row_ == 3 && address.empty()) sound(40);
                 else if (row_ == 4) openBrowse();
                 else if (row_ == 5) openCode(pad);
+                else if (row_ == 6) openTournament();
                 else if (row_ >= kJoinFields + servers) close();
                 else {
                     candidates_.clear();
@@ -717,6 +834,48 @@ void NetUi::key(unsigned key, bool ctrl, bool pad) {
             if (row_ == games + 1) openJoin();
             else if (online_.lobbies()[static_cast<std::size_t>(row_)].version != net::kProtocolVersion) sound(40);
             else askJoin(online_.lobbies()[static_cast<std::size_t>(row_)].id, "");
+        }
+        return;
+    }
+    if (mode_ == Mode::Tournament) {
+        if (editing_ != nullptr) {
+            if (key == SDLK_BACKSPACE) removeLastChar(*editing_);
+            if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_ESCAPE) {
+                editing_ = nullptr;
+                osk_.close();
+                if (key != SDLK_ESCAPE) loadTournament();
+                row_ = 1;
+            }
+            return;
+        }
+        const bool canPlay = tournamentLoaded_ && tournamentTrusted_ && tournamentNote_.find(": match ") != std::string::npos && tournamentNote_.find("waits") == std::string::npos;
+        if (key == SDLK_UP) row_ = (row_ + kTournamentRows - 1) % kTournamentRows, sound(20);
+        if (key == SDLK_DOWN) row_ = (row_ + 1) % kTournamentRows, sound(20);
+        if (key == SDLK_ESCAPE) openJoin();
+        if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+            if (row_ == 0) {
+                sound(10);
+                edit(&cfg_.tournament, 300, false, pad);
+            } else if (row_ == 1) {
+                sound(10);
+                if (!tournamentLoading_) loadTournament();
+            } else if (row_ == 2) {
+                sound(canPlay ? 10 : 40);
+                if (canPlay) playTournamentMatch();
+            } else if (row_ == 3) {
+                // The player's own choice: this is the organiser whose word counts for this tournament.
+                const bool ask = tournamentLoaded_ && !tournamentTrusted_;
+                sound(ask ? 10 : 40);
+                if (ask) {
+                    cfg_.tournamentKey = online::toHex(tournament_.organiserKey);
+                    cfg_.tournamentSerial = tournament_.serial;
+                    if (hooks_.settingsChanged) hooks_.settingsChanged();
+                    loadTournament();
+                }
+            } else {
+                sound(10);
+                openJoin();
+            }
         }
         return;
     }
@@ -1009,13 +1168,14 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
         item(3, "Join this address", 86.0f + 24.0f * 3.0f);
         item(4, "Browse online games", 86.0f + 24.0f * 4.0f);
         item(5, "Join online by code", 86.0f + 24.0f * 5.0f);
-        label(r, bank, "Games on the local network:", 80, 236, 1, 1, 1);
+        item(6, "Tournament", 86.0f + 24.0f * 6.0f);
+        label(r, bank, "Games on the local network:", 80, 260, 1, 1, 1);
         const auto& servers = browser_.servers();
-        if (servers.empty()) label(r, bank, "(searching...)", 100, 258, 0.7f, 0.7f, 0.7f);
-        for (std::size_t i = 0; i < servers.size() && i < 6; ++i) {
+        if (servers.empty()) label(r, bank, "(searching...)", 100, 282, 0.7f, 0.7f, 0.7f);
+        for (std::size_t i = 0; i < servers.size() && i < 5; ++i) {
             static const char* const kPhase[4] = {"in the lobby", "playing", "playing", "playing"};
             const net::ServerInfo& info = servers[i].info;
-            const float y = 258.0f + 22.0f * static_cast<float>(i);
+            const float y = 282.0f + 22.0f * static_cast<float>(i);
             const bool on = row_ == kJoinFields + static_cast<int>(i);
             const std::string line = info.name + "   " + std::to_string(info.players) + " player" + (info.players == 1 ? "" : "s") + ", " +
                                      kPhase[static_cast<int>(info.phase)] + (info.password ? "   (password)" : "") +
@@ -1089,6 +1249,57 @@ void NetUi::drawBrowse(Renderer& r, SpriteBank& bank, int frame) {
 #else
     (void)r, (void)bank, (void)frame;
 #endif
+}
+
+// A tournament: the file, what it says for this player, and its matches.
+void NetUi::drawTournament(Renderer& r, SpriteBank& bank, int frame) {
+    r.image(bank.picture("glue0"));
+    r.quad(40, 40, 560, 400, 0.0f, 0.0f, 0.10f, 0.85f);
+    label(r, bank, "Tournament", 55, 50, 1.0f, 0.95f, 0.3f);
+    const bool typing = editing_ == &cfg_.tournament;
+    const bool blink = (frame / 20) % 2 == 0;
+    auto item = [&](int row, const std::string& text, float y, bool enabled = true) {
+        const bool on = row == row_ && !typing;
+        const float lit = enabled ? 0.85f : 0.45f;
+        label(r, bank, text, 80, y, on ? 1.0f : lit, on ? 0.95f : lit, on ? 0.3f : lit);
+        if (on) r.sprite(bank, "cursor1", frame / 8, -1, 62.0f, y + 15.0f);
+    };
+    item(0, "File or address:", 80);
+    std::string shown = cfg_.tournament.empty() && !typing ? "(a path, or https://...)" : cfg_.tournament;
+    while (r.textWidth(bank, shown) > 330 && shown.size() > 3) shown.erase(0, 1);  // the end stays visible
+    label(r, bank, shown + (typing ? (blink ? "_" : " ") : ""), 230, 80, typing ? 0.4f : 1.0f, 1.0f, 1.0f);
+    if (typing) r.sprite(bank, "cursor1", frame / 8, -1, 62.0f, 95.0f);
+    const bool canPlay = tournamentLoaded_ && tournamentTrusted_ && tournamentNote_.find(": match ") != std::string::npos && tournamentNote_.find("waits") == std::string::npos;
+    item(1, tournamentLoaded_ ? "Read it again" : "Open", 104);
+    item(2, "Play my match", 128, canPlay);
+    item(3, "This is my organiser's key", 152, tournamentLoaded_ && !tournamentTrusted_);
+    item(4, "Back", 176);
+    const std::vector<std::string> note = wrap(r, bank, tournamentNote_, 520);
+    for (std::size_t i = 0; i < note.size() && i < 2; ++i) label(r, bank, note[i], 60, 206.0f + 18.0f * static_cast<float>(i), 0.4f, 1.0f, 1.0f);
+#ifdef AB_ONLINE
+    if (tournamentLoaded_) {
+        const std::string title = tournament_.name + (tournament_.organiser.empty() ? "" : "  (" + tournament_.organiser + ")") + (tournamentTrusted_ ? "" : "  - not yet trusted");
+        label(r, bank, wrap(r, bank, title, 520).front(), 60, 250, 1.0f, 0.95f, 0.3f);
+        // The matches still to be played first, then the ones that are over; as many as fit.
+        std::vector<const online::TournamentMatch*> order;
+        for (const online::TournamentMatch& m : tournament_.matches)
+            if (m.winner.empty()) order.push_back(&m);
+        for (const online::TournamentMatch& m : tournament_.matches)
+            if (!m.winner.empty()) order.push_back(&m);
+        for (std::size_t i = 0; i < order.size() && i < 8; ++i) {
+            const online::TournamentMatch& m = *order[i];
+            std::string who;
+            for (const std::string& p : m.players) who += (who.empty() ? "" : " - ") + (p[0] == '@' ? "winner of " + p.substr(1) : p);
+            const float y = 272.0f + 18.0f * static_cast<float>(i);
+            const float lit = m.winner.empty() ? 0.9f : 0.6f;
+            label(r, bank, m.id, 60, y, lit, lit, lit);
+            label(r, bank, wrap(r, bank, who, 300).front(), 130, y, lit, lit, lit);
+            label(r, bank, wrap(r, bank, m.winner.empty() ? m.server : "won by " + m.winner, 150).front(), 440, y, lit, lit, lit);
+        }
+        if (order.size() > 8) label(r, bank, "(and " + std::to_string(order.size() - 8) + " more)", 60, 272.0f + 18.0f * 8.0f, 0.6f, 0.6f, 0.6f);
+    }
+#endif
+    label(r, bank, typing ? "Type, then Enter" : "Up/Down: select   Enter: choose   Esc: back", 60, 448, 0.4f, 1.0f, 1.0f);
 }
 
 // Joining a game by the six digits its host gives out.
@@ -1375,6 +1586,8 @@ void NetUi::draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int fr
         drawBrowse(r, bank, frame);
     } else if (mode_ == Mode::Code) {
         drawCode(r, bank, frame);
+    } else if (mode_ == Mode::Tournament) {
+        drawTournament(r, bank, frame);
     } else if (mode_ == Mode::Session && client_.roulette() != nullptr && wheel_) {
         drawRoulette(r, bank);
         drawChat(r, bank, nowMs);

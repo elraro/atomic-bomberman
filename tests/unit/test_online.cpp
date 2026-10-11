@@ -19,6 +19,7 @@
 #include "online/json.hpp"
 #include "online/online.hpp"
 #include "online/sign.hpp"
+#include "online/tournament.hpp"
 
 using namespace ab::online;
 using fake::FakeServer;
@@ -284,6 +285,86 @@ void testCertificates() {
     CHECK(!loadOrCreateSeed("no-such-folder/x/key.txt", c));
 }
 
+// A tournament file: read only if it is signed (by the organiser asked for, where one is),
+// consistent, and not an older issue than one seen.
+void testTournamentFiles() {
+    Seed organiser{}, stranger{};
+    organiser.fill(31);
+    stranger.fill(32);
+    const PublicKey key = publicKeyOf(organiser);
+    auto hex = [](char c) { return std::string(64, c); };
+    auto document = [&](long long serial, const std::string& matches, const std::string& kind = "tournament", const std::string& players = "") {
+        return "{\"kind\":\"" + kind + "\",\"name\":\"Cup\",\"organiser\":\"Org\",\"serial\":" + std::to_string(serial) + ",\"issued\":5,"
+               "\"rules\":{\"game_version\":\"1.0\",\"protocol\":10,\"wins\":3,\"level\":-1,\"scheme\":\"x\",\"play_time\":90,\"team_play\":true,\"computers\":2},"
+               "\"players\":[" + (players.empty() ? "{\"name\":\"Ann\",\"key\":\"" + hex('1') + "\"},{\"name\":\"Bob\",\"key\":\"" + hex('2') + "\"},{\"name\":\"Cy\",\"key\":\"" + hex('3') + "\"}" : players) + "],"
+               "\"servers\":[{\"name\":\"main\",\"address\":\"play.example.org:27410\",\"identity_key\":\"" + hex('A') + "\",\"signing_key\":\"" + hex('b') + "\"}],"
+               "\"matches\":[" + matches + "]}";
+    };
+    const std::string matches =
+        "{\"id\":\"R1-1\",\"round\":1,\"players\":[\"Ann\",\"Bob\"],\"server\":\"main\",\"time\":100,\"winner\":\"Bob\",\"records\":[{\"sha256\":\"" + hex('c') + "\",\"url\":\"https://x/1\"}]},"
+        "{\"id\":\"R2-1\",\"round\":2,\"players\":[\"Bob\",\"Cy\"],\"server\":\"main\",\"time\":200,\"winner\":\"\",\"records\":null},"
+        "{\"id\":\"R3-1\",\"round\":3,\"players\":[\"@R2-1\",\"Ann\"],\"server\":\"\",\"winner\":\"\"}";
+    Tournament t;
+    std::string why;
+    CHECK(readTournament(signDocument(organiser, document(7, matches)), &key, 7, t, why));
+    CHECK(t.name == "Cup" && t.organiser == "Org" && t.serial == 7 && t.organiserKey == key);
+    CHECK(t.rules.wins == 3 && t.rules.level == -1 && t.rules.scheme == "x" && t.rules.playTime == 90 && t.rules.teamPlay && t.rules.computers == 2 && t.rules.gameVersion == "1.0" && t.rules.protocol == 10);
+    CHECK(t.players.size() == 3 && t.servers.size() == 1 && t.matches.size() == 3);
+    CHECK(t.servers[0].identityKey == hex('a'));  // in small letters, as the game compares it
+    CHECK(t.match("R1-1")->winner == "Bob" && t.match("R1-1")->records.size() == 1 && t.match("R2-1")->records.empty() && t.match("nope") == nullptr);
+    // Whose turn: Bob and Cy have the second round; Ann's next match waits for it.
+    PublicKey ann{}, bob{}, cy{}, nobody{};
+    fromHex(hex('1'), ann.data(), 32);
+    fromHex(hex('2'), bob.data(), 32);
+    fromHex(hex('3'), cy.data(), 32);
+    nobody.fill(9);
+    CHECK(t.playerByKey(bob)->name == "Bob" && t.playerByKey(nobody) == nullptr && t.player("Cy") != nullptr && t.player("Dan") == nullptr);
+    CHECK(t.openMatchesOf(bob).size() == 1 && t.openMatchesOf(bob)[0]->id == "R2-1" && t.ready(*t.openMatchesOf(bob)[0]));
+    CHECK(t.openMatchesOf(ann).size() == 1 && t.openMatchesOf(ann)[0]->id == "R3-1" && !t.ready(*t.openMatchesOf(ann)[0]));
+    CHECK(t.openMatchesOf(nobody).empty());
+    // Without a key asked for it is read too, and says who signed: the reader then decides.
+    CHECK(readTournament(signDocument(stranger, document(1, matches)), nullptr, 0, t, why) && t.organiserKey == publicKeyOf(stranger));
+    auto refused = [&](const std::string& envelope, const PublicKey* trusted, long long lowest, const std::string& reason) {
+        Tournament none;
+        std::string said;
+        const bool ok = readTournament(envelope, trusted, lowest, none, said);
+        CHECK(!ok);
+        if (said.find(reason) == std::string::npos) {
+            ++g_failures;
+            std::printf("  FAIL expected a reason with \"%s\", got \"%s\"\n", reason.c_str(), said.c_str());
+        }
+    };
+    refused(signDocument(stranger, document(7, matches)), &key, 0, "not signed by the organiser");
+    refused(signDocument(organiser, document(6, matches)), &key, 7, "older issue");
+    refused(signDocument(organiser, document(7, matches, "configuration")), &key, 0, "not a tournament file");
+    refused(document(7, matches), &key, 0, "not a signed document");
+    refused("rubbish", nullptr, 0, "not a signed document");
+    auto bad = [&](const std::string& brokenMatches, const std::string& reason, const std::string& players = "") {
+        refused(signDocument(organiser, document(7, brokenMatches, "tournament", players)), &key, 0, reason);
+    };
+    bad("{\"id\":\"M\",\"players\":[\"Ann\",\"Zed\"],\"server\":\"main\"}", "names a player the tournament does not list");
+    bad("{\"id\":\"M\",\"players\":[\"Ann\",\"@Q\"],\"server\":\"main\"}", "names a player the tournament does not list");
+    bad("{\"id\":\"M\",\"players\":[\"Ann\",\"@M\"],\"server\":\"main\"}", "names a player the tournament does not list");
+    bad("{\"id\":\"M\",\"players\":[\"Ann\"],\"server\":\"main\"}", "two to ten players");
+    bad("{\"id\":\"M\",\"players\":[\"Ann\",\"Bob\"],\"server\":\"elsewhere\"}", "names a server");
+    bad("{\"id\":\"M\",\"players\":[\"Ann\",\"Bob\"],\"server\":\"main\",\"winner\":\"Cy\"}", "did not play in it");
+    bad("{\"id\":\"M\",\"players\":[\"Ann\",\"Bob\"]},{\"id\":\"M\",\"players\":[\"Ann\",\"Cy\"]}", "without an id of its own");
+    bad("{\"id\":\"M\",\"players\":[\"Ann\",\"Bob\"],\"records\":[{\"sha256\":\"xyz\"}]}", "without its hash");
+    bad(matches, "without a name of their own or without a key", "{\"name\":\"Ann\",\"key\":\"" + hex('1') + "\"},{\"name\":\"Ann\",\"key\":\"" + hex('2') + "\"}");
+    bad(matches, "one key for two players", "{\"name\":\"Ann\",\"key\":\"" + hex('1') + "\"},{\"name\":\"Bob\",\"key\":\"" + hex('1') + "\"},{\"name\":\"Cy\",\"key\":\"" + hex('3') + "\"}");
+    bad(matches, "without a name of their own or without a key", "{\"name\":\"@R1-1\",\"key\":\"" + hex('1') + "\"}");
+
+    std::string location, keyHex;
+    splitInvitation("https://example.org/cup.json#" + hex('d') + "\n", location, keyHex);
+    CHECK(location == "https://example.org/cup.json" && keyHex == hex('d'));
+    splitInvitation("/home/me/cup.ab", location, keyHex);
+    CHECK(location == "/home/me/cup.ab" && keyHex.empty());
+    CHECK_TEXT(keyFingerprint(key).substr(4, 1), "-");
+    CHECK(keyFingerprint(key).size() == 19 && keyFingerprint(key) != keyFingerprint(publicKeyOf(stranger)));
+    std::string envelope;
+    CHECK(!fetchTournament("no-such-file.ab", envelope, why) && why.find("cannot read") != std::string::npos);
+}
+
 void testHttp() {
     bool tls = false;
     std::string host, port, path;
@@ -528,6 +609,7 @@ int main() {
         {"signatures and signed documents", testSignatures},
         {"configuration rules", testConfigRules},
         {"server certificates and key files", testCertificates},
+        {"tournament files", testTournamentFiles},
         {"http client", testHttp},
         {"master client", testMasterClient},
     };

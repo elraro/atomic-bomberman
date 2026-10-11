@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/elraro/atomic-bomberman/master/internal/signed"
+	"github.com/elraro/atomic-bomberman/master/internal/tournament"
 )
 
 const usage = `abconfig keygen -out NAME                    make a key pair: NAME.key (keep it offline) and NAME.pub
@@ -34,6 +35,14 @@ abconfig example                             an example configuration document
 abconfig cert -key ROOT.key -identity HEX -signing HEX -operator NAME [-contact TEXT] [-days 90] [-serial N] -out FILE
                                              a certificate for a game server: who answers for it, and its two keys
                                              (the server prints them: atomic_server --show-keys)
+abconfig tournament-new -name NAME -organiser NAME -players FILE -servers FILE [-wins N] [-level N] [-scheme NAME]
+                        [-play-time N] [-game-version V] [-protocol N] -out FILE.json
+                                             a tournament file (not yet signed) with a knock-out bracket; FILE of
+                                             players: "key name" a line, of servers: "identity-key signing-key address name"
+abconfig tournament-result -in FILE.json -match ID -winner NAME [-records A.abrec,B.abrec] [-urls U1,U2]
+                                             write a result into it (the records' hashes; the winner into the next round)
+abconfig tournament-sign -key ORGANISER.key -in FILE.json -out SIGNED.json [-serial N]
+                                             check it and sign it (each issue with a higher serial)
 abconfig selfsigned -host NAME -out NAME     a TLS certificate signed by itself (NAME.crt, NAME.tls.key), for a master
                                              server without a certificate from an authority: the game goes by the pin
 `
@@ -74,6 +83,20 @@ func main() {
 	signing := fs.String("signing", "", "with cert: the server's signing key (hex)")
 	operator := fs.String("operator", "", "with cert: who runs the server")
 	contact := fs.String("contact", "", "with cert: how to reach them")
+	name := fs.String("name", "", "tournament: its name")
+	organiser := fs.String("organiser", "", "tournament: who runs it")
+	playersFile := fs.String("players", "", "tournament-new: file of players, \"key name\" a line")
+	serversFile := fs.String("servers", "", "tournament-new: file of servers, \"identity-key signing-key address name\" a line")
+	wins := fs.Int("wins", 2, "tournament-new: round wins that decide a match")
+	level := fs.Int("level", 0, "tournament-new: level 0-10, -1 for a random one")
+	scheme := fs.String("scheme", "basic", "tournament-new: scheme")
+	playTime := fs.Int("play-time", 150, "tournament-new: seconds a round")
+	gameVersion := fs.String("game-version", "", "tournament-new: the release the matches are played with")
+	protocol := fs.Int("protocol", 0, "tournament-new: its protocol version")
+	matchID := fs.String("match", "", "tournament-result: the match")
+	winner := fs.String("winner", "", "tournament-result: who won it")
+	records := fs.String("records", "", "tournament-result: the match's record files, separated by commas")
+	urls := fs.String("urls", "", "tournament-result: where they can be fetched, in the same order")
 	_ = fs.Parse(os.Args[2:])
 
 	switch os.Args[1] {
@@ -205,6 +228,80 @@ func main() {
 			die("%v", err)
 		}
 		fmt.Printf("certificate %d for %q, good for %d days: %s\n", *serial, *operator, lifetime, *out)
+	case "tournament-new":
+		if *name == "" || *playersFile == "" || *serversFile == "" || *out == "" {
+			die("tournament-new needs -name, -players, -servers and -out")
+		}
+		f := tournament.File{Kind: "tournament", Name: *name, Organiser: *organiser, Players: []tournament.Player{}, Servers: []tournament.Server{},
+			Rules: tournament.Rules{GameVersion: *gameVersion, Protocol: *protocol, Wins: *wins, Level: *level, Scheme: *scheme, PlayTime: *playTime, Enclosement: 1}}
+		for _, line := range readLines(*playersFile) {
+			key, playerName, ok := strings.Cut(line, " ")
+			if !ok {
+				die("%s: a line needs a key and a name: %q", *playersFile, line)
+			}
+			f.Players = append(f.Players, tournament.Player{Name: strings.TrimSpace(playerName), Key: strings.ToLower(key)})
+		}
+		for _, line := range readLines(*serversFile) {
+			parts := strings.SplitN(line, " ", 4)
+			if len(parts) != 4 {
+				die("%s: a line needs an identity key, a signing key, an address and a name: %q", *serversFile, line)
+			}
+			f.Servers = append(f.Servers, tournament.Server{IdentityKey: strings.ToLower(parts[0]), SigningKey: strings.ToLower(parts[1]), Address: parts[2], Name: strings.TrimSpace(parts[3])})
+		}
+		f.Bracket()
+		if err := f.Validate(); err != nil {
+			die("%v", err)
+		}
+		writeTournament(*out, &f)
+		fmt.Printf("%d players, %d matches: %s (set times and servers in it, then tournament-sign)\n", len(f.Players), len(f.Matches), *out)
+	case "tournament-result":
+		if *in == "" || *matchID == "" || *winner == "" {
+			die("tournament-result needs -in, -match and -winner")
+		}
+		f := readTournament(*in)
+		var contents [][]byte
+		for _, file := range splitList(*records) {
+			raw, err := os.ReadFile(file)
+			if err != nil {
+				die("%v", err)
+			}
+			contents = append(contents, raw)
+		}
+		if err := f.SetResult(*matchID, *winner, contents, splitList(*urls)); err != nil {
+			die("%v", err)
+		}
+		if err := f.Validate(); err != nil {
+			die("%v", err)
+		}
+		writeTournament(*in, f)
+		fmt.Printf("match %s: won by %s, %d record(s)\n", *matchID, *winner, len(contents))
+	case "tournament-sign":
+		if *keyFile == "" || *in == "" || *out == "" {
+			die("tournament-sign needs -key, -in and -out")
+		}
+		f := readTournament(*in)
+		if err := f.Validate(); err != nil {
+			die("not signed: %v", err)
+		}
+		now := time.Now().UTC().Truncate(time.Second)
+		f.Kind = "tournament"
+		f.Issued = now.Unix()
+		f.Serial = now.Unix()
+		if *serial != 0 {
+			f.Serial = *serial
+		}
+		document, err := json.MarshalIndent(f, "", "  ")
+		if err != nil {
+			die("%v", err)
+		}
+		envelope, err := signed.Sign(readKey(*keyFile), document)
+		if err != nil {
+			die("%v", err)
+		}
+		if err := os.WriteFile(*out, append(envelope, '\n'), 0o644); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("tournament %q, issue %d: %s\n", f.Name, f.Serial, *out)
 	case "selfsigned":
 		if *host == "" || *out == "" {
 			die("selfsigned needs -host and -out")
@@ -223,6 +320,49 @@ func main() {
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
+	}
+}
+
+func readLines(path string) []string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		die("%v", err)
+	}
+	var lines []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func splitList(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
+}
+
+func readTournament(path string) *tournament.File {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		die("%v", err)
+	}
+	var f tournament.File
+	if err := json.Unmarshal(raw, &f); err != nil {
+		die("%s is not a tournament file: %v", path, err)
+	}
+	return &f
+}
+
+func writeTournament(path string, f *tournament.File) {
+	document, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		die("%v", err)
+	}
+	if err := os.WriteFile(path, append(document, '\n'), 0o644); err != nil {
+		die("%v", err)
 	}
 }
 

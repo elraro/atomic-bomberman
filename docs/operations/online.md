@@ -2,7 +2,7 @@
 
 What the owner of an online service for the game has to set up, and what a group that wants its own has to do. The design is in [`../specifications/online-play.md`](../specifications/online-play.md); the master server's own notes are in [`../../master/README.md`](../../master/README.md).
 
-State of things: this covers what exists (the master server, the signed configuration, games found by list or by code, server certificates, player keys, match records). Reaching players behind routers without forwarded ports (STUN / TURN, phase 5) and tournaments are not built yet; where a step below prepares for them it says so.
+State of things: this covers what exists (the master server, the signed configuration, games found by list or by code, server certificates, player keys, match records, tournaments). Reaching players behind routers without forwarded ports (STUN / TURN, phase 5) is not built yet; where a step below prepares for them it says so.
 
 ## The parts
 
@@ -132,9 +132,23 @@ atomic_verify --root "$(cat root.pub)" --stats records/*.abrec    # and who won 
 
 Publishing a tournament's records lets anybody check them; nothing has to be believed on the organiser's word.
 
-## 8. Checking it
+## 8. Running a tournament
 
-`tests/integration/online.sh BUILD_DIR master/bin` runs all of the above on one machine with made-up keys: master over TLS, signed configuration, two game servers (one with a certificate), clients that find them by code and in the list and play, and the refusals (wrong code, configuration signed by another key, master with another key than the pinned one, a certificate used by another server, a revoked certificate), and the match records: handed to the players, verified with `atomic_verify`, a changed one found out. The CI job `master` runs it on every change.
+No master server is needed: a tournament is a file its organiser signs and puts anywhere.
+
+1. **A key for the organiser:** `abconfig keygen -out organiser`. Players are told its public half with the invitation; they choose to believe it once, in the game.
+2. **The players' keys.** Each player's game has made one (`player.key` beside the settings); its public half is what the organiser needs. Until the game shows it, a player gets it with `net_bot x x --player-key-file PATH/player.key --show-player-key`. A file `players.txt` with a line `KEY NAME` for each, in bracket order.
+3. **The servers' keys.** Each operator sends the output of `atomic_server --show-keys`. A file `servers.txt` with a line `IDENTITYKEY SIGNINGKEY ADDRESS NAME` for each.
+4. **The file:** `abconfig tournament-new -name "Autumn Cup" -organiser "Tuesday League" -players players.txt -servers servers.txt -wins 2 -game-version 1.0 -protocol 10 -out cup.json`. (`atomic_server --version` prints the release and the protocol number.) Edit `cup.json` to set each match's time and server.
+5. **Sign and publish:** `abconfig tournament-sign -key organiser.key -in cup.json -out cup.signed.json`, then put `cup.signed.json` where the players can fetch it. The invitation is `ADDRESS#` followed by the contents of `organiser.pub`.
+6. **For each match** its server's operator runs `atomic_server --tournament "ADDRESS#KEY" --match R1-1`. Only that match's players get in; the rules are the file's.
+7. **After a match** the operator sends the organiser the records of its rounds (the server's `records/` folder). The organiser checks them, writes the result in and signs again: `abconfig tournament-result -in cup.json -match R1-1 -winner Ann -records a.abrec,b.abrec -urls https://...,https://...`, then step 5 once more. Publishing the records beside the file lets anybody check: `atomic_verify --tournament "cup.signed.json#KEY" *.abrec`.
+
+Every issue has a higher serial than the one before (the time of signing, unless `-serial` says otherwise); a game that has seen a newer issue refuses an older one.
+
+## 9. Checking it
+
+`tests/integration/online.sh BUILD_DIR master/bin` runs all of the above on one machine with made-up keys: master over TLS, signed configuration, two game servers (one with a certificate), clients that find them by code and in the list and play, and the refusals (wrong code, configuration signed by another key, master with another key than the pinned one, a certificate used by another server, a revoked certificate), the match records (handed to the players, verified with `atomic_verify`, a changed one found out), and a tournament (a match served for its players only, its result borne out by its records, a false result not). The CI job `master` runs it on every change.
 
 ## What has not been done
 

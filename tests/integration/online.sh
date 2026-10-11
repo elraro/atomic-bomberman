@@ -157,4 +157,72 @@ sleep 0.5
 timeout 30 "$BUILD/net_bot" "code:$CODE" Gus "${ONLINE[@]}" >"$WORK/gus.log" 2>&1
 grep -q "No game with that code" "$WORK/gus.log" || fail "a stopped game should be gone from the master"
 echo "ok   a stopped game is withdrawn"
+# --- A tournament: a signed file, no master involved ---
+# Three players by their keys; a knock-out: Ann against Bob, the winner against Cy.
+kill "${pids[@]}" 2>/dev/null; wait 2>/dev/null; pids=()
+T=$WORK/t
+mkdir -p "$T"
+"$BIN/abconfig" keygen -out "$T/organiser" >/dev/null || fail "organiser key"
+ORG=$(cat "$T/organiser.pub")
+for who in ann bob cy mal; do "$BUILD/net_bot" x x --player-key-file "$T/$who.key" --show-player-key >"$T/$who.pub" || fail "player key of $who"; done
+"$BUILD/atomic_server" --show-keys --identity-file "$T/id.key" --signing-key-file "$T/sign.key" >"$T/keys.txt" 2>&1 || fail "--show-keys"
+TPORT=$((GAME_PORT + 20))
+echo "$(sed -n 's/^identity key: *//p' "$T/keys.txt") $(sed -n 's/^signing key: *//p' "$T/keys.txt") 127.0.0.1:$TPORT main" >"$T/servers.txt"
+printf '%s Ann\n%s Bob\n%s Cy\n' "$(cat "$T/ann.pub")" "$(cat "$T/bob.pub")" "$(cat "$T/cy.pub")" >"$T/players.txt"
+VERSION=$("$BUILD/atomic_server" --version | sed -n 's/.* server \([^ ]*\) (protocol \([0-9]*\)).*/\1/p')
+PROTOCOL=$("$BUILD/atomic_server" --version | sed -n 's/.* server \([^ ]*\) (protocol \([0-9]*\)).*/\2/p')
+"$BIN/abconfig" tournament-new -name "Integration Cup" -organiser "The Organiser" -players "$T/players.txt" -servers "$T/servers.txt" -wins 1 -play-time 60 \
+    -game-version "$VERSION" -protocol "$PROTOCOL" -out "$T/cup.json" >/dev/null || fail "tournament-new"
+"$BIN/abconfig" tournament-sign -key "$T/organiser.key" -in "$T/cup.json" -out "$T/cup.signed.json" -serial 1 >/dev/null || fail "tournament-sign"
+CUP="$T/cup.signed.json#$ORG"
+SERVERKEYS=(--identity-file "$T/id.key" --signing-key-file "$T/sign.key" --records-dir "$T/records")
+# The second round cannot be served before the first is decided; nor any match by a server with other keys.
+"$BUILD/atomic_server" --port "$TPORT" --hidden --tournament "$CUP" --match R2-1 "${SERVERKEYS[@]}" >"$T/early.log" 2>&1 </dev/null
+grep -q "has not been decided" "$T/early.log" || fail "a match whose players are not known yet should not be served"
+"$BUILD/atomic_server" --port "$TPORT" --hidden --tournament "$CUP" --match R1-1 --identity-file "$T/x.key" --signing-key-file "$T/y.key" >"$T/wrongserver.log" 2>&1 </dev/null
+grep -q "not the server the tournament names" "$T/wrongserver.log" || fail "a server with other keys should not serve a tournament's match"
+"$BUILD/atomic_server" --port "$TPORT" --hidden --tournament "$T/cup.signed.json#$KEY" --match R1-1 "${SERVERKEYS[@]}" >"$T/wrongkey.log" 2>&1 </dev/null
+grep -q "not signed by the organiser" "$T/wrongkey.log" || fail "a tournament signed by somebody else should be refused"
+
+"$BUILD/atomic_server" --port "$TPORT" --hidden --tournament "$CUP" --match R1-1 "${SERVERKEYS[@]}" >"$T/server.log" 2>&1 </dev/null &
+pids+=($!)
+for _ in $(seq 50); do grep -q "Tournament \"Integration Cup\" match R1-1: Ann, Bob" "$T/server.log" && break; sleep 0.1; done
+grep -q "Tournament \"Integration Cup\" match R1-1: Ann, Bob" "$T/server.log" || fail "the tournament server did not start"
+# Its players find their match in the file; nobody else gets in.
+timeout 200 "$BUILD/net_bot" "tournament:$CUP" Ann --player-key-file "$T/ann.key" --start-after 3000 --matches 1 >"$T/ann.log" 2>&1 &
+ANN=$!
+sleep 1
+timeout 200 "$BUILD/net_bot" "tournament:$CUP" Bob --player-key-file "$T/bob.key" --matches 1 >"$T/bob.log" 2>&1 &
+BOB=$!
+timeout 30 "$BUILD/net_bot" "tournament:$CUP" Cy --player-key-file "$T/cy.key" >"$T/cy.log" 2>&1
+grep -q "no match to play" "$T/cy.log" || fail "Cy has no match yet (the second round waits for the first)"
+timeout 30 "$BUILD/net_bot" "127.0.0.1:$TPORT" Cy --player-key-file "$T/cy.key" >"$T/cy2.log" 2>&1
+grep -q "for its listed players only" "$T/cy2.log" || fail "a player of the tournament who is not in this match should not get in"
+timeout 30 "$BUILD/net_bot" "127.0.0.1:$TPORT" Mallory >"$T/mal.log" 2>&1
+grep -q "for its listed players only" "$T/mal.log" || fail "somebody without a key should not get in"
+wait $ANN || fail "Ann did not finish her tournament match"
+wait $BOB || fail "Bob did not finish his tournament match"
+grep -q "tournament \"Integration Cup\": match R1-1 on main" "$T/ann.log" || fail "Ann should have found her match in the file"
+sleep 2
+WINNER=$(sed -n 's/.*CHAT  \* \(Ann\|Bob\) wins the match!.*/\1/p' "$T/server.log" | head -n 1)
+[ -n "$WINNER" ] || fail "the tournament match had no winner"
+LOSER=$([ "$WINNER" = Ann ] && echo Bob || echo Ann)
+echo "ok   tournament: the match's players found it and played; others were kept out; $WINNER won"
+
+# The organiser writes the result into the file; anybody can hold it against the records.
+RECORDS=$(ls "$T/records"/*.abrec | paste -sd, -)
+"$BIN/abconfig" tournament-result -in "$T/cup.json" -match R1-1 -winner "$WINNER" -records "$RECORDS" >/dev/null || fail "tournament-result"
+"$BIN/abconfig" tournament-sign -key "$T/organiser.key" -in "$T/cup.json" -out "$T/cup2.signed.json" -serial 2 >/dev/null || fail "tournament-sign (2)"
+"$BUILD/atomic_verify" --tournament "$T/cup2.signed.json#$ORG" "$T/records"/*.abrec >"$T/verify.log" 2>&1 || fail "the stated result should be borne out"
+grep -q "match R1-1, won by $WINNER: borne out by its records" "$T/verify.log" || fail "atomic_verify should bear the result out"
+# The same records do not bear out the other player as the winner, and a result without its records is not borne out.
+"$BIN/abconfig" tournament-result -in "$T/cup.json" -match R1-1 -winner "$LOSER" -records "$RECORDS" >/dev/null
+"$BIN/abconfig" tournament-sign -key "$T/organiser.key" -in "$T/cup.json" -out "$T/cup3.signed.json" -serial 3 >/dev/null
+"$BUILD/atomic_verify" --tournament "$T/cup3.signed.json#$ORG" "$T/records"/*.abrec >"$T/verify3.log" 2>&1 && fail "a false result should not be borne out"
+grep -q "NOT BORNE OUT" "$T/verify3.log" && grep -q "the records say $WINNER won" "$T/verify3.log" || fail "atomic_verify should say who the records name as the winner"
+"$BUILD/atomic_verify" --tournament "$T/cup2.signed.json#$ORG" "$WORK/records"/*.abrec >"$T/verify4.log" 2>&1 && fail "records of another game should not bear a result out"
+grep -q "not among the files given" "$T/verify4.log" || fail "missing records should be named"
+# The next round: the winner's name stands where "the winner of R1-1" stood, and that match can now be served.
+grep -q "\"$WINNER\"" <(python3 -c "import json,sys; f=json.load(open('$T/cup.json')); print(json.dumps([m['players'] for m in f['matches'] if m['id']=='R2-1']))") || fail "the winner should be in the next round"
+echo "ok   tournament: the result is borne out by the records; a false one is not"
 echo "online: all passed"

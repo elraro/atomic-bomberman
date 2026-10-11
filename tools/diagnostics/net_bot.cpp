@@ -4,6 +4,8 @@
 //   net_bot ADDRESS NAME [--start] [--start-after MS] [--tcp] [--password TEXT] [--matches N]
 // With --online-config URL --online-key HEX the address may be "code:123456" (a game found
 // on the master server by its code) or "listed:NAME" (the game of that name on its list).
+// "tournament:FILE#KEY" (with --player-key-file) joins the match of that tournament the
+// key's owner is to play next. --show-player-key prints the public half of the key and exits.
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -19,6 +21,7 @@
 #include "online/certificate.hpp"
 #include "online/online.hpp"
 #include "online/record_check.hpp"
+#include "online/tournament.hpp"
 #endif
 
 int main(int argc, char** argv) {
@@ -46,6 +49,8 @@ int main(int argc, char** argv) {
     }
     using State = ab::net::Client::State;
     const std::string name = argv[2];
+    bool showPlayerKey = false;
+    for (int i = 3; i < argc; ++i) showPlayerKey = showPlayerKey || std::string(argv[i]) == "--show-player-key";
 #ifdef AB_ONLINE
     // A player key (a lasting one from a file, as the game keeps it): shown to the server,
     // and the inputs of a recorded round are signed with it.
@@ -57,6 +62,10 @@ int main(int argc, char** argv) {
         client.setPlayerKey(key, [playerSeed](const std::vector<std::uint8_t>& message) { return ab::online::sign(playerSeed, std::string(message.begin(), message.end())); });
     }
     std::uint64_t recordSeen = 0;
+    if (showPlayerKey) {
+        std::printf("%s\n", ab::online::toHex(ab::online::publicKeyOf(playerSeed)).c_str());
+        return playerKeyFile.empty() ? 1 : 0;
+    }
 #endif
     std::string address = argv[1];
     std::vector<std::string> candidates;  // the ways to the server the master named
@@ -127,6 +136,29 @@ int main(int argc, char** argv) {
             trust.configure(bootstrap, "", name, ab::net::kProtocolVersion);
             trust.loadConfig();
         }
+    }
+#endif
+#ifdef AB_ONLINE
+    if (address.rfind("tournament:", 0) == 0) {
+        // The match this player is to play next, on the server the organiser names for it.
+        std::string location, keyHex, envelope, why;
+        ab::online::splitInvitation(address.substr(11), location, keyHex);
+        ab::online::PublicKey organiser{};
+        ab::online::Tournament t;
+        if (!ab::online::fromHex(keyHex, organiser.data(), organiser.size()) || !ab::online::fetchTournament(location, envelope, why) ||
+            !ab::online::readTournament(envelope, &organiser, 0, t, why)) {
+            std::printf("[%s] failed: tournament: %s\n", name.c_str(), why.empty() ? "needs FILE#KEY" : why.c_str());
+            return 1;
+        }
+        const std::vector<const ab::online::TournamentMatch*> mine = t.openMatchesOf(ab::online::publicKeyOf(playerSeed));
+        const ab::online::TournamentServer* at = mine.empty() || !t.ready(*mine.front()) ? nullptr : t.server(mine.front()->server);
+        if (at == nullptr) {
+            std::printf("[%s] failed: tournament \"%s\": no match to play\n", name.c_str(), t.name.c_str());
+            return 1;
+        }
+        std::printf("[%s] tournament \"%s\": match %s on %s\n", name.c_str(), t.name.c_str(), mine.front()->id.c_str(), at->name.c_str());
+        client.expectIdentity(at->identityKey);
+        address = at->address;
     }
 #endif
     std::size_t candidate = 0;

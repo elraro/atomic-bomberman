@@ -8,6 +8,8 @@
 #include <chrono>
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <string>
 #include <thread>
@@ -189,6 +191,8 @@ struct Station {
     Settings cfg;
     NetUi ui;
     Station() : ui(cfg, "", "", {}) { ui.setLocalOnly(true); }
+    // With a folder of its own for what the game keeps beside its settings (the player's key, records).
+    explicit Station(const std::string& userDir) : ui(cfg, "", userDir + "/schemes", {}) { ui.setLocalOnly(true); }
 
     void press(PadKey k) { ui.key(NetUi::padKeycode(k), false, true); }
     void press(PadKey k, int times) {
@@ -615,6 +619,106 @@ void testOnlineScreensByPad() {
     CHECK_TEXT(third.screen(), "error");
     CHECK(third.ui.errorText().find("no password") != std::string::npos);
 }
+
+// A tournament by pad keys alone: the file is named on the on-screen keyboard, the player
+// decides to believe its signer, and "Play my match" leads to the server the file names.
+void testTournamentByPad() {
+    using namespace ab::online;
+    namespace fs = std::filesystem;
+    const std::string dir = "ab-ui-test-user";
+    fs::remove_all(dir);
+    fs::create_directories(dir + "/schemes");
+    {
+        Table t;
+        Station& host = t.host;
+        Station guest(dir);
+        auto turn = [&]() {
+            t.turn();
+            const std::array<PlayerInput, net::kMaxLocalPlayers> idle{};
+            guest.ui.update(t.now, idle);
+        };
+        auto until = [&](const std::function<bool()>& done, int maxMs = 20000) {
+            for (int waited = 0; waited < maxMs && !done(); waited += 5) turn();
+            return done();
+        };
+        turn();
+        CHECK(guest.ui.playerKeyHex().size() == 64);
+        guest.ui.setGameVersion("test");
+        host.cfg.netPort = freePort();
+        host.ui.openHost();
+        host.press(PadKey::Confirm);
+        CHECK(until([&] { return host.screen() == "lobby"; }));
+
+        Seed organiser{}, stranger{};
+        organiser.fill(21);
+        stranger.fill(22);
+        auto issue = [&](const Seed& signer, long long serial, const std::string& winner) {
+            const std::string document =
+                "{\"kind\":\"tournament\",\"name\":\"Pad Cup\",\"organiser\":\"The Organiser\",\"serial\":" + std::to_string(serial) + ",\"issued\":1,"
+                "\"rules\":{\"game_version\":\"test\",\"protocol\":" + std::to_string(net::kProtocolVersion) + ",\"wins\":1},"
+                "\"players\":[{\"name\":\"Guest\",\"key\":\"" + guest.ui.playerKeyHex() + "\"},{\"name\":\"Other\",\"key\":\"" + std::string(64, '5') + "\"}],"
+                "\"servers\":[{\"name\":\"main\",\"address\":\"127.0.0.1:" + std::to_string(host.ui.hostPort()) + "\",\"identity_key\":\"" + host.ui.hostIdentityKey() +
+                "\",\"signing_key\":\"" + std::string(64, '6') + "\"}],"
+                "\"matches\":[{\"id\":\"R1-1\",\"round\":1,\"players\":[\"Guest\",\"Other\"],\"server\":\"main\",\"winner\":\"" + winner + "\",\"records\":[]}]}";
+            std::ofstream out("cup.ab", std::ios::binary);
+            out << signDocument(signer, document);
+        };
+        issue(organiser, 5, "");
+
+        guest.ui.openJoin();
+        guest.press(PadKey::Down, 5);  // from the address to "Tournament"
+        guest.press(PadKey::Confirm);
+        CHECK_TEXT(guest.screen(), "tournament");
+        guest.press(PadKey::Confirm);  // the file's name
+        CHECK(guest.ui.keyboardShown());
+        CHECK(guest.type("cup.ab"));
+        guest.press(PadKey::Menu);  // done: the file is read
+        CHECK(!guest.ui.keyboardShown());
+        CHECK(guest.ui.tournamentNote().find("Is that your organiser's key?") != std::string::npos);
+        CHECK(guest.ui.tournamentNote().find(keyFingerprint(publicKeyOf(organiser))) != std::string::npos);
+        // Not before the player has said whose word counts.
+        guest.press(PadKey::Down);  // from "Read it again" to "Play my match"
+        guest.press(PadKey::Confirm);
+        CHECK_TEXT(guest.screen(), "tournament");
+        guest.press(PadKey::Down);
+        guest.press(PadKey::Confirm);  // "This is my organiser's key"
+        CHECK_TEXT(guest.ui.tournamentNote(), "Guest: match R1-1 against Other");
+        CHECK_TEXT(guest.cfg.tournamentKey, toHex(publicKeyOf(organiser)));
+        CHECK(guest.cfg.tournamentSerial == 5);
+        guest.press(PadKey::Up);
+        guest.press(PadKey::Confirm);  // "Play my match"
+        CHECK(until([&] { return guest.screen() == "lobby"; }));
+        CHECK_TEXT(guest.ui.client().serverName(), host.cfg.netServerName);
+        guest.press(PadKey::Left);  // Leave
+        guest.press(PadKey::Confirm);
+        CHECK_TEXT(guest.screen(), "tournament");
+
+        // An older issue than the one seen is not taken; a newer one with the result is.
+        issue(organiser, 4, "");
+        guest.press(PadKey::Up);  // "Read it again"
+        guest.press(PadKey::Confirm);
+        CHECK(guest.ui.tournamentNote().find("older issue") != std::string::npos);
+        issue(organiser, 6, "Other");
+        guest.press(PadKey::Confirm);
+        CHECK_TEXT(guest.ui.tournamentNote(), "Guest: no match left to play");
+        guest.press(PadKey::Down);
+        guest.press(PadKey::Confirm);  // nothing to play
+        CHECK_TEXT(guest.screen(), "tournament");
+        // The same file signed by somebody else: not believed until the player says so.
+        issue(stranger, 9, "");
+        guest.press(PadKey::Up);
+        guest.press(PadKey::Confirm);
+        CHECK(guest.ui.tournamentNote().find("Not the key you chose before") != std::string::npos);
+        guest.press(PadKey::Down);
+        guest.press(PadKey::Confirm);
+        CHECK_TEXT(guest.screen(), "tournament");
+        guest.press(PadKey::Down, 2);  // Back
+        guest.press(PadKey::Confirm);
+        CHECK_TEXT(guest.screen(), "join");
+    }
+    std::remove("cup.ab");
+    fs::remove_all(dir);
+}
 #endif
 
 }  // namespace
@@ -628,6 +732,7 @@ int main() {
         {"result and leaving by pad", testResultAndLeaveByPad},
 #ifdef AB_ONLINE
         {"online screens by pad", testOnlineScreensByPad},
+        {"tournament by pad", testTournamentByPad},
 #endif
     };
     for (const auto& [name, fn] : tests) {

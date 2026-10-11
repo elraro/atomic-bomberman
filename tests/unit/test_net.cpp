@@ -858,6 +858,16 @@ void testLossFromTheStart() {
     setTestUdpLoss(0);
     CHECK(started);
     CHECK(finished);
+    if (!started) {
+        // What stood where, for a failure that only shows on another machine.
+        std::printf("  FAIL (details) ann: state=%d udp=%d rtt=%d waiting=%zu  bob: state=%d udp=%d rtt=%d waiting=%zu  server: phase=%d players=%d\n",
+                    static_cast<int>(ann.state()), ann.udpActive() ? 1 : 0, ann.linkRttMs(), ann.linkUnacknowledged(), static_cast<int>(bob.state()), bob.udpActive() ? 1 : 0,
+                    bob.linkRttMs(), bob.linkUnacknowledged(), static_cast<int>(h.server.phase()), h.server.players());
+        for (const Client* c : {&ann, &bob})
+            if (!c->chat().empty()) std::printf("  FAIL (details) last line seen by %s: %s\n", c == &ann ? "ann" : "bob", c->chat().back().text.c_str());
+        if (ann.state() == Client::State::Failed || bob.state() == Client::State::Failed)
+            std::printf("  FAIL (details) errors: ann \"%s\" bob \"%s\"\n", ann.error().c_str(), bob.error().c_str());
+    }
     if (!finished) return;
     CHECK_EQ(ann.world()->stateHash(true), h.server.world()->stateHash(true));
     CHECK_EQ(bob.world()->stateHash(true), h.server.world()->stateHash(true));
@@ -1796,6 +1806,46 @@ void testPlayerKeysAndCertificate() {
     CHECK(h.server.unban("key:" + toHex(bobKey)));
     Client& back = withKey("Bob back", 0x22);
     CHECK(h.until([&] { return back.state() == Client::State::Lobby; }));
+
+    // A match for listed players only: a listed key gets in (once), any other and no key do
+    // not, and the settings are not the administrator's to change.
+    {
+        Harness m;
+        ServerConfig only = config;
+        only.certificate.clear();
+        only.allowedKeys = {annKey, bobKey};
+        only.lockSettings = true;
+        only.settings.winsNeeded = 3;
+        only.log = [&m](const std::string& line) { m.log.push_back(line); };
+        CHECK(m.server.start(only));
+        auto key = [&](const std::string& name, std::uint8_t fill) -> Client& {
+            for (int waited = 0; waited < 1000 && m.connecting(); waited += 5) m.turn();
+            m.clients.push_back(std::make_unique<Client>());
+            Client& c = *m.clients.back();
+            Key k{};
+            k.fill(fill);
+            if (fill != 0) c.setPlayerKey(k, [k](const Bytes& message) { return standInSign(k, message); });
+            c.connect("127.0.0.1:" + std::to_string(m.server.port()), name, "", m.now);
+            return c;
+        };
+        Client& listed = key("Ann", 0x11);
+        Client& stranger = key("Mallory", 0x44);
+        Client& keyless = key("Nobody", 0);
+        CHECK(m.until([&] { return listed.state() == Client::State::Lobby && stranger.state() == Client::State::Failed && keyless.state() == Client::State::Failed; }));
+        CHECK(stranger.error() == "This match is for its listed players only" && keyless.error() == stranger.error());
+        Client& twice = key("Ann again", 0x11);
+        CHECK(m.until([&] { return twice.state() == Client::State::Failed; }));
+        CHECK(twice.error() == "That player is already here");
+        Client& second = key("Bob", 0x22);
+        CHECK(m.until([&] { return second.state() == Client::State::Lobby && listed.lobby().clients.size() == 2; }));
+        CHECK(listed.isAdmin());
+        listed.sendOption(Option::Wins, 1);
+        m.spin(300);
+        CHECK_EQ(listed.lobby().settings.winsNeeded, 3);
+        bool told = false;
+        for (const ChatLine& line : listed.chat()) told = told || line.text == "The settings of this match are fixed";
+        CHECK(told);
+    }
 
     // A server that is given no way to check signatures takes no notice of keys.
     Harness plain;

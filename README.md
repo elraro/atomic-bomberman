@@ -135,6 +135,8 @@ This is a **new** network mode, not the original's (which used IPX and serial li
 
 **Online, through a master server.** Where somebody runs a master server for the game, games are found without exchanging addresses: on the host screen set *Announce online* to *Listed for everybody* or *By its code only*, and the lobby shows a six-digit code; on the join screen *Browse online games* lists the public ones and *Join online by code* takes the six digits. The game must be told where that service is (`--online-config URL --online-key HEX`, or the settings keys `online_config_url` and `online_config_key`): nothing is built in yet, because nobody runs a public one for this project. A host still has to be reachable from outside on its port (getting through routers by itself is not built yet). Setting one up: [docs/operations/online.md](docs/operations/online.md).
 
+**Certificates, records, tournaments.** A dedicated server can show a certificate saying who answers for it (the lobby then says "verified server of ..."), and keeps a signed record of every round, which each player's game checks and which anybody can play again with `atomic_verify`. A tournament is a file signed by its organiser that names the players by their keys, the servers and the matches; *Join Network Game → Tournament* opens it and takes you to your match. All of this is described in the same document.
+
 **Dedicated server.** `atomic_server` is the same server without a window; it needs no graphics and no SDL:
 
 ```sh

@@ -108,6 +108,7 @@ public:
     // The connection runs over UDP (otherwise inside a TCP connection: no UDP path, or a relay).
     bool udpActive() const { return keyed_ && !overTcp_; }
     int linkRttMs() const { return link_.rttMs(); }
+    std::size_t linkUnacknowledged() const { return link_.unacknowledged(); }
     bool viaRelay() const { return viaRelay_; }
     bool encrypted() const { return keyed_; }
 

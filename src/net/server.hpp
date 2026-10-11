@@ -48,6 +48,11 @@ struct ServerConfig {
     // code of its own; the program that owns the server hands it in. Empty: player keys are
     // not looked at, and every player counts as having none.
     std::function<bool(const Key&, const std::vector<std::uint8_t>&, const std::array<std::uint8_t, 64>&)> verifySignature;
+    // A match for particular players only (a tournament's): whoever joins must prove one of
+    // these player keys. Empty: everybody may join. Needs verifySignature.
+    std::vector<Key> allowedKeys;
+    // The match settings stay as they were started with (a tournament's rules are not the administrator's to change).
+    bool lockSettings = false;
     // Match records (record.hpp): with a way to sign, every round leaves one. `signRecord`
     // turns the record's bytes into the signed document that is handed out; `recordSink`
     // is given each one (to keep it); `gameVersion` goes into it.

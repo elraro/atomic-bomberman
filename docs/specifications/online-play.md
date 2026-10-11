@@ -1,6 +1,6 @@
 # Online play over the internet (target design)
 
-Status: **phases 1 to 4, 6 and 7 are implemented** (1: the screens worked with a gamepad, the on-screen keyboard, the ready state; 2: the link; 3: snapshots, all three described in `networking.md`; 4: the master server, the signed configuration, games found by list or by code: `master/README.md`, `../operations/online.md`; 6: server certificates and player keys; 7: signed match records, both in section 7 below). Phase 5 (reaching players behind routers) and phase 8 (tournaments) are not implemented yet. Where what was built differs from what this document first said, the difference is noted in place. It describes where the network mode is going. What the game does today is in `networking.md` (snapshots over the link, to an address, a TCP relay), which stays valid until the phases below replace its parts.
+Status: **every phase but 5 is implemented** (1: the screens worked with a gamepad, the on-screen keyboard, the ready state; 2: the link; 3: snapshots, all three described in `networking.md`; 4: the master server, the signed configuration, games found by list or by code: `master/README.md`, `../operations/online.md`; 6: server certificates and player keys; 7: signed match records; 8: tournaments as signed files, all three in section 7 below). **Phase 5 (reaching players behind routers: STUN, TURN, the relay over TCP) is not implemented**: a host must still be reachable from outside, and the project's own TCP relay is still in place. Where what was built differs from what this document first said, the difference is noted in place. It describes where the network mode is going. What the game does today is in `networking.md` (snapshots over the link, to an address, a TCP relay), which stays valid until the phases below replace its parts.
 
 Like `networking.md`, this is the project's own design. Nothing here is a claim about the original game, whose IPX/serial network mode is not reproduced.
 
@@ -357,6 +357,15 @@ results so far: per finished match, the hash of its match record and where to fe
 - Whose organiser key to believe is the player's choice (it comes with the invitation), as with any tournament. The project's root does not sign tournaments.
 - **Statistics** are worked out by anybody from published records; a tool sums them. Nothing has to store them centrally. The master may later list links to tournaments; it would be a notice board, not an authority.
 
+As built (`src/online/tournament.*`, `master/internal/tournament`, `abconfig tournament-*`):
+
+- The file is a signed document of kind `tournament`: name, organiser, serial, rules (release and protocol the matches are played with, round wins, level, scheme, play time, enclosement, team play, computer players), players (name and key), servers (name, address, identity key, signing key: bare keys the organiser vouches for), matches (id, round, players, server, time, winner, records by hash and address). A player of a later round who is not known yet is written `@ID`, "the winner of match ID".
+- **The organiser** makes it with `abconfig tournament-new` (a knock-out bracket from a list of players; whoever is left over in a round goes through), sets times and servers by hand, signs it with `tournament-sign`, and after each match writes the result in with `tournament-result` (the hashes of the match's records; the winner's name into the next round) and signs it again. Players send their key (the game shows nothing of it yet; the file `player.key` holds the private half) and server operators the two keys of `atomic_server --show-keys`.
+- **A server** is started for one match: `atomic_server --tournament FILE#ORGANISERKEY --match ID`. It takes the rules from the file and does not let them be changed, admits only the match's players (each must prove their key; one connection each), refuses to serve a match whose players are not all known, and refuses if its own two keys are not the ones the file names for that match. It needs a signing key: every round is recorded.
+- **A player** opens the file in the game (Join Network Game, Tournament: a path or an address; an invitation `LOCATION#KEY` names the organiser's key at once). A file whose signer the player has not chosen to believe is shown with the signer's fingerprint and nothing can be played from it until the player says "this is my organiser's key"; the key and the newest issue seen are remembered, an older issue is refused, and a file signed with another key counts as not yet believed. "Play my match" connects to the server the file names for the player's next match, which must show the identity the file names.
+- **Anybody** holds the stated results against the records: `atomic_verify --tournament FILE#KEY RECORDS...` says for each match with a winner whether its records are among the files (by hash), hold, were signed by the server named for the match, were played by the match's players and nobody else, and end with the stated winner.
+- Not built: schedules beyond a time per match, group stages, seeding, a way to show one's own player key in the game, tournaments listed by the master.
+
 ## 8. Online screens, usable with a gamepad
 
 Every ordinary action is a visible, selectable item. Keyboard shortcuts stay as extras.
@@ -386,7 +395,7 @@ Each phase is usable on its own and ends with tests.
 | 5 | pjnath + coturn: discovery, hole punching, TURN over UDP, TCP and TLS, the ladder, volume check, always-relay setting, connection display; the old relay removed | 2, 4 |
 | 6 | Server certificates and player keys: the tool that issues certificates, the certificate in the handshake, "verified" in the lobby, revocation through the configuration. **Done.** | 2 (revocation: 4) |
 | 7 | Signed match records: seed by commit and reveal, signed input statements, the record, `atomic_verify`, a tool that sums statistics from records. **Done** (per round; `atomic_verify --stats` is the tool that sums). | 3, 6 |
-| 8 | Tournaments as signed files: the format, the organiser's tool, the screen, servers admitting only listed players | 6, 7 |
+| 8 | Tournaments as signed files: the format, the organiser's tool, the screen, servers admitting only listed players. **Done.** | 6, 7 |
 | - | Accounts on the master: optional, undecided | 4 |
 
 Phases 6 to 8 do not depend on the master (4) or on NAT traversal (5): a tournament on dedicated servers with public addresses needs neither.

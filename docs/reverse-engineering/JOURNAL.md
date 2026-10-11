@@ -766,3 +766,16 @@ Not a discovery about the original; a record of what was built and seen.
 - Validation (Level 4): `ab_net_tests` "records" (the seed's dependence on every share, the walk through a log, a real round recorded and replayed, twelve ways of changing a record each found out); `tests/integration/online.sh` (records handed to two clients hold; `atomic_verify` with the root key; a record from a server without a certificate holds but does not count; one changed byte is found out).
 - Not done: a recorded round with a player leaving half way, with several players at one computer, in a campaign, or in team play (the code handles them; no test plays them); the warning in the game's chat when a record does not hold has not been seen on screen.
 - Stated limits: a record does not show a dropped or delayed input, nor a leak of hidden information; a server can abandon a round whose seed it does not like.
+
+## 2026-10-12
+
+### Modern: tournaments as signed files (online play, phase 8)
+
+Not a discovery about the original; a record of what was built and seen.
+
+- The file (`src/online/tournament.*`, `master/internal/tournament`): rules, players by key, servers by their two keys, matches, results with the hashes of their records. `abconfig tournament-new` (knock-out bracket), `tournament-result`, `tournament-sign`.
+- `atomic_server --tournament FILE#KEY --match ID`: the match's players only (each proves their key), the file's rules, fixed; only if this server's keys are the ones the file names. `ServerConfig::allowedKeys`, `lockSettings`.
+- The game: Join Network Game, Tournament. The player chooses once to believe the signer (shown as a fingerprint); "Play my match" connects to the server the file names, which must show the identity named.
+- `atomic_verify --tournament`: every stated result held against the records.
+- Validation (Level 4): `ab_online_tests` "tournament files"; Go tests of bracket, results and validation; `ab_net_tests` (listed players only, settings fixed); `ab_ui_tests` "tournament by pad"; `tests/integration/online.sh` (a match played by its two players, a third player and a stranger kept out, a match that is not ready and a server with other keys refused, the result borne out by the records, a false result and foreign records not). The tournament screen looked at once from an unattended run.
+- Not done: a tournament of several matches played through; anything with people.
