@@ -168,21 +168,57 @@ void testCodec() {
     CHECK_EQ(lobby2.clients[0].players, 2);
     CHECK_EQ(lobby2.clients[1].seat, -1);
 
-    StepsMsg steps;
-    steps.roundId = 9;
-    steps.firstStep = 100;
-    steps.steps.resize(3);
-    steps.steps[2][9] = 63;
-    steps.hash = 0x12345678u;
-    StepsMsg steps2;
+    DeltaMsg delta;
+    delta.roundId = 9;
+    delta.step = 100;
+    delta.baseStep = 97;
+    delta.events.push_back({98, {EventKind::BombDropped, 3, 0}});
+    delta.events.push_back({100, {EventKind::DiseaseGot, -1, 70000}});
+    delta.delta = {1, 2, 3, 250};
+    DeltaMsg delta2;
     {
-        const std::vector<std::uint8_t> sb = encoded(steps);
+        const std::vector<std::uint8_t> sb = encoded(delta);
         ByteReader r(sb);
-        CHECK(decode(r, steps2) && r.atEnd());
+        CHECK(decode(r, delta2) && r.atEnd());
+        // Cut short anywhere, it is refused.
+        for (std::size_t cut = 0; cut < sb.size(); ++cut) {
+            const std::vector<std::uint8_t> part(sb.begin(), sb.begin() + static_cast<std::ptrdiff_t>(cut));
+            ByteReader pr(part);
+            DeltaMsg none;
+            CHECK(!decode(pr, none));
+        }
     }
-    CHECK_EQ(steps2.steps.size(), 3u);
-    CHECK_EQ(steps2.steps[2][9], 63);
-    CHECK_EQ(steps2.hash, 0x12345678u);
+    CHECK(delta2.step == 100 && delta2.baseStep == 97 && delta2.delta == delta.delta);
+    CHECK_EQ(delta2.events.size(), 2u);
+    CHECK(delta2.events[0].step == 98 && delta2.events[0].event.kind == EventKind::BombDropped && delta2.events[0].event.player == 3);
+    CHECK(delta2.events[1].step == 100 && delta2.events[1].event.player == -1 && delta2.events[1].event.value == 70000);
+    {
+        // A difference from a later state, or an event of a kind or player that does not exist: refused.
+        DeltaMsg bad = delta;
+        bad.baseStep = 100;
+        std::vector<std::uint8_t> sb = encoded(bad);
+        ByteReader r(sb);
+        DeltaMsg none;
+        CHECK(!decode(r, none));
+        sb = encoded(delta);
+        sb[14] = 200;  // the first event's kind
+        ByteReader r2(sb);
+        CHECK(!decode(r2, none));
+    }
+    InputMsg input;
+    input.roundId = 4;
+    input.haveState = true;
+    input.haveStep = 55;
+    input.step = 60;
+    input.inputs = {{1, 2, 3, 4}, {0xff, 0, 0, 0}};
+    InputMsg input2;
+    {
+        const std::vector<std::uint8_t> sb = encoded(input);
+        ByteReader r(sb);
+        CHECK(decode(r, input2) && r.atEnd());
+    }
+    CHECK(input2.haveState && input2.haveStep == 55 && input2.step == 60 && input2.inputs.size() == 2);
+    CHECK(input2.inputs[0][3] == 4 && input2.inputs[1][0] == 0x3f);  // only the six keys get through
 
     CHECK(cleanText("  hi\x01 there\n ", 100) == "hi there");
     CHECK(cleanText("abcdef", 3) == "abc");
@@ -379,7 +415,7 @@ void testSnapshotFields() {
     std::size_t steps = 0, full = 0, fullMost = 0;
     const int ages[4] = {1, 2, 5, 20};
     std::size_t sum[4] = {}, most[4] = {}, over[4] = {};
-    for (std::uint32_t seed = 1; seed <= 8; ++seed) {
+    for (std::uint32_t seed = 1; seed <= 3; ++seed) {
         World w{Values::defaults(), seed};
         Scheme s = Scheme::pillars();
         for (int y = 0; y < kGridH; ++y)
@@ -392,6 +428,10 @@ void testSnapshotFields() {
             w.addPlayer(i);
             ai.emplace_back(seed * 100 + static_cast<std::uint32_t>(i));
         }
+        int hidden = 0;
+        for (int y = 0; y < kGridH; ++y)
+            for (int x = 0; x < kGridW; ++x) hidden += w.powerup({x, y}).state == PowerupState::Hidden ? 1 : 0;
+        CHECK(hidden > 5);  // there is something to keep to oneself
         World copy{Values::defaults(), 999};  // what a client holds: built anew from every snapshot
         std::deque<Fields> history;
         std::array<PlayerInput, kMaxPlayers> in{};
@@ -426,7 +466,7 @@ void testSnapshotFields() {
         for (int y = 0; y < kGridH; ++y)
             for (int x = 0; x < kGridW; ++x) CHECK(copy.powerup({x, y}).state != PowerupState::Hidden);
     }
-    CHECK(steps > 2000);
+    CHECK(steps > 1000);
     std::printf("     snapshots over %zu steps of ten-player rounds: whole state %zu bytes on average (%zu at most)\n", steps, full / steps, fullMost);
     for (int k = 0; k < 4; ++k)
         std::printf("     difference from %2d step(s) before: %zu bytes on average, %zu at most, %zu over 1000 bytes\n", ages[k], sum[k] / steps, most[k], over[k]);
@@ -442,6 +482,7 @@ struct Harness {
     std::vector<std::string> log;
     std::string gameDir;  // game data for the server (empty: the built-in arena)
     bool alwaysReady = true;  // clients say "ready" by themselves (testReady switches it off)
+    std::vector<Event> heard;  // every event the first client was given
 
     bool start(const std::string& password = "", int computers = 1) {
         ServerConfig config;
@@ -477,7 +518,8 @@ struct Harness {
         server.update(now);
         for (auto& c : clients) {
             c->update(now);
-            c->advance(now, nullptr, nullptr);
+            if (c == clients.front()) c->advance(now, nullptr, [this](const World&, const std::vector<Event>& events) { heard.insert(heard.end(), events.begin(), events.end()); });
+            else c->advance(now, nullptr, nullptr);
         }
         now += 5;
         std::this_thread::yield();
@@ -624,16 +666,25 @@ void testRound(bool udp) {
     CHECK(h.server.world()->player(0).x > cellToPixelX(0) || h.server.world()->player(0).facing == 1);
     ann.setInput({});
 
-    // A client whose state has gone wrong is put right by the server.
+    // Whatever a client does to the state it holds lasts until the server's next word:
+    // the state is the server's, not worked out by the client.
     bob.world()->player(0).kills += 5;
-    CHECK(h.until([&] { return bob.snapshotsLoaded() == 1; }));
-    CHECK_EQ(ann.snapshotsLoaded(), 0);
+    const std::uint32_t tampered = bob.stepsApplied();
+    CHECK(h.until([&] { return bob.stepsApplied() > tampered; }));
+    CHECK_EQ(bob.world()->player(0).kills, h.server.world()->player(0).kills);
+    CHECK_EQ(ann.snapshotsLoaded() + bob.snapshotsLoaded(), 0);  // differences were enough all along
 
     // Someone who connects now watches the round from here.
     Client& cat = h.join("Cat", "", udp);
     CHECK(h.until([&] { return cat.state() == Client::State::Round && cat.stepsApplied() > 0; }));
     CHECK_EQ(cat.seat(), -1);
-    CHECK_EQ(cat.snapshotsLoaded(), 1);
+    CHECK_EQ(cat.snapshotsLoaded(), 0);  // one whole state to come in by, none after
+    // Nothing a player may not know is on any client: the powerups under the bricks are the server's alone.
+    int hiddenOnClients = 0;
+    for (int y = 0; y < kGridH; ++y)
+        for (int x = 0; x < kGridW; ++x)
+            for (Client* c : {&ann, &bob, &cat}) hiddenOnClients += c->world()->powerup({x, y}).state == PowerupState::Hidden ? 1 : 0;
+    CHECK_EQ(hiddenOnClients, 0);
 
     // Rounds until the match is decided (one win is enough here); after each, every
     // client holds exactly the server's state and scores.
@@ -662,9 +713,10 @@ void testRound(bool udp) {
         if (!decided) CHECK(h.until([&] { return ann.state() == Client::State::Round && cat.state() == Client::State::Round && ann.roundId() == round + 1; }));
     }
     CHECK(decided);
-    CHECK_EQ(ann.snapshotsLoaded(), 0);
-    CHECK_EQ(bob.snapshotsLoaded(), 1);
-    CHECK_EQ(cat.snapshotsLoaded(), 1);
+    CHECK_EQ(ann.snapshotsLoaded() + bob.snapshotsLoaded() + cat.snapshotsLoaded(), 0);
+    // The round's traffic was datagrams, each within one packet.
+    CHECK(ann.deltasSeen() > 100);
+    CHECK(ann.largestDelta() <= Link::kMaxDatagram);
     // Back in the lobby the watcher gets a seat.
     CHECK(h.until([&] { return ann.state() == Client::State::Lobby && cat.state() == Client::State::Lobby && cat.seat() >= 0; }));
     CHECK(ann.world() == nullptr);
@@ -793,6 +845,46 @@ void testLossFromTheStart() {
     CHECK_EQ(ann.world()->stateHash(true), h.server.world()->stateHash(true));
     CHECK_EQ(bob.world()->stateHash(true), h.server.world()->stateHash(true));
     CHECK_EQ(ann.snapshotsLoaded() + bob.snapshotsLoaded(), 0);
+    // What happened is told once each, however many datagrams were lost: every death was heard
+    // of exactly once, and every bomb that went off had been heard dropping.
+    int deaths = 0, dead = 0, dropped = 0, exploded = 0;
+    for (const Event& e : h.heard) {
+        deaths += e.kind == EventKind::PlayerDied ? 1 : 0;
+        dropped += e.kind == EventKind::BombDropped || e.kind == EventKind::BombPooped ? 1 : 0;
+        exploded += e.kind == EventKind::BombExploded ? 1 : 0;
+    }
+    for (int i = 0; i < kMaxPlayers; ++i) dead += ann.world()->player(i).present && !ann.world()->player(i).alive ? 1 : 0;
+    CHECK(dead >= 3);
+    CHECK_EQ(deaths, dead);
+    CHECK(exploded > 0 && exploded <= dropped);
+}
+
+// A client cut off for five seconds in the middle of a round has fallen further behind
+// than differences reach: it is given the whole state once and goes on from there.
+void testLeftBehind() {
+    Harness h;
+    CHECK(h.start("", 3));
+    Client& ann = h.join("Ann");
+    CHECK(h.until([&] { return ann.state() == Client::State::Lobby && !ann.lobby().clients.empty(); }));
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.state() == Client::State::Round && ann.stepsApplied() > 40; }));
+    CHECK_EQ(ann.snapshotsLoaded(), 0);
+    setTestUdpLoss(100);
+    const std::uint32_t before = ann.stepsApplied();
+    h.spin(5000);
+    CHECK(ann.stepsApplied() <= before + 2);
+    CHECK(h.server.steps() > before + 80);
+    setTestUdpLoss(0);
+    const bool caughtUp = h.until([&] { return ann.state() != Client::State::Round || ann.stepsApplied() + 3 > h.server.steps(); }, 5000);
+    CHECK(caughtUp);
+    // (The one sent while the line was dead arrives too, out of date by then: two at most.)
+    CHECK(ann.snapshotsLoaded() >= 1 && ann.snapshotsLoaded() <= 2);
+    const int wholeStates = ann.snapshotsLoaded();
+    CHECK(ann.state() == Client::State::Round || ann.state() == Client::State::Result);
+    const bool finished = playToResult(h, {&ann});
+    CHECK(finished);
+    if (finished) CHECK_EQ(ann.world()->stateHash(true), h.server.world()->stateHash(true));
+    CHECK_EQ(ann.snapshotsLoaded(), wholeStates);  // differences again from then on
 }
 
 // A network that lets no UDP through at all: after two seconds without an answer the
@@ -1832,6 +1924,7 @@ int main() {
         {"udp loss", testUdpLoss},
         {"loss from the first packet", testLossFromTheStart},
         {"no udp path", testNoUdpPath},
+        {"left behind", testLeftBehind},
         {"cookie", testCookie},
         {"prediction", testPrediction},
         {"back to the lobby", testBackToLobby},

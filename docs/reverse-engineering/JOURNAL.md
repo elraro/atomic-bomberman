@@ -722,3 +722,14 @@ Not a discovery about the original; a record of what was built and seen.
 - A changed behaviour: an altered packet is dropped and the message sent again, where before an altered TCP frame ended the connection.
 - Validation (Level 4 for the link's rules): `ab_net_tests` "link" (300 messages each way at 40 % loss with repeats and delays, datagram delay bounded, forged and replayed packets), "loss from the first packet", "no udp path", "cookie"; all earlier network tests unchanged except the tampering check.
 - Not done: any real network. Loss, delay and reordering were simulated in the process.
+
+### Modern: snapshots instead of lockstep (online play, phase 3)
+
+Not a discovery about the original; a record of what was built and seen.
+
+- The server alone plays the round. After each step it sends each client the public state as its difference from the newest state that client holds, with the step's events; clients send inputs named by step, eight at a time. Protocol version 8.
+- `World::snapshotFields` / `loadSnapshotFields`: the public state as about 5000 numbers in fixed places; running ages written as their start. `src/net/snapshot.*`: the difference coder.
+- Gone with lockstep: the per-step secrets (random draws, hidden powerups looked at), the state hash exchange and the repair by snapshot, the record/replay modes of the random generator.
+- Measured (three ten-player rounds of computer players, 6088 steps): 123 bytes on average against the step before, 283 against five steps before (844 at most), whole state 3572 bytes.
+- Validation (Level 4): `ab_net_tests` "snapshot fields", "round over udp/tcp", "loss from the first packet" (events once each), "left behind", "prediction"; one run of the real programs (dedicated server, one bot over UDP, one inside TCP, the game joining).
+- Not done: a real network; a person judging how other players' movement looks at loss (no smoothing buffer was added).

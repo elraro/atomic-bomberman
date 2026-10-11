@@ -440,59 +440,62 @@ bool decode(ByteReader& r, RoundStartMsg& m) {
     return r.ok();
 }
 
-void encode(ByteWriter& w, const StepsMsg& m) {
+void encode(ByteWriter& w, const DeltaMsg& m) {
     w.u32(m.roundId);
-    w.u32(m.firstStep);
-    w.u8(static_cast<std::uint8_t>(m.steps.size()));
-    for (std::size_t i = 0; i < m.steps.size(); ++i) {
-        for (std::uint8_t b : m.steps[i]) w.u8(b);
-        static const World::Secrets kNone;
-        const World::Secrets& secrets = i < m.secrets.size() ? m.secrets[i] : kNone;
-        w.u8(static_cast<std::uint8_t>(std::min<std::size_t>(secrets.hidden.size(), 255)));
-        for (std::size_t k = 0; k < secrets.hidden.size() && k < 255; ++k) w.u8(secrets.hidden[k].first), w.u8(secrets.hidden[k].second);
-        w.u16(static_cast<std::uint16_t>(std::min<std::size_t>(secrets.draws.size(), 65535)));
-        for (std::size_t k = 0; k < secrets.draws.size() && k < 65535; ++k) w.u16(secrets.draws[k]);
+    w.u32(m.step);
+    w.u32(m.baseStep);
+    w.u8(static_cast<std::uint8_t>(std::min<std::size_t>(m.events.size(), 255)));
+    for (std::size_t i = 0; i < m.events.size() && i < 255; ++i) {
+        const StepEvent& e = m.events[i];
+        w.u8(static_cast<std::uint8_t>(std::min<std::uint32_t>(m.step - e.step, 255)));  // how many steps back
+        w.u8(static_cast<std::uint8_t>(e.event.kind));
+        w.i8(e.event.player);
+        w.i32(e.event.value);
     }
-    w.u32(m.hash);
+    w.bytes(m.delta);
 }
 
-bool decode(ByteReader& r, StepsMsg& m) {
+bool decode(ByteReader& r, DeltaMsg& m) {
     m.roundId = r.u32();
-    m.firstStep = r.u32();
+    m.step = r.u32();
+    m.baseStep = r.u32();
     const int n = r.u8();
-    m.steps.assign(static_cast<std::size_t>(n), StepInputs{});
-    m.secrets.assign(static_cast<std::size_t>(n), World::Secrets{});
-    for (std::size_t i = 0; i < m.steps.size() && r.ok(); ++i) {
-        for (std::uint8_t& b : m.steps[i]) b = r.u8();
-        const int hidden = r.u8();
-        for (int k = 0; k < hidden && r.ok(); ++k) {
-            const std::uint8_t cell = r.u8(), type = r.u8();
-            if (cell >= kGridW * kGridH || type >= kPowTypeCount) return false;
-            m.secrets[i].hidden.emplace_back(cell, type);
-        }
-        const int draws = r.u16();
-        for (int k = 0; k < draws && r.ok(); ++k) {
-            const std::uint16_t v = r.u16();
-            if (v > 0x7fff) return false;
-            m.secrets[i].draws.push_back(v);
-        }
+    m.events.clear();
+    for (int i = 0; i < n && r.ok(); ++i) {
+        StepEvent e;
+        const std::uint32_t back = r.u8();
+        const int kind = r.u8();
+        e.event.player = r.i8();
+        e.event.value = r.i32();
+        if (back > m.step || kind > static_cast<int>(EventKind::JellyBounced) || e.event.player < -1 || e.event.player >= kMaxPlayers) return false;
+        e.step = m.step - back;
+        e.event.kind = static_cast<EventKind>(kind);
+        m.events.push_back(e);
     }
-    m.hash = r.u32();
-    return r.ok();
+    m.delta = r.bytes(1u << 18);
+    return r.ok() && m.baseStep < m.step;
 }
 
 void encode(ByteWriter& w, const InputMsg& m) {
-    w.u32(m.token);
     w.u32(m.roundId);
+    w.flag(m.haveState);
     w.u32(m.haveStep);
-    for (std::uint8_t b : m.input) w.u8(b);
+    w.u32(m.step);
+    w.u8(static_cast<std::uint8_t>(std::min<std::size_t>(m.inputs.size(), kInputsPerMessage)));
+    for (std::size_t i = 0; i < m.inputs.size() && i < kInputsPerMessage; ++i)
+        for (std::uint8_t b : m.inputs[i]) w.u8(b);
 }
 
 bool decode(ByteReader& r, InputMsg& m) {
-    m.token = r.u32();
     m.roundId = r.u32();
+    m.haveState = r.flag();
     m.haveStep = r.u32();
-    for (std::uint8_t& b : m.input) b = r.u8();
+    m.step = r.u32();
+    const int n = r.u8();
+    if (n > kInputsPerMessage) return false;
+    m.inputs.assign(static_cast<std::size_t>(n), {});
+    for (auto& input : m.inputs)
+        for (std::uint8_t& b : input) b = r.u8() & 0x3f;  // six keys; nothing else can be said
     return r.ok();
 }
 

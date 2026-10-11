@@ -2,7 +2,7 @@
 
 This is **not** the original's network mode. The original (`../reverse-engineering/networking.md`) talks IPX or serial, lets every machine simulate its own players and was only analysed statically; none of it is reproduced. This document specifies a new client-server mode for the modern game. Everything here is this project's own design; nothing is a claim about the original.
 
-**Where this is going:** `online-play.md` specifies the target for internet play (a master server, NAT traversal with STUN/TURN, snapshots instead of lockstep). It is not implemented; this document describes what the game does today.
+**Where this is going:** `online-play.md` specifies the target for internet play (a master server, NAT traversal with STUN/TURN, certificates, match records). Its first three phases are in place and described here (gamepad screens, the link, snapshots); this document describes what the game does today.
 
 ## Goals
 
@@ -11,43 +11,47 @@ This is **not** the original's network mode. The original (`../reverse-engineeri
 - Lobby with player list, match settings and chat; chat during the match as well.
 - The gameplay rules are exactly those of the local game: the same core (`src/game`) runs the round.
 
-## Model: server-driven lockstep
+## Model: snapshots
 
-The gameplay core is deterministic: integer arithmetic only, its own random generator, a fixed 50 ms step. Two cores given the same start and the same inputs stay identical. The network mode uses that:
+Since protocol version 8 (phase 3 of `online-play.md`; before that the server sent everybody's inputs and every client worked the round out for itself, "lockstep").
 
-1. The server builds the round (`RoundSetup`: tuning values, scheme, level extras, options, seats, seed) and sends it to every client. Each side creates the same `World` from it.
-2. Every 50 ms the server takes the latest input it has from each client, lets its computer players decide theirs, advances its own `World` one step and sends the **inputs of all ten seats for that step** to the clients.
-3. A client never advances its `World` on its own: it applies the steps in order as they arrive. What it draws is always a state the server has already been through.
-4. What a player may not know yet stays on the server (see "Secrets"): a client's `World` starts from a snapshot without it and is given, with each step, only what that step used.
-5. With each batch of steps the server sends a hash of its (public) state. A client whose hash differs asks for the full state (a snapshot), loads it and goes on. The same snapshot lets someone who connects in the middle of a round watch it.
+The server is the only place where the round is played. Clients send what their players hold down and are sent what the field looks like.
 
-Why not send positions: the whole state (10 players, up to 100 bombs, three 15 x 11 grids) is several kilobytes per step; the inputs are 10 bytes. Sounds and animations need no messages at all because each client produces them from its own simulation.
+1. The server builds the round (`RoundSetup`: tuning values, scheme, level extras, options, seats) and sends it to every client, so that each has the round's rules. What is on the field comes next, as the first state.
+2. Every 50 ms the server takes each player's input for that step, lets its computer players decide theirs, and advances its `World` one step.
+3. After each step it sends every client a **snapshot**: the public state after the step, and what happened in it.
+4. A client shows the newest state it has been sent. It works out nothing of the round's course itself, except a guess at its own players' next few steps (prediction, below).
 
-Cost: the confirmed state lags by the round trip to the server plus up to one step. Client-side prediction (below) hides that delay for the player's own moves.
+**The public state** is everything in the `World` except what a player may not know yet: which powerup lies under which brick (hidden powerups are simply absent) and the random generator. So a changed client can see nothing more than its screen shows, and nothing decided by chance before it happens. One timer in it says when the next dud bomb may occur.
 
-Computer players run on the server only, so their code need not be deterministic. A player who disconnects during a round is taken over by a computer player until the round ends.
+**Inputs.** A client names the step each input is meant for: the step its picture is showing (the newest state plus its delay, see prediction). Each input datagram carries the input for that step and for up to seven steps before it, so a lost datagram loses no key press. The server gives each step the input sent for it; if none has come, the player goes on holding what they held last. An input that arrives after its step counts from then on. An input is six keys (four directions, two buttons) for each of the up to four players at that computer; a client can say nothing else.
 
-## Secrets
+**Snapshots as differences.** The public state is written as a row of about 5000 numbers, always in the same places (`World::snapshotFields`). Ages that only grow with the clock (a flame's, a fuse's, a disease's) are written as the moment they began, so they do not change from step to step.
 
-Two things would let a modified client see more than a player should: which powerup lies under which brick, and the random generator, from which every future chance event follows. Neither is given to clients.
+- Each input datagram also says which state the client holds (the newest it has been able to put together).
+- The server sends the newest state as its **difference** from that one: for each number that differs, how many places were skipped and by how much it changed. It keeps the states of the last 64 steps (3.2 s) to make differences from, the same for every client.
+- A client keeps the states it was sent over the same span, applies a difference to the one it names, and ignores a datagram that is older than what it has or names a state it does not hold. Its next input datagram tells the server where it stands, so nothing has to be asked for again.
+- The **whole state** goes as a message (about 3.6 KB): at the start of a round, to somebody who connects in the middle of one, and to a client that has fallen further behind than 64 steps.
+- A difference too large for a datagram goes as a message.
 
-- The round does not start from a seed any more. The server builds it and sends a **public snapshot**: the whole state except hidden powerups (they are simply absent) and the random generator's state.
-- Running a step, the server's `World` **records** the random numbers it draws and every hidden powerup it looks at (when a brick burns away, and in the few rules that look under other bricks, such as the early-round swap). These "secrets of the step" travel with the step's inputs.
-- A client's `World` draws no numbers of its own: before a step it is fed that step's numbers, and the hidden powerups the step will look at are put under their bricks just in time. It then computes the step exactly as the server did. Using fewer or more numbers than were sent counts as being out of step, like a hash mismatch.
-- The state hash is taken over the public view on both sides.
-- Prediction runs on a copy with random numbers of its own, so whatever chance decides in those few steps is a guess. Guesses about chance are not shown: after running ahead, the copy gives up every powerup and regrown brick the confirmed state does not have, shows a player who died only in the guess as still confirmed (which death animation plays is chance), and keeps campaign enemies where they are confirmed. Such things appear when the server's step arrives. (Before this rule a dead player's scattered powerups appeared in guessed places and jumped to the real ones a moment later.)
+Measured in ten-player rounds of computer players (`ab_net_tests`, "snapshot fields"; 6088 steps): 123 bytes on average against the step before (571 at most), 283 against five steps before (844 at most), 469 against twenty steps before (1052 at most; 9 steps in 6088 over 1000 bytes). The whole state: 3572 bytes on average. So in ordinary play a snapshot is one datagram of a few hundred bytes, 20 times a second for each client.
 
-What a client still learns early: the few hidden powerups a step looked at without revealing (the early-round swap can move one under another brick), and one timer that says when the next dud bomb may occur. What it cannot learn: the layout of hidden powerups, or anything decided by chance before it happens.
+**Events.** Sounds and one-off animations come from what happened in a step (a bomb dropped, a death, a pickup), which clients no longer work out. Each difference carries the events of every step after the state it is made from, and a client takes those of steps newer than the newest state it holds. So each event is given out exactly once whatever is lost; a client that needed the whole state has missed the events before it.
+
+Cost: more traffic than lockstep's ten bytes a step, and the state shown lags by the trip from the server. Prediction hides that for the player's own moves. What it buys: a lost datagram is simply replaced by the next; clients need not compute the same thing as the server; nothing has to be withheld by special means, it is just not sent.
+
+Computer players run on the server only. A player who disconnects during a round is taken over by a computer player until the round ends.
 
 ## Client-side prediction
 
 What a player sees is not the confirmed state but a guess at the state a few steps later: the one in which the keys pressed now will take effect.
 
-- The client keeps the confirmed `World` exactly as before; nothing predicted ever enters it. Scores, results, sounds and the state hash come from it alone.
-- Once per 50 ms of its own clock the client copies the confirmed state and runs the copy forward to a target step: the last confirmed step plus the delay, where the delay is the measured round trip in steps plus one (1 to 10 steps). For those steps it uses its own inputs, remembering which input it assumed for which step, and assumes every other player goes on doing what they did in the last confirmed step.
+- The client keeps the state the server sent as it is; nothing predicted ever enters it. Scores, results and sounds come from the server's word alone.
+- Once per 50 ms of its own clock the client copies the confirmed state and runs the copy forward to a target step: the last confirmed step plus the delay, where the delay is the measured round trip in steps plus one (1 to 10 steps). For those steps it uses its own inputs, the very ones it has sent the server for those steps, and assumes every other player goes on doing what they did in the last confirmed step. It runs them with the same gameplay core as the server, with random numbers of its own.
 - Other players are **drawn where the server last confirmed them**, not where their last movement would carry them: nobody knows their next move, and carrying the last one on made a player who turns about (a cornered computer player above all) seem to dart to and fro at speed.
-- The target advances by one per local step and is pulled back to "confirmed + delay" only when it has drifted by more than two, so the picture moves evenly even when the server's steps arrive unevenly.
-- The copy is thrown away and rebuilt every local step, so a wrong guess (another player turned, a bomb was dropped) lasts only until the server's steps say otherwise; the drawing interpolates over one step, which softens the correction.
+- Guesses about chance are not shown: after running ahead, the copy gives up every powerup and regrown brick the confirmed state does not have, shows a player who died only in the guess as still confirmed (which death animation plays is chance), and keeps campaign enemies where they are confirmed. Such things appear when the server's word arrives.
+- The target advances by one per local step and is pulled back to "confirmed + delay" only when it has drifted by more than two, so the picture moves evenly even when the server's states arrive unevenly.
+- The copy is thrown away and rebuilt every local step, so a wrong guess (another player turned, a bomb was dropped) lasts only until the server's next state says otherwise; the drawing interpolates over one step, which softens the correction.
 - No prediction for watchers, after the round is decided, or when switched off (Options, "Network: Show Own Moves At Once"; `net_prediction` in the settings file).
 
 Sounds follow the confirmed state, with one exception: the player's own actions (dropping, punching, grabbing or throwing a bomb, picking up a powerup, a trampoline, a warp) are heard from the predicted step, at once, and are left out when the server confirms them. A predicted action that never comes true has been heard for nothing; it is forgotten after 1.5 s.
@@ -61,11 +65,11 @@ One port number (default **27410**), UDP. Since protocol version 7 a connection 
 | Service | Used for |
 |---|---|
 | Messages: reliable and ordered, any size up to 1 MiB | Joining, lobby state, settings, chat, round start, round result, snapshots. |
-| Datagrams: unreliable, unordered, at most 1100 bytes | The two things that repeat during a round: inputs to the server, steps to the clients. |
+| Datagrams: unreliable, unordered, at most 1100 bytes | The two things that repeat during a round: inputs to the server, snapshots to the clients. |
 
 How the link delivers messages: they are written one after another into a stream (`u32` length, `u8` type, payload), the stream is cut into numbered segments of at most 1000 bytes, and every packet carries the number of the next segment its sender is waiting for and a bit for each of the 32 after it that has already come. A segment not acknowledged is sent again after twice the measured round trip plus 20 ms (between 60 ms and 1 s, half as long again with each repeat, 3 s at most), or at once when two later ones have been acknowledged past it. At most 64 segments are under way. A datagram never waits for any of this. With nothing to say, a packet goes out once a second; 15 s of silence is a lost connection. Going away is said in a last packet, after everything before it has been delivered.
 
-Round traffic handles loss by repetition instead: every input datagram carries the number of the last step the client has; every step datagram carries **all steps after that one** (at most 40, i.e. 2 s). A lost datagram is covered by the next one. (A step too large for a datagram goes as a message.)
+Round traffic needs no repeats of its own: an input datagram carries the last eight inputs, and a snapshot lost is replaced by the next (see "Model").
 
 Every server, whatever its own port, also listens on UDP **27409** (a port several servers on one machine can share) and answers searches of the local network there.
 
@@ -73,7 +77,7 @@ Every server, whatever its own port, also listens on UDP **27409** (a port sever
 
 IPv4 and IPv6: a server listens for both on one port where the system allows it (IPv4 alone otherwise); a client uses whichever the address it was given resolves to. An IPv6 literal with a port is written `[address]:port`. A link-local IPv6 address is given with its interface, `[fe80::1%eth0]:port`.
 
-Protocol version 7 (1: one player per client; 2: several players, prizes, campaign stages; 3: encryption; 4: secrets kept on the server; 5: server identity; 6: ready state; 7: the link, everything over UDP).
+Protocol version 8 (1: one player per client; 2: several players, prizes, campaign stages; 3: encryption; 4: secrets kept on the server; 5: server identity; 6: ready state; 7: the link, everything over UDP; 8: snapshots instead of lockstep).
 
 ## Encryption and the password
 
@@ -127,8 +131,6 @@ Client to server:
 | Team | `u8` local player | That player of this computer changes team. |
 | Locals | `u8` count | Players at this computer, 1-4 (in the lobby). |
 | Kick | `u8` client id | Administrator. |
-| Input | as the UDP message | When UDP is not in use. |
-| NeedState | | Hash mismatch: send a snapshot. |
 | Continue | | Key pressed on the result screen. |
 | Pong | `u32` | Echo of Ping. |
 
@@ -142,9 +144,9 @@ Server to client:
 | Lobby | phase, administrator, settings, ten seats, client list | Sent whenever any of it changes. |
 | Chat | sender id (255 = server), sender name, text | |
 | RoundStart | round id, tuning values, `RoundSetup`, scores | Always followed by a Snapshot of step 0. |
-| Steps | round id, first step, count; per step 10 input bytes, the hidden powerups looked at and the random numbers drawn; hash of the public state after the last one | When UDP is not in use. |
+| Delta | as the datagram | Only when a difference is too large for a datagram. |
 | RoundEnd | round id, winner, match winner, wins and kills per seat | The server's verdict; clients show the result screen. |
-| Snapshot | round id, step number, `World` state | Answer to NeedState; also for late joiners. |
+| Snapshot | round id, step number, the whole public state (as a difference from nothing) | Start of a round, late joiners, a client too far behind. |
 | Ping | `u32` | Once a second; the measured times are in the Lobby message. |
 
 ### Datagrams
@@ -153,8 +155,8 @@ Carried by the link, sealed like everything else.
 
 | Type | Direction | Payload |
 |---|---|---|
-| Input | C to S | token, round id, last step held, four input bytes (one per player at that computer) |
-| Steps | S to C | round id, first step, steps with their secrets, hash |
+| Input | C to S | round id, the newest state held (if any), the step the first input is meant for, up to eight inputs of four bytes (one per player at that computer), newest first |
+| Delta | S to C | round id, step, the step of the state it is made from, events (steps back, kind, player, value), the difference |
 
 In the clear on the discovery port (`u32` magic `ABMU`, `u8` type, payload):
 
@@ -198,8 +200,8 @@ Everything goes inside TCP (the relay carries no UDP), so play is as where UDP d
 
 ## Client
 
-- Sends its input (first keyboard set, or the first gamepad) whenever it changes and at least every 50 ms.
-- With prediction: applies confirmed steps as they arrive and paces the picture by its own clock. Without (watchers, or prediction off): applies one step per 50 ms; with more than 3 steps waiting two per 50 ms, with more than 20 as fast as it can.
+- Sends its inputs (first keyboard set, or the first gamepad) whenever they change, whenever a newer state has arrived, and at least every 50 ms.
+- With prediction: takes up the server's states as they arrive and paces the picture by its own clock. Without (watchers, or prediction off): takes up one state per 50 ms; with more than 3 waiting two per 50 ms, with more than 20 as fast as it can. The drawing glides from the state before to the newest over one step.
 - Screens: join (name, address, servers found on the LAN), host (server name, port, password), lobby (seats, settings, chat), match, result.
 - Chat: typed directly in the lobby; in a match `T` opens the line, Enter sends, Esc closes. The last lines stay on screen for 8 s.
 - Everything a screen can do is an item that can be chosen (phase 1 of `online-play.md`), so that a gamepad is enough:
@@ -215,7 +217,8 @@ Everything goes inside TCP (the relay carries no UDP), so play is as where UDP d
 - Codec: every message survives encode/decode; truncated messages are refused.
 - Link: messages complete and in order over a line that loses 40 % of the packets, repeats and delays others; datagrams never held back; altered, foreign and repeated packets refused.
 - Connection: loss from the very first packet; no UDP at all (the client goes on inside TCP); the cookie.
-- Loopback: a server and two clients in one process over 127.0.0.1 play a round to its result with equal hashes; chat arrives; a wrong password is refused; a forced mismatch is repaired by a snapshot; a late joiner reaches the same state; with UDP blocked the round still completes over TCP.
+- Loopback: a server and clients in one process over 127.0.0.1 play rounds to their results and end on the server's state; chat arrives; a wrong password is refused; a late joiner comes in with one whole state; nothing hidden is on any client; events are told once each at 40 % loss; a client cut off for five seconds is given the whole state again.
+- Snapshots: a world rebuilt from differences is the public state; the coder refuses nonsense; sizes are measured and printed.
 
 ## Limits accepted for now
 
@@ -224,6 +227,7 @@ Everything goes inside TCP (the relay carries no UDP), so play is as where UDP d
 - Clients trust the server's snapshots (see `../migration/networking.md`).
 - A first visit to a server is taken on trust: see "Encryption and the password".
 - No public relay exists; a relayed game runs over TCP only.
-- Different versions of the program must not be mixed: the protocol version is raised whenever the simulation changes.
+- Different versions of the program must not be mixed: the protocol version is raised whenever the state or the rules change.
+- A client shows other players and bombs as of the newest state received, with no extra delay to even out late datagrams; on a line with much loss their movement is uneven. (`online-play.md` names a buffer of about two steps; whether it is wanted is to be judged on real connections.)
 
 Not covered by automated tests: behaviour on real links with loss and delay, NAT traversal (the host must be reachable on the port), more than a handful of clients.

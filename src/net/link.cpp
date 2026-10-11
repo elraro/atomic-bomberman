@@ -157,6 +157,11 @@ bool Link::receive(const Bytes& packet, std::uint64_t nowMs) {
     } else {
         seen_ |= 1ull << (highest_ - number - 1);
     }
+    // Heard again after a silence: what was waiting through it, with ever longer pauses
+    // between tries, is sent again at once.
+    if (nowMs - lastHeard_ > 1000)
+        for (Segment& s : segments_)
+            if (s.sends > 0) s.sentAt = 0, s.sends = 1;
     lastHeard_ = nowMs;
 
     ByteReader r(plain);

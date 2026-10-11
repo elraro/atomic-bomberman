@@ -24,6 +24,7 @@ constexpr std::uint64_t kForever = ~0ull;
 constexpr std::uint64_t kKickBlockMs = 5 * 60 * 1000;       // a kicked player's address stays out this long
 constexpr std::size_t kConnectsPerTenSeconds = 20;          // more from one address: blocked for a minute
 constexpr std::size_t kPasswordTriesPerMinute = 5;          // more wrong passwords: blocked for five minutes
+constexpr std::size_t kStatesKept = 64;                     // differences are made from states up to this many steps old
 constexpr int kFramesPerSecond = 400;                       // a client sends about 40
 
 // "a.b.c.d" or "[x::y]" without the port: what bans and limits go by.
@@ -62,9 +63,11 @@ struct Server::Peer {
     bool playing() const { return seated() && !out; }
     int pingMs = 0;
     std::uint32_t ackRound = 0;
-    std::uint32_t ackStep = 0;     // steps the client holds (from its input messages)
-    std::uint32_t sentStep = 0;    // steps sent as messages (those too large for a datagram)
-    std::array<std::uint8_t, kMaxLocalPlayers> input{};
+    bool haveState = false;        // it has said that it holds a state of this round...
+    std::uint32_t ackStep = 0;     // ...the one after this step (from its input messages)
+    std::array<std::uint8_t, kMaxLocalPlayers> input{};  // what its players hold down, as last applied
+    std::uint32_t inputStep = 0;   // the step that input was meant for
+    std::map<std::uint32_t, std::array<std::uint8_t, kMaxLocalPlayers>> inputs;  // for steps not yet run
     bool wantsContinue = false;
     bool ready = false;            // said so in the lobby; asked again after every match
 };
@@ -524,12 +527,27 @@ void Server::handleHello(Peer& p, const std::vector<std::uint8_t>& payload) {
 
 void Server::applyInput(Peer& p, const InputMsg& m) {
     if (m.roundId != roundId_) return;
-    p.input = m.input;
     if (p.ackRound != roundId_) {
         p.ackRound = roundId_;
+        p.haveState = false;
         p.ackStep = 0;
     }
-    if (m.haveStep > p.ackStep && m.haveStep <= history_.size()) p.ackStep = m.haveStep;
+    const auto done = static_cast<std::uint32_t>(history_.size());
+    if (m.haveState && m.haveStep <= done && (!p.haveState || m.haveStep > p.ackStep)) {
+        p.haveState = true;
+        p.ackStep = m.haveStep;
+    }
+    // Inputs for steps still to come wait for their step. Of those that come too late the
+    // newest counts from now on (it is what the player is holding down).
+    for (std::size_t i = 0; i < m.inputs.size() && i <= m.step; ++i) {
+        const std::uint32_t step = m.step - static_cast<std::uint32_t>(i);
+        if (step > done) {
+            if (step <= done + 40) p.inputs[step] = m.inputs[i];
+        } else {
+            if (step >= p.inputStep) p.input = m.inputs[i], p.inputStep = step;
+            break;
+        }
+    }
 }
 
 void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint8_t>& payload) {
@@ -654,12 +672,6 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
             if (decode(r, m)) applyInput(p, m);
             break;
         }
-        case ClientMsg::NeedState:
-            if (phase_ != Phase::Lobby && world_ && (p.lastSnapshot == 0 || now_ - p.lastSnapshot >= 1000)) {
-                log("WARN  State resent to id=" + std::to_string(p.id) + " name=\"" + p.name + "\" step=" + std::to_string(history_.size()));
-                sendSnapshot(p);
-            }
-            break;
         case ClientMsg::Continue: p.wantsContinue = true; break;
         case ClientMsg::Pong: {
             const std::uint32_t sent = r.u32();
@@ -1053,11 +1065,11 @@ void Server::startRound() {
     start.seed = 0;  // the clients are not told: they get the round's start as a snapshot without its secrets
     world_ = std::make_unique<World>(values_, seed);
     applyRoundSetup(*world_, values_, setup);
-    world_->recordSecrets();
-    world_->takeSecrets();  // the setup's own draws stay here
+    world_->takeEvents();
     history_.clear();
-    secrets_.clear();
-    hashes_.clear();
+    states_.clear();
+    stepEvents_.clear();
+    states_.push_back({0, world_->snapshotFields()});
     decided_ = false;
     winner_ = -1;
     afterSteps_ = 0;
@@ -1066,9 +1078,11 @@ void Server::startRound() {
     roundEnd_.clear();
     for (auto& p : peers_) {
         p->ackRound = roundId_;
+        p->haveState = false;
         p->ackStep = 0;
-        p->sentStep = 0;
         p->input = {};
+        p->inputStep = 0;
+        p->inputs.clear();
         p->wantsContinue = false;
     }
     phase_ = Phase::Round;
@@ -1089,6 +1103,12 @@ void Server::stepRound() {
     }
     int ran = 0;
     while (history_.size() < due && ran < 5 && phase_ == Phase::Round) {
+        // Each player's input meant for this step if it has come, otherwise what they held last.
+        const auto step = static_cast<std::uint32_t>(history_.size()) + 1;
+        for (auto& p : peers_) {
+            if (const auto it = p->inputs.find(step); it != p->inputs.end()) p->input = it->second, p->inputStep = step;
+            p->inputs.erase(p->inputs.begin(), p->inputs.upper_bound(step));
+        }
         StepInputs bytes{};
         std::array<PlayerInput, kMaxPlayers> input{};
         for (int s = 0; s < kMaxPlayers; ++s) {
@@ -1101,10 +1121,12 @@ void Server::stepRound() {
             input[i] = unpackInput(bytes[i]);
         }
         world_->tick(kStepMs, input);
-        world_->takeEvents();
         history_.push_back(bytes);
-        secrets_.push_back(world_->takeSecrets());
-        hashes_.push_back(world_->stateHash(true));
+        // What clients are told: the public state after the step, and what happened in it.
+        for (const Event& e : world_->takeEvents()) stepEvents_.push_back({step, e});
+        states_.push_back({step, world_->snapshotFields()});
+        while (states_.size() > kStatesKept) states_.pop_front();
+        while (!stepEvents_.empty() && stepEvents_.front().step + kStatesKept <= step) stepEvents_.pop_front();
         ++ran;
         if (world_->roundOver()) {
             if (!decided_) {
@@ -1116,55 +1138,49 @@ void Server::stepRound() {
     }
     if (ran > 0)
         for (auto& p : peers_)
-            if (p->joined && !p->gone && !p->out) sendSteps(*p);
+            if (p->joined && !p->gone && !p->out) sendState(*p);
 }
 
-void Server::sendSteps(Peer& p) {
-    const auto total = static_cast<std::uint32_t>(history_.size());
-    // Steps from `from`, at most `limit`, and for a datagram only as many as fit a usual
-    // packet (always at least one: a step with many random draws may be large).
-    auto message = [&](std::uint32_t from, std::uint32_t limit, bool datagramSized) {
-        StepsMsg m;
-        m.roundId = roundId_;
-        m.firstStep = from;
-        std::size_t bytes = 0;
-        for (std::uint32_t i = from; i < from + limit; ++i) {
-            const World::Secrets& secrets = secrets_[i];
-            const std::size_t size = kMaxPlayers + 3 + secrets.hidden.size() * 2 + secrets.draws.size() * 2;
-            if (datagramSized && !m.steps.empty() && bytes + size > 1100) break;
-            bytes += size;
-            m.steps.push_back(history_[i]);
-            m.secrets.push_back(secrets);
-        }
-        m.hash = hashes_[from + m.steps.size() - 1];
-        return m;
-    };
-    // Everything the client has not acknowledged, so a lost datagram needs no request.
-    const std::uint32_t from = p.ackRound == roundId_ ? std::min(p.ackStep, total) : 0;
-    const std::uint32_t count = std::min<std::uint32_t>(total - from, kMaxStepsPerMessage);
-    if (count == 0) return;
-    const StepsMsg m = message(from, count, true);
-    const Bytes bytes = encoded(m);
-    if (p.link.sendDatagram(static_cast<std::uint8_t>(ServerMsg::Steps), bytes)) return;
-    // A step too large for a datagram goes as a message, once.
-    const std::uint32_t upTo = from + static_cast<std::uint32_t>(m.steps.size());
-    if (upTo > p.sentStep) {
-        send(p, ServerMsg::Steps, bytes);
-        p.sentStep = upTo;
+// The newest state, as its difference from the newest one the client has said it holds.
+void Server::sendState(Peer& p) {
+    if (!world_ || states_.empty()) return;
+    const StateAt& now = states_.back();
+    if (p.ackRound != roundId_ || !p.haveState) {
+        // It holds nothing of this round yet: the whole state is on its way as a message.
+        // Said again only if that has plainly not worked.
+        if (now_ - p.lastSnapshot > 2000 && p.link.unacknowledged() == 0) sendSnapshot(p);
+        return;
     }
+    if (p.ackStep >= now.step) return;
+    const Fields* base = nullptr;
+    for (const StateAt& s : states_)
+        if (s.step == p.ackStep) base = &s.fields;
+    if (base == nullptr) {
+        // Too far behind for a difference: the whole state again (not while one is still under way).
+        if (now_ - p.lastSnapshot > 500 && p.link.unacknowledged() == 0) sendSnapshot(p);
+        return;
+    }
+    DeltaMsg m;
+    m.roundId = roundId_;
+    m.step = now.step;
+    m.baseStep = p.ackStep;
+    for (const StepEvent& e : stepEvents_)
+        if (e.step > p.ackStep) m.events.push_back(e);
+    m.delta = encodeDelta(*base, now.fields);
+    const Bytes bytes = encoded(m);
+    if (p.link.sendDatagram(static_cast<std::uint8_t>(ServerMsg::Delta), bytes)) return;
+    // Too large for a datagram: as a message, unless earlier ones are still under way.
+    if (p.link.unacknowledged() < 4) send(p, ServerMsg::Delta, bytes);
 }
 
 void Server::sendSnapshot(Peer& p) {
-    if (!world_) return;
+    if (!world_ || states_.empty()) return;
     SnapshotMsg m;
     m.roundId = roundId_;
-    m.step = static_cast<std::uint32_t>(history_.size());
-    m.state = world_->saveState(true);  // without the hidden powerups and the random generator
+    m.step = states_.back().step;
+    m.state = encodeDelta({}, states_.back().fields);  // without the hidden powerups and the random generator
     send(p, ServerMsg::Snapshot, encoded(m));
     p.lastSnapshot = now_;
-    p.ackRound = roundId_;
-    p.ackStep = m.step;
-    p.sentStep = m.step;
 }
 
 void Server::endRound() {
@@ -1197,8 +1213,8 @@ void Server::toLobby() {
     campaignMode_ = false;
     world_.reset();
     history_.clear();
-    secrets_.clear();
-    hashes_.clear();
+    states_.clear();
+    stepEvents_.clear();
     rebuildSeats();
     log("INFO  Back in the lobby");
 }
@@ -1290,11 +1306,11 @@ void Server::update(std::uint64_t nowMs) {
             startRound();
         }
     } else if (phase_ == Phase::Result) {
-        // Clients on UDP may still miss the last steps.
+        // Clients may still miss the last states.
         if (now_ - resendAt_ >= 100) {
             resendAt_ = now_;
             for (auto& p : peers_)
-                if (p->joined && !p->out && p->ackRound == roundId_ && p->ackStep < history_.size()) sendSteps(*p);
+                if (p->joined && !p->gone && !p->out && (!p->haveState || p->ackRound != roundId_ || p->ackStep < history_.size())) sendState(*p);
         }
         bool everyone = true, anyone = false;
         for (auto& p : peers_)

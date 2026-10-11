@@ -209,9 +209,10 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     end_ = RoundEndMsg{};
     ended_ = false;
     queue_.clear();
-    hashes_.clear();
+    held_.clear();
+    haveState_ = false;
+    newest_ = 0;
     applied_ = 0;
-    awaitingState_ = false;
     ready_ = false;  // until the snapshot that follows the round start
     nextStepAt_ = nowMs;
     lastStepAt_ = nowMs;
@@ -222,7 +223,6 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     soundedUpTo_ = 0;
     heard_.clear();
     mine_.clear();
-    lastInputs_ = {};
     nextLocalAt_ = nowMs;
     // The server's tuning table on top of the built-in one: the rules are the server's.
     Values values = Values::defaults();
@@ -232,7 +232,6 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
         // the snapshot the server sends next, without the hidden powerups.
         world_ = std::make_unique<World>(values, 1);
         applyRoundSetup(*world_, values, m.setup);
-        world_->replaySecrets();
     } catch (const std::exception& e) {
         fail(std::string("The server sent a round this game cannot play (") + e.what() + ")");
         return;
@@ -240,19 +239,34 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     state_ = State::Round;
 }
 
-void Client::handleSteps(const StepsMsg& m) {
-    if (!world_ || m.roundId != start_.roundId || m.steps.empty()) return;
-    const std::uint32_t have = applied_ + static_cast<std::uint32_t>(queue_.size());
-    const std::uint32_t last = m.firstStep + static_cast<std::uint32_t>(m.steps.size());
-    hashes_[last] = m.hash;
-    if (m.firstStep > have || last <= have) return;  // a gap (the next message covers it) or nothing new
-    for (std::uint32_t i = have - m.firstStep; i < m.steps.size(); ++i) queue_.push_back({m.steps[i], i < m.secrets.size() ? m.secrets[i] : World::Secrets{}});
+// A state has arrived whole or been rebuilt from a difference.
+void Client::accept(std::uint32_t step, Fields fields, std::vector<Event> events) {
+    held_[step] = fields;
+    // The server makes differences from states up to 64 steps old; older ones are of no use.
+    while (!held_.empty() && held_.begin()->first + 64 < step) held_.erase(held_.begin());
+    newest_ = step;
+    haveState_ = true;
+    queue_.push_back({step, std::move(fields), std::move(events)});
+}
+
+void Client::handleDelta(const DeltaMsg& m) {
+    if (!world_ || m.roundId != start_.roundId || satOut_) return;
+    if (haveState_ && m.step <= newest_) return;  // an old one, or one already had
+    const auto base = held_.find(m.baseStep);
+    if (base == held_.end()) return;  // made from a state not held: the server learns it from the next input message
+    Fields fields;
+    if (!decodeDelta(base->second, m.delta, fields)) return;
+    // The events of every step after the base are in it; those after the newest state held are new.
+    std::vector<Event> events;
+    for (const StepEvent& e : m.events)
+        if (e.step > newest_) events.push_back(e.event);
+    accept(m.step, std::move(fields), std::move(events));
 }
 
 void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& payload, std::uint64_t nowMs) {
     ByteReader r(payload);
     // Having gone back to the lobby, the rest of the match is none of this client's business.
-    if (satOut_ && (static_cast<ServerMsg>(type) == ServerMsg::RoundStart || static_cast<ServerMsg>(type) == ServerMsg::Steps ||
+    if (satOut_ && (static_cast<ServerMsg>(type) == ServerMsg::RoundStart || static_cast<ServerMsg>(type) == ServerMsg::Delta ||
                     static_cast<ServerMsg>(type) == ServerMsg::Snapshot || static_cast<ServerMsg>(type) == ServerMsg::RoundEnd ||
                     static_cast<ServerMsg>(type) == ServerMsg::Roulette))
         return;
@@ -299,9 +313,9 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             beginRound(m, nowMs);
             break;
         }
-        case ServerMsg::Steps: {
-            StepsMsg m;
-            if (decode(r, m)) handleSteps(m);
+        case ServerMsg::Delta: {  // one too large for a datagram
+            DeltaMsg m;
+            if (decode(r, m)) handleDelta(m);
             break;
         }
         case ServerMsg::Roulette: {
@@ -322,16 +336,11 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
         case ServerMsg::Snapshot: {
             SnapshotMsg m;
             if (!decode(r, m) || !world_ || m.roundId != start_.roundId) break;
-            if (!world_->loadState(m.state)) return fail("The server sent a game state this game cannot read");
-            world_->replaySecrets();
-            ready_ = true;
-            queue_.clear();
-            hashes_.clear();
-            applied_ = m.step;
-            soundedUpTo_ = std::max(soundedUpTo_, m.step);
-            mine_.clear();
-            awaitingState_ = false;
-            if (m.step > 0) ++snapshots_;  // the one at the start of a round is not a repair
+            if (haveState_ && m.step <= newest_) break;
+            Fields fields;
+            if (!decodeDelta({}, m.state, fields)) return fail("The server sent a game state this game cannot read");
+            if (haveState_) ++snapshots_;  // the one a round begins with is not a repair
+            accept(m.step, std::move(fields), {});
             break;
         }
         case ServerMsg::Ping: send(ClientMsg::Pong, payload); break;
@@ -340,14 +349,27 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
 }
 
 void Client::sendInput(std::uint64_t nowMs) {
-    if (input_ == inputSent_ && nowMs - inputSentAt_ < static_cast<std::uint64_t>(kStepMs) && inputSentAt_ != 0) return;
+    if (input_ == inputSent_ && newest_ == ackSent_ && nowMs - inputSentAt_ < static_cast<std::uint64_t>(kStepMs) && inputSentAt_ != 0) return;
     InputMsg m;
-    m.token = token_;
     m.roundId = start_.roundId;
-    m.haveStep = applied_ + static_cast<std::uint32_t>(queue_.size());
-    m.input = input_;
+    m.haveState = haveState_;
+    m.haveStep = newest_;
+    if (!mine_.empty() && predictedValid_) {
+        // What was assumed for the step being guessed and the ones before it.
+        m.step = mine_.rbegin()->first;
+        for (int k = 0; k < kInputsPerMessage; ++k) {
+            const auto it = mine_.find(m.step - static_cast<std::uint32_t>(k));
+            if (it == mine_.end()) break;
+            m.inputs.push_back(it->second);
+        }
+        m.inputs[0] = input_;  // the keys as they are now
+    } else {
+        m.step = applied_ + 1;
+        m.inputs.push_back(input_);
+    }
     link_.sendDatagram(static_cast<std::uint8_t>(ClientMsg::Input), encoded(m));
     inputSent_ = input_;
+    ackSent_ = newest_;
     inputSentAt_ = nowMs;
 }
 
@@ -475,10 +497,12 @@ void Client::update(std::uint64_t nowMs) {
     Bytes payload;
     while (!over() && link_.nextMessage(type, payload)) handleFrame(type, payload, nowMs);
     while (!over() && link_.nextDatagram(type, payload)) {
-        if (static_cast<ServerMsg>(type) != ServerMsg::Steps || satOut_) continue;
+        if (static_cast<ServerMsg>(type) != ServerMsg::Delta || satOut_) continue;
+        ++deltas_;
+        largestDelta_ = std::max(largestDelta_, payload.size());
         ByteReader r(payload);
-        StepsMsg m;
-        if (decode(r, m)) handleSteps(m);
+        DeltaMsg m;
+        if (decode(r, m)) handleDelta(m);
     }
     if (over()) return;
     if (link_.closedByPeer() || link_.broken() || nowMs - link_.lastHeard() > kSilenceMs) return fail("The connection to the server was lost");
@@ -506,15 +530,15 @@ bool Client::ownAction(const Event& e) const {
     }
 }
 
-void Client::applyStep(const Step& step, const EventSink& events) {
-    const StepInputs& bytes = step.inputs;
-    std::array<PlayerInput, kMaxPlayers> input{};
-    for (std::size_t i = 0; i < input.size(); ++i) input[i] = unpackInput(bytes[i]);
-    world_->feedSecrets(step.secrets);
-    world_->tick(kStepMs, input);
-    lastInputs_ = bytes;
-    ++applied_;
-    std::vector<Event> happened = world_->takeEvents();
+// The server's word on a step: the state after it, and what happened in it.
+bool Client::applyState(const Received& state, const EventSink& events) {
+    if (!world_->loadSnapshotFields(state.fields)) {
+        fail("The server sent a game state this game cannot read");
+        return false;
+    }
+    applied_ = state.step;
+    ready_ = true;
+    std::vector<Event> happened = state.events;
     // An own action that was already heard from the prediction is not heard twice. A
     // prediction that did not come true is forgotten after a second and a half.
     std::erase_if(heard_, [&](const Heard& h) { return now_ - h.atMs > 1500; });
@@ -526,19 +550,14 @@ void Client::applyStep(const Step& step, const EventSink& events) {
         return true;
     });
     if (events && !happened.empty()) events(*world_, happened);
-    if (const auto it = hashes_.find(applied_); it != hashes_.end()) {
-        if ((it->second != world_->stateHash(true) || !world_->secretsInStep()) && !awaitingState_) {
-            awaitingState_ = true;
-            send(ClientMsg::NeedState, {});
-        }
-        hashes_.erase(hashes_.begin(), std::next(it));
-    }
+    return true;
 }
 
-// The predicted state: a copy of the confirmed one, run forward to the step this player's
-// present input should reach the server for. Own inputs are the ones remembered for each
-// of those steps; everybody else is assumed to keep doing what they did last. It is thrown
-// away and rebuilt on every local step, so a wrong guess lasts until the server's word arrives.
+// The predicted state: a copy of the newest state from the server, run forward with the
+// same gameplay core to the step this player's present input should reach the server for.
+// Own inputs are the ones remembered (and sent) for each of those steps; everybody else is
+// assumed to keep doing what they did last. It is thrown away and rebuilt on every local
+// step, so a wrong guess lasts until the server's word arrives.
 void Client::predict(const EventSink& events) {
     const std::array<int, kMaxLocalPlayers> mySeats = seats();
     int ahead = predictionSteps_;
@@ -559,7 +578,7 @@ void Client::predict(const EventSink& events) {
     predicted_->ownRandom(applied_ * 2654435761u + 7u);  // chance cannot be guessed: any numbers will do until the server's arrive
     for (std::uint32_t s = applied_ + 1; s <= target_ && !predicted_->roundOver(); ++s) {
         std::array<PlayerInput, kMaxPlayers> input{};
-        for (std::size_t i = 0; i < input.size(); ++i) input[i] = unpackInput(lastInputs_[i]);
+        for (std::size_t i = 0; i < input.size(); ++i) input[i] = world_->player(static_cast<int>(i)).lastInput;
         const auto own = mine_.find(s);
         for (std::size_t l = 0; l < mySeats.size(); ++l)
             if (mySeats[l] >= 0) input[static_cast<std::size_t>(mySeats[l])] = unpackInput(own != mine_.end() ? own->second[l] : input_[l]);
@@ -582,19 +601,20 @@ void Client::predict(const EventSink& events) {
 }
 
 int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& before, const EventSink& after) {
-    if (state_ != State::Round || !world_ || !ready_) return 0;
+    if (state_ != State::Round || !world_ || (!ready_ && queue_.empty())) return 0;
     now_ = nowMs;
     int ran = 0;
     const bool predicting = prediction_ && seat() >= 0;
     try {
         if (predicting) {
-            // Confirmed steps are taken as soon as they arrive; the picture is paced by the local clock.
+            // The server's states are taken as soon as they arrive; the picture is paced by the local clock.
             while (!queue_.empty() && ran < 400) {
-                const Step next = queue_.front();
+                const Received next = std::move(queue_.front());
                 queue_.pop_front();
-                applyStep(next, after);
+                if (!applyState(next, after)) return ran;
                 ++ran;
             }
+            if (!ready_) return ran;
             if (world_->roundOver() || ended_) {
                 // Nothing to guess once the round is decided: show the confirmed state.
                 if (predictedValid_ && before) before(*predicted_);
@@ -611,10 +631,10 @@ int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& befo
         } else {
             predictedValid_ = false;
             while (!queue_.empty() && ran < 400 && (nowMs >= nextStepAt_ || queue_.size() > 20)) {
-                const Step next = queue_.front();
+                const Received next = std::move(queue_.front());
                 queue_.pop_front();
-                if (before) before(*world_);
-                applyStep(next, after);
+                if (before && ready_) before(*world_);
+                if (!applyState(next, after)) return ran;
                 ++ran;
                 // Behind by more than a few steps: twice the speed until caught up.
                 const std::uint64_t interval = queue_.size() > 3 ? kStepMs / 2 : kStepMs;
@@ -626,7 +646,7 @@ int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& befo
         fail(std::string("The round stopped with an error (") + e.what() + ")");
         return ran;
     }
-    if (ended_ && applied_ >= end_.steps && queue_.empty() && !awaitingState_) {
+    if (ended_ && ready_ && applied_ >= end_.steps && queue_.empty()) {
         predictedValid_ = false;
         state_ = State::Result;
     }

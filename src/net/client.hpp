@@ -1,7 +1,7 @@
 // The client side of the network mode (docs/specifications/networking.md):
-// connection, lobby state, chat and the round, which it runs in its own World
-// from the steps the server sends. No SDL; the front end feeds it input and
-// draws what it holds.
+// connection, lobby state, chat and the round, of which it holds the state the
+// server sends (snapshots) and guesses its own players' next steps. No SDL; the
+// front end feeds it input and draws what it holds.
 #pragma once
 
 #include <cstdint>
@@ -16,6 +16,7 @@
 #include "net/link.hpp"
 #include "net/protocol.hpp"
 #include "net/relay.hpp"
+#include "net/snapshot.hpp"
 #include "net/socket.hpp"
 
 namespace ab::net {
@@ -56,8 +57,8 @@ public:
     // (dropping, punching, picking up...) are reported from the predicted step, at once, and
     // left out when the server confirms them.
     using EventSink = std::function<void(const World&, const std::vector<Event>&)>;
-    // Applies the steps that are due. `before` is called before the picture changes (to
-    // remember positions for drawing), `events` with each step's events.
+    // Takes up the states that have arrived and are due. `before` is called before the picture
+    // changes (to remember positions for drawing), `events` with each step's events.
     int advance(std::uint64_t nowMs, const std::function<void(World&)>& before, const EventSink& events);
     // How far the present time is between the last step and the next, 0-1 (for drawing).
     float stepAlpha(std::uint64_t nowMs) const;
@@ -128,16 +129,22 @@ public:
     const RouletteMsg* roulette() const { return rouletteOn_ ? &roulette_ : nullptr; }
     std::uint64_t rouletteSince() const { return rouletteAt_; }
     std::uint32_t stepsApplied() const { return applied_; }
+    // Whole states taken after the one a round begins with: each means this client had
+    // fallen so far behind that differences no longer reached it.
     int snapshotsLoaded() const { return snapshots_; }
+    // For tests: datagram-sized state messages seen, and the largest of them in bytes.
+    int deltasSeen() const { return deltas_; }
+    std::size_t largestDelta() const { return largestDelta_; }
 
     // No UDP at all: the connection goes inside a TCP connection from the start.
     void disableUdp() { udpAllowed_ = false; }
 
 private:
-    // One step as the server sent it: everybody's input and that step's secrets.
-    struct Step {
-        StepInputs inputs{};
-        World::Secrets secrets;
+    // The state after a step as the server sent it, and what happened on the way there.
+    struct Received {
+        std::uint32_t step = 0;
+        Fields fields;
+        std::vector<Event> events;
     };
     void fail(const std::string& why);
     void transmit(const Bytes& packet);
@@ -145,10 +152,11 @@ private:
     void sendKey(std::uint64_t nowMs);
     void handlePacket(const Bytes& packet, std::uint64_t nowMs);
     void handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& payload, std::uint64_t nowMs);
-    void handleSteps(const StepsMsg& m);
+    void handleDelta(const DeltaMsg& m);
+    void accept(std::uint32_t step, Fields fields, std::vector<Event> events);
     void beginRound(const RoundStartMsg& m, std::uint64_t nowMs);
     void sendInput(std::uint64_t nowMs);
-    void applyStep(const Step& step, const EventSink& events);
+    bool applyState(const Received& state, const EventSink& events);
     void predict(const EventSink& events);
     bool ownAction(const Event& e) const;
 
@@ -194,12 +202,16 @@ private:
     bool satOut_ = false;            // went back to the lobby: the rest of this match is not followed
     bool ended_ = false;             // RoundEnd received for this round
     std::unique_ptr<World> world_;
-    std::deque<Step> queue_;         // received, not yet applied
-    bool ready_ = false;             // the round's starting state has arrived
-    std::uint32_t applied_ = 0;
-    std::map<std::uint32_t, std::uint32_t> hashes_;  // steps applied -> the server's hash
-    bool awaitingState_ = false;
+    std::deque<Received> queue_;        // received, not yet shown
+    std::map<std::uint32_t, Fields> held_;  // the last states received: what differences are read against
+    bool haveState_ = false;         // something of this round has arrived
+    std::uint32_t newest_ = 0;       // the newest state received
+    bool ready_ = false;             // a state of this round is in world_
+    std::uint32_t applied_ = 0;      // the step world_ stands at
     int snapshots_ = 0;
+    int deltas_ = 0;
+    std::size_t largestDelta_ = 0;
+    std::uint32_t ackSent_ = 0;
     std::uint64_t nextStepAt_ = 0;
     std::uint64_t lastStepAt_ = 0;
     std::array<std::uint8_t, kMaxLocalPlayers> input_{};
@@ -212,7 +224,6 @@ private:
     bool predictedValid_ = false;
     std::uint32_t target_ = 0;                        // the step the predicted state stands for
     std::map<std::uint32_t, std::array<std::uint8_t, kMaxLocalPlayers>> mine_;      // own input assumed for each step not yet confirmed
-    StepInputs lastInputs_{};                         // everyone's input in the last confirmed step
     std::uint64_t nextLocalAt_ = 0;
     std::uint64_t now_ = 0;
     std::uint32_t soundedUpTo_ = 0;                   // predicted steps whose own-action sounds were given out

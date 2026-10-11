@@ -3,8 +3,10 @@
 // Rules implemented here follow docs/specifications/. Each rule was derived
 // from the original game by static analysis; see docs/reverse-engineering/.
 //
-// Network play runs this same class on the server and on every client and
-// relies on it being deterministic: integers only, no clock, no global state.
+// Network play runs this same class on the server, which alone decides, and on every
+// client, which uses it to guess its own players' next steps. It is deterministic
+// (integers only, no clock, no global state), which a recorded round relies on to be
+// played again.
 #pragma once
 
 #include <array>
@@ -62,50 +64,15 @@ class Rng {
 public:
     explicit Rng(std::uint32_t seed = 1) : state_(seed) {}
     int next() {
-        if (mode_ == Mode::Replay) {
-            // The numbers come from elsewhere (a network client is given the server's).
-            if (replay_.empty()) {
-                starved_ = true;
-                return 0;
-            }
-            const int v = replay_.front();
-            replay_.pop_front();
-            return v;
-        }
         state_ = state_ * 1103515245u + 12345u;
-        const int v = static_cast<int>((state_ >> 16) & 0x7fff);
-        if (mode_ == Mode::Record) record_.push_back(static_cast<std::uint16_t>(v));
-        return v;
+        return static_cast<int>((state_ >> 16) & 0x7fff);
     }
     int below(int n) { return n > 0 ? next() % n : 0; }
     std::uint32_t state() const { return state_; }
     void setState(std::uint32_t s) { state_ = s; }
 
-    // Network play keeps the future to the server: there the generator records what it
-    // gives out; on a client it only repeats what the server sent for the step.
-    enum class Mode : std::uint8_t { Own, Record, Replay };
-    void setMode(Mode m) {
-        mode_ = m;
-        record_.clear();
-        replay_.clear();
-        starved_ = false;
-    }
-    Mode mode() const { return mode_; }
-    std::vector<std::uint16_t> takeRecord() { return std::exchange(record_, {}); }
-    void feed(const std::vector<std::uint16_t>& draws) { replay_.insert(replay_.end(), draws.begin(), draws.end()); }
-    // True if a number was asked for that had not been fed, or fed numbers were left over.
-    bool outOfStep() const { return starved_ || !replay_.empty(); }
-    void clearFeed() {
-        replay_.clear();
-        starved_ = false;
-    }
-
 private:
     std::uint32_t state_;
-    Mode mode_ = Mode::Own;
-    bool starved_ = false;
-    std::vector<std::uint16_t> record_;
-    std::deque<std::uint16_t> replay_;
 };
 
 // Fixed features of a level theme (original extraN.res).
@@ -412,24 +379,9 @@ public:
     std::vector<std::int64_t> snapshotFields() const;
     bool loadSnapshotFields(const std::vector<std::int64_t>& fields);  // false: malformed, state unchanged
 
-    // --- secrets (network play) ---
-    // What a step used of the things clients are not told in advance: the random numbers
-    // drawn, and the hidden powerups looked at (cell index and type).
-    struct Secrets {
-        std::vector<std::uint16_t> draws;
-        std::vector<std::pair<std::uint8_t, std::uint8_t>> hidden;
-    };
-    // Server: record them from now on; takeSecrets() after each tick.
-    void recordSecrets();
-    Secrets takeSecrets();
-    // Client: the world holds no hidden powerups and draws no numbers of its own; before
-    // each tick it is given that tick's secrets. secretsInStep() after the tick says
-    // whether exactly the numbers given were used.
-    void replaySecrets();
-    void feedSecrets(const Secrets& secrets);
-    bool secretsInStep() const { return !rng_.outOfStep(); }
-    // A copy made to guess ahead: its own random numbers again (the guesses about chance
-    // are wrong until the server's step arrives).
+    // --- guessing ahead (network play) ---
+    // A copy made to guess ahead draws its own random numbers (the guesses about chance are
+    // wrong until the server's word arrives; see keepToConfirmed).
     void ownRandom(std::uint32_t seed);
     // For such a copy, after it has been run ahead of `confirmed`: whatever in it was decided
     // by chance is taken back to what is confirmed, so that a guess about chance is never
@@ -445,10 +397,7 @@ private:
     template <class A>
     void archive(A& a);
     static std::size_t index(Cell c) { return static_cast<std::size_t>(c.y * kGridW + c.x); }
-    // Looks at a powerup where a hidden one would matter; the look is noted while recording.
-    Powerup& look(Cell c);
-    bool recording_ = false;
-    std::vector<std::pair<std::uint8_t, std::uint8_t>> looked_;
+    Powerup& look(Cell c) { return powerups_[index(c)]; }
 
     bool playerPassable(Cell c) const;
     Bomb* findBomb(Cell c);

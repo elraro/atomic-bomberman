@@ -16,6 +16,7 @@
 #include "net/link.hpp"
 #include "net/protocol.hpp"
 #include "net/relay.hpp"
+#include "net/snapshot.hpp"
 #include "net/socket.hpp"
 #include "net/upnp.hpp"
 #include "resources/campaign_file.hpp"
@@ -113,7 +114,7 @@ private:
     std::string startMatch();  // empty, or why not
     void startRound();
     void stepRound();
-    void sendSteps(Peer& p);
+    void sendState(Peer& p);
     void sendSnapshot(Peer& p);
     void endRound();
     void toLobby();
@@ -193,9 +194,13 @@ private:
     std::uint32_t roundId_ = 0;
     std::vector<std::uint8_t> roundStart_;  // the encoded RoundStart of the current round
     std::vector<std::uint8_t> roundEnd_;    // and its RoundEnd, once decided
-    std::vector<StepInputs> history_;
-    std::vector<World::Secrets> secrets_;  // per step: random draws and hidden powerups looked at
-    std::vector<std::uint32_t> hashes_;
+    std::vector<StepInputs> history_;      // the input applied for every seat in every step so far
+    struct StateAt {
+        std::uint32_t step = 0;
+        Fields fields;
+    };
+    std::deque<StateAt> states_;           // the public state after each of the last steps
+    std::deque<StepEvent> stepEvents_;     // what happened in those steps
     std::uint64_t roundStartAt_ = 0;
     bool decided_ = false;
     int winner_ = -1;

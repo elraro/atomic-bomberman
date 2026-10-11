@@ -1483,45 +1483,7 @@ void World::updatePlayer(int i, int dt, const PlayerInput& in) {
     handleButtons(i, effective);
 }
 
-// --- secrets ----------------------------------------------------------------
-
-Powerup& World::look(Cell c) {
-    Powerup& p = powerups_[index(c)];
-    if (recording_ && p.state == PowerupState::Hidden) looked_.emplace_back(static_cast<std::uint8_t>(index(c)), static_cast<std::uint8_t>(p.type));
-    return p;
-}
-
-void World::recordSecrets() {
-    recording_ = true;
-    looked_.clear();
-    rng_.setMode(Rng::Mode::Record);
-}
-
-World::Secrets World::takeSecrets() {
-    Secrets s;
-    s.draws = rng_.takeRecord();
-    s.hidden = std::exchange(looked_, {});
-    return s;
-}
-
-void World::replaySecrets() {
-    recording_ = false;
-    rng_.setMode(Rng::Mode::Replay);
-}
-
-void World::feedSecrets(const Secrets& secrets) {
-    rng_.clearFeed();
-    rng_.feed(secrets.draws);
-    // The hidden powerups this tick will look at, where the server has them.
-    for (const auto& [cell, type] : secrets.hidden)
-        if (cell < powerups_.size() && type < kPowTypeCount && powerups_[cell].state != PowerupState::Revealed) powerups_[cell] = {PowerupState::Hidden, type};
-}
-
-void World::ownRandom(std::uint32_t seed) {
-    recording_ = false;
-    rng_.setMode(Rng::Mode::Own);
-    rng_.setState(seed);
-}
+void World::ownRandom(std::uint32_t seed) { rng_.setState(seed); }
 
 void World::keepToConfirmed(const World& confirmed, const std::array<bool, kMaxPlayers>& own) {
     for (std::size_t i = 0; i < powerups_.size(); ++i) {

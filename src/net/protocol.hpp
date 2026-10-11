@@ -17,20 +17,19 @@ namespace ab::net {
 
 inline constexpr std::uint32_t kTcpMagic = 0x4E4D4241u;  // "ABMN"
 inline constexpr std::uint32_t kUdpMagic = 0x554D4241u;  // "ABMU"
-inline constexpr std::uint16_t kProtocolVersion = 7;
+inline constexpr std::uint16_t kProtocolVersion = 8;
 inline constexpr std::uint16_t kDefaultPort = 27410;
 // Every server also listens here for searches on the local network, whatever its own port.
 inline constexpr std::uint16_t kDiscoveryPort = 27409;
 inline constexpr int kStepMs = 50;
-inline constexpr int kMaxStepsPerMessage = 40;
 inline constexpr std::size_t kMaxName = 16;
 inline constexpr std::size_t kMaxChat = 120;
 inline constexpr std::uint8_t kServerSender = 255;
 inline constexpr int kMaxLocalPlayers = 4;  // players at one computer
 
-// Key is the one message sent unencrypted in each direction (and Reject, when the versions differ).
-enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, UdpState, NeedState, Continue, Pong, Locals, Ban, Unban, Admin, Login, LeaveMatch, Ready, KeyExchange = 100 };
-enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Steps, RoundEnd, Snapshot, Ping, Roulette, KeyExchange = 100 };
+// Messages and datagrams of a connection, all of them carried by its link.
+enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, Continue, Pong, Locals, Ban, Unban, Admin, Login, LeaveMatch, Ready };
+enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Delta, RoundEnd, Snapshot, Ping, Roulette };
 // A datagram of a connection: its contents are encrypted. Searches on the LAN stay in the clear.
 inline constexpr std::uint8_t kSealedDatagram = 0x80;
 // In the clear, before a connection has keys: the client's key (with the cookie the server
@@ -43,7 +42,8 @@ inline constexpr std::size_t kCookieBytes = 16;
 // Where the packets travel inside a TCP connection (a network without UDP, or a relay):
 // each is one frame of this type.
 inline constexpr std::uint8_t kPacketFrame = 0x7E;
-enum class UdpMsg : std::uint8_t { Probe = 1, ProbeAck, Input, Steps, Query, Info };
+// Searches of the local network, in the clear.
+enum class UdpMsg : std::uint8_t { Query = 5, Info = 6 };
 
 enum class Phase : std::uint8_t { Lobby = 0, Round = 1, Result = 2, Roulette = 3 };
 enum class SeatKind : std::uint8_t { Empty = 0, Human = 1, Computer = 2 };
@@ -196,21 +196,33 @@ struct RoundStartMsg {
     int stages = 0;
 };
 
-struct StepsMsg {
-    std::uint32_t roundId = 0;
-    std::uint32_t firstStep = 0;      // steps before the first one in this message
-    std::vector<StepInputs> steps;
-    // For each step, what it used of the things clients are not told in advance: the
-    // random numbers drawn and the hidden powerups looked at.
-    std::vector<World::Secrets> secrets;
-    std::uint32_t hash = 0;           // of the state after the last step here
+// An event of a step, as clients are told it (they no longer work events out themselves).
+struct StepEvent {
+    std::uint32_t step = 0;  // the step it happened in
+    Event event{};
 };
 
-struct InputMsg {
-    std::uint32_t token = 0;
+// The state after `step`, as its difference from the state after `baseStep`, which the
+// client has said it holds; with what happened in every step after that one. A datagram
+// while it fits one, a message otherwise.
+struct DeltaMsg {
     std::uint32_t roundId = 0;
-    std::uint32_t haveStep = 0;       // steps received so far, without gaps
-    std::array<std::uint8_t, kMaxLocalPlayers> input{};  // one byte per player at this computer
+    std::uint32_t step = 0;
+    std::uint32_t baseStep = 0;
+    std::vector<StepEvent> events;
+    std::vector<std::uint8_t> delta;  // encodeDelta() of the two rows of numbers
+};
+
+inline constexpr int kInputsPerMessage = 8;
+
+// What the players at this computer hold down, for the step named and the ones before it
+// (so that a lost datagram loses no key press), and the newest state held.
+struct InputMsg {
+    std::uint32_t roundId = 0;
+    bool haveState = false;           // false: nothing of this round has arrived yet
+    std::uint32_t haveStep = 0;       // the newest state held
+    std::uint32_t step = 0;           // inputs[0] is meant for this step, inputs[1] for the one before...
+    std::vector<std::array<std::uint8_t, kMaxLocalPlayers>> inputs;  // at most kInputsPerMessage
 };
 
 struct RoundEndMsg {
@@ -233,10 +245,12 @@ struct RouletteMsg {
     int frames = 0;         // wheel frames (25 a second) until it has stopped
 };
 
+// The whole public state after `step`: where a round begins, where a late joiner comes
+// in, and the way back for a client that has fallen too far behind.
 struct SnapshotMsg {
     std::uint32_t roundId = 0;
     std::uint32_t step = 0;
-    std::vector<std::uint8_t> state;
+    std::vector<std::uint8_t> state;  // encodeDelta() from an empty row
 };
 
 struct ServerInfo {
@@ -263,8 +277,8 @@ void encode(ByteWriter& w, const RoundSetup& m);
 bool decode(ByteReader& r, RoundSetup& m);
 void encode(ByteWriter& w, const RoundStartMsg& m);
 bool decode(ByteReader& r, RoundStartMsg& m);
-void encode(ByteWriter& w, const StepsMsg& m);
-bool decode(ByteReader& r, StepsMsg& m);
+void encode(ByteWriter& w, const DeltaMsg& m);
+bool decode(ByteReader& r, DeltaMsg& m);
 void encode(ByteWriter& w, const InputMsg& m);
 bool decode(ByteReader& r, InputMsg& m);
 void encode(ByteWriter& w, const RoundEndMsg& m);
