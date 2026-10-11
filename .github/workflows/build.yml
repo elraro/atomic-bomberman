@@ -19,6 +19,42 @@ permissions:
   contents: read
 
 jobs:
+  # The master server of online play (master/, Go): its tests run against the memory
+  # store and against a real PostgreSQL.
+  master:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: master
+          POSTGRES_PASSWORD: master
+          POSTGRES_DB: master
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U master"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: master/go.mod
+          cache-dependency-path: master/go.sum
+      - name: Vet
+        working-directory: master
+        run: go vet ./...
+      - name: Test
+        working-directory: master
+        env:
+          MASTER_TEST_DATABASE_URL: postgres://master:master@127.0.0.1:5432/master
+        run: go test -count=1 -v ./... | tee test.log && ! grep -q "MASTER_TEST_DATABASE_URL is not set" test.log
+      - name: Build
+        working-directory: master
+        run: go build -o bin/ ./cmd/...
+
   linux:
     name: linux (${{ matrix.arch }})
     strategy:
