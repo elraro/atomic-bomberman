@@ -16,6 +16,7 @@
 #include "online/certificate.hpp"
 #include "online/config.hpp"
 #include "online/http.hpp"
+#include "online/ice.hpp"
 #include "online/json.hpp"
 #include "online/online.hpp"
 #include "online/sign.hpp"
@@ -365,6 +366,113 @@ void testTournamentFiles() {
     CHECK(!fetchTournament("no-such-file.ab", envelope, why) && why.find("cannot read") != std::string::npos);
 }
 
+// ICE (libjuice) as a carrier: two agents on this machine find each other directly, and,
+// when both hide their addresses, through a relay.
+void testIce() {
+    using ab::ice::Agent;
+    const std::string description =
+        "a=ice-ufrag:abcd\r\na=ice-pwd:0123456789abcdefghijkl\r\n"
+        "a=candidate:1 1 UDP 2122317823 192.168.1.20 40000 typ host\r\n"
+        "a=candidate:2 1 UDP 1686109951 203.0.113.9 40000 typ srflx raddr 0.0.0.0 rport 0\r\n"
+        "a=candidate:3 1 UDP 25108223 198.51.100.4 50001 typ relay raddr 0.0.0.0 rport 0\r\n"
+        "a=end-of-candidates\r\n";
+    const std::string hidden = ab::ice::relayOnly(description);
+    CHECK(hidden.find("192.168.1.20") == std::string::npos && hidden.find("203.0.113.9") == std::string::npos);
+    CHECK(hidden.find("198.51.100.4") != std::string::npos && hidden.find("a=ice-ufrag:abcd") != std::string::npos && hidden.find("a=ice-pwd:") != std::string::npos &&
+          hidden.find("a=end-of-candidates") != std::string::npos);
+
+    auto wait = [](const std::function<bool()>& done, int maxMs = 15000) {
+        for (int waited = 0; waited < maxMs && !done(); waited += 5) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        return done();
+    };
+    auto exchange = [&](Agent& a, Agent& b, const ab::ice::Config& config) {
+        if (!a.start(config) || !b.start(config)) return false;
+        if (!wait([&] { return a.gathered() && b.gathered(); })) return false;
+        if (a.localDescription().empty() || !b.setRemoteDescription(a.localDescription()) || !a.setRemoteDescription(b.localDescription())) return false;
+        return wait([&] { return a.state() == Agent::State::Connected && b.state() == Agent::State::Connected; }, 30000);
+    };
+    auto talk = [&](Agent& a, Agent& b) {
+        // A hundred packets each way; all on one machine, so all of them arrive.
+        for (int i = 0; i < 100; ++i) {
+            a.send(std::vector<std::uint8_t>(600, static_cast<std::uint8_t>(i)));
+            b.send(std::vector<std::uint8_t>(900, static_cast<std::uint8_t>(i + 100)));
+        }
+        int gotA = 0, gotB = 0;
+        bool intact = true;
+        wait([&] {
+            std::vector<std::uint8_t> p;
+            while (b.receive(p)) intact = intact && p.size() == 600 && p[0] == static_cast<std::uint8_t>(gotB) && p[599] == p[0], ++gotB;
+            while (a.receive(p)) intact = intact && p.size() == 900 && p[0] == static_cast<std::uint8_t>(gotA + 100), ++gotA;
+            return gotA == 100 && gotB == 100;
+        }, 5000);
+        return intact && gotA == 100 && gotB == 100;
+    };
+    {
+        // No server at all: the machine's own addresses are enough.
+        Agent a, b;
+        CHECK(a.state() == Agent::State::New && !a.gathered() && a.localDescription().empty());
+        const bool connected = exchange(a, b, {});
+        CHECK(connected);
+        if (connected) {
+            CHECK(a.alive() && b.alive());
+            CHECK_TEXT(a.kind(), "Direct");
+            CHECK(a.remote().find(':') != std::string::npos && a.remote() != "unknown:0");
+            CHECK(talk(a, b));
+        }
+    }
+    {
+        // Both sides hide their addresses: only the relay's are exchanged, and the way goes through it.
+        ab::ice::TestServer relay("player", "secret");
+        CHECK(relay.port() > 0);
+        ab::ice::Config config;
+        config.turn.push_back({"127.0.0.1", relay.port(), "player", "secret"});
+        config.relayOnly = true;
+        Agent a, b;
+        const bool connected = exchange(a, b, config);
+        CHECK(connected);
+        if (connected) {
+            // What each side tells the other names the relay only.
+            for (const Agent* agent : {&a, &b}) {
+                const std::string said = agent->localDescription();
+                CHECK(said.find(" typ host") == std::string::npos && said.find(" typ srflx") == std::string::npos && said.find(" typ relay") != std::string::npos);
+            }
+            CHECK(talk(a, b));
+            // (Not checked: that the way taken is the relayed one. On one machine the relay and
+            // both players have the same address, so the relay lets a player's own address
+            // through as if it were the relay's, and a direct way can form after all. Between
+            // different machines the relay refuses packets from addresses it was not told about.)
+        }
+    }
+    {
+        // With a relay but nothing to hide, the direct way is still the one taken.
+        ab::ice::TestServer relay("player", "secret");
+        ab::ice::Config config;
+        config.stunHost = "127.0.0.1";
+        config.stunPort = relay.port();
+        config.turn.push_back({"127.0.0.1", relay.port(), "player", "secret"});
+        Agent a, b;
+        const bool connected = exchange(a, b, config);
+        CHECK(connected);
+        if (connected) {
+            CHECK(a.localDescription().find(" typ relay") != std::string::npos);
+            // (The first pair of addresses that works may be a relayed one; the agents then move to the best.)
+            CHECK(wait([&] { return a.kind() == "Direct" && b.kind() == "Direct"; }, 10000));
+            CHECK(talk(a, b));
+        }
+    }
+    {
+        // A relay that does not know us: no relayed address, and with addresses hidden no way at all.
+        ab::ice::TestServer relay("player", "secret");
+        ab::ice::Config config;
+        config.turn.push_back({"127.0.0.1", relay.port(), "player", "wrong"});
+        config.relayOnly = true;
+        Agent a;
+        CHECK(a.start(config));
+        CHECK(wait([&] { return a.gathered(); }, 30000));
+        CHECK(a.localDescription().find(" typ relay") == std::string::npos);
+    }
+}
+
 void testHttp() {
     bool tls = false;
     std::string host, port, path;
@@ -610,6 +718,7 @@ int main() {
         {"configuration rules", testConfigRules},
         {"server certificates and key files", testCertificates},
         {"tournament files", testTournamentFiles},
+        {"ice", testIce},
         {"http client", testHttp},
         {"master client", testMasterClient},
     };

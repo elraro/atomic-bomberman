@@ -102,11 +102,27 @@ if(AB_ONLINE)
     if(NOT monocypher_POPULATED)
         FetchContent_Populate(monocypher)
     endif()
+    # libjuice: ICE, STUN and a TURN client (a third small library without dependencies),
+    # for finding a way between players behind routers. Addresses of this computer itself
+    # are among those it offers, so that two games on one machine find each other.
+    set(NO_TESTS ON CACHE BOOL "" FORCE)
+    set(ENABLE_LOCALHOST_ADDRESS ON CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)  # (libjuice would switch it on, for this whole build)
+    FetchContent_Declare(libjuice
+        URL https://github.com/paullouisageneau/libjuice/archive/refs/tags/v1.7.4.tar.gz
+        URL_HASH SHA256=95c088862aa1b88b73d62aa99577135010eb768fcafb252d13aa85a8515ef798)
+    FetchContent_GetProperties(libjuice)
+    if(NOT libjuice_POPULATED)
+        FetchContent_Populate(libjuice)
+        add_subdirectory(${libjuice_SOURCE_DIR} ${libjuice_BINARY_DIR} EXCLUDE_FROM_ALL)
+    endif()
+    target_compile_definitions(juice-static PUBLIC JUICE_STATIC)
     add_library(ab_monocypher STATIC ${monocypher_SOURCE_DIR}/src/monocypher.c ${monocypher_SOURCE_DIR}/src/optional/monocypher-ed25519.c)
     target_include_directories(ab_monocypher PUBLIC ${monocypher_SOURCE_DIR}/src ${monocypher_SOURCE_DIR}/src/optional)
-    add_library(ab_online src/online/json.cpp src/online/sign.cpp src/online/http.cpp src/online/config.cpp src/online/online.cpp src/online/certificate.cpp src/online/tournament.cpp)
+    add_library(ab_online src/online/json.cpp src/online/sign.cpp src/online/http.cpp src/online/config.cpp src/online/online.cpp src/online/certificate.cpp src/online/tournament.cpp src/online/ice.cpp)
     target_include_directories(ab_online PUBLIC src)
     target_link_libraries(ab_online PUBLIC ab_monocypher MbedTLS::mbedtls Threads::Threads)
+    target_link_libraries(ab_online PRIVATE juice-static)
     target_compile_definitions(ab_online PUBLIC AB_ONLINE=1)
     # Where a packaged game looks for the configuration of online play, and the key that
     # must have signed it (docs/operations/online.md). Empty: the player has to name one.
