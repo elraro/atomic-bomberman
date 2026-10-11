@@ -66,6 +66,41 @@ if(NOT ANDROID)
     install(TARGETS atomic_server RUNTIME DESTINATION .)
 endif()
 
+# Online play (docs/specifications/online-play.md): talking to the master server and
+# reading signed documents. Two libraries are fetched and built for it, both small and
+# without dependencies of their own: mbedTLS (TLS for HTTPS) and Monocypher (Ed25519
+# signatures). -DAB_ONLINE=OFF builds without them: the game then has no online menu,
+# and playing on the local network or by address is as before.
+option(AB_ONLINE "Online play through a master server (fetches mbedTLS and Monocypher)" ON)
+if(AB_ONLINE)
+    enable_language(C)
+    include(FetchContent)
+    set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+    set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
+    set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(DISABLE_PACKAGE_CONFIG_AND_INSTALL ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(mbedtls
+        URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2
+        URL_HASH SHA256=a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        EXCLUDE_FROM_ALL)
+    FetchContent_Declare(monocypher
+        URL https://github.com/LoupVaillant/Monocypher/releases/download/4.0.3/monocypher-4.0.3.tar.gz
+        URL_HASH SHA256=8cc9bc341a66249016db9bd70e9142d8d0aef9945973744b1ac05dbc55d8ee66
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_SUBDIR none)  # no build file of its own is used: two C files, compiled below
+    FetchContent_MakeAvailable(mbedtls monocypher)
+    add_library(ab_monocypher STATIC ${monocypher_SOURCE_DIR}/src/monocypher.c ${monocypher_SOURCE_DIR}/src/optional/monocypher-ed25519.c)
+    target_include_directories(ab_monocypher PUBLIC ${monocypher_SOURCE_DIR}/src ${monocypher_SOURCE_DIR}/src/optional)
+    add_library(ab_online src/online/json.cpp src/online/sign.cpp src/online/http.cpp src/online/config.cpp src/online/online.cpp)
+    target_include_directories(ab_online PUBLIC src)
+    target_link_libraries(ab_online PUBLIC ab_monocypher MbedTLS::mbedtls Threads::Threads)
+    target_compile_definitions(ab_online PUBLIC AB_ONLINE=1)
+    ab_warnings(ab_online)
+endif()
+
 # Front end: SDL3 window, input and audio + OpenGL 3.3 renderer. Optional.
 # SDL3 is taken from the system when installed. With -DAB_FETCH_SDL3=ON it is
 # downloaded and built as a static library instead (used by the release builds).
@@ -170,6 +205,14 @@ add_executable(ab_net_tests tests/unit/test_net.cpp)
 target_link_libraries(ab_net_tests PRIVATE ab_net ab_free)
 ab_warnings(ab_net_tests)
 add_test(NAME net COMMAND ab_net_tests)
+
+# The game's side of online play: signed documents, the configuration, the master client.
+if(AB_ONLINE)
+    add_executable(ab_online_tests tests/unit/test_online.cpp)
+    target_link_libraries(ab_online_tests PRIVATE ab_online)
+    ab_warnings(ab_online_tests)
+    add_test(NAME online COMMAND ab_online_tests)
+endif()
 
 # The network screens worked with a gamepad alone: the pad's keys, the on-screen keyboard,
 # and a host and a guest over the loopback interface. Nothing is drawn, so no window is needed.
