@@ -7,7 +7,7 @@ Like `networking.md`, this is the project's own design. Nothing here is a claim 
 ## Goals
 
 - Reliable internet play for up to 10 players, including players behind home routers (NAT) and carrier-grade NAT, without anybody forwarding ports by hand.
-- Games are found through a list, a code or an invitation, not by exchanging addresses.
+- Games are found through a list or a code, not by exchanging addresses. An "invitation" is nothing more than that code passed on as text by whatever means the players already use; no chat platform is integrated.
 - Community tournaments and statistics are possible later without redesigning what is built now, and **without a central server having to be trusted or even running**: what a tournament needs is carried by signatures (section 7).
 - The server stays the only authority over a match. Clients send inputs and draw; they never decide outcomes.
 - Everything normal in the online flow can be done with a gamepad.
@@ -65,8 +65,8 @@ Lobbies:
 
 | Call | Purpose |
 |---|---|
-| `POST /lobbies` | Create: name, visibility (public / by code), password flag, settings summary, the server's identity key and, if it has one, its certificate. Returns lobby id, a short join code, a host token. |
-| `GET /lobbies` | List public lobbies: name, players/seats, phase, level, version, region hint, whether a password is needed, whether the server showed a certificate. Paged. |
+| `POST /lobbies` | Create: name, visibility (public / by code), settings summary, the server's identity key and, if it has one, its certificate. Returns lobby id, a short join code, a host token. |
+| `GET /lobbies` | List public lobbies: name, players/seats, phase, level, version, region hint, whether the server showed a certificate. Paged. |
 | `GET /lobbies/by-code/{code}` | Look one up by its code. |
 | `POST /lobbies/{id}/join` | Returns the host's connection candidates and relay credentials. |
 | `POST /lobbies/{id}/leave` | |
@@ -80,6 +80,12 @@ Infrastructure:
 |---|---|
 | `GET /status` | Operational / maintenance state, message of the day, minimum game version. |
 | `POST /relay-credentials` | Short-lived TURN username and password for this session. |
+
+### Join codes; no passwords on listed games
+
+- A code is **six digits**, drawn with the system's cryptographic random source (in Go `crypto/rand`, never `math/rand`, which can be predicted). The same holds for session and host tokens. Digits only, so that a gamepad types them on the small keyboard.
+- Looking a code up is rate-limited per address and per session, and a wrong code and an unknown one answer alike. A code dies with its lobby.
+- A game made through the master has **no password**. A private game is one that is not listed and is joined by its code. Reasons: the master checks a code before it gives out anything, whereas a password is checked by the host, so the host's address would already have been handed to whoever asked; and passwords people choose are weak. Passwords stay where there is no master: a game joined by address or found on the local network (`networking.md`).
 
 The master passes a certificate on as it got it; the game verifies it itself (section 7) and believes nothing the master says about it.
 
@@ -115,7 +121,7 @@ flags: free-form switches
 ```
 
 - A document is used only if its signature verifies, it has not expired and its serial is not lower than the last one accepted (no replay of an old one).
-- The last good document is cached and used when the endpoint cannot be reached.
+- The last good document is cached and used when the endpoint cannot be reached, **only until it expires**, and a document is issued for seven days at most. The screen then says which day's configuration is in use. (A reviewer argued for refusing instead; see the open points.)
 - A command-line option and a settings key point the game at another bootstrap URL and key, for a self-hosted community.
 - In the code this is one small interface (`OnlineConfig load()`), so that the source can change later without touching its users.
 
@@ -125,6 +131,7 @@ flags: free-form switches
 
 - In the game: **libjuice** (C, MPL-2.0, UDP only), which implements STUN, ICE connectivity checks and a TURN client. To be confirmed in phase 5 by building it for every target (Linux and Windows on x86-64 and ARM64, macOS universal, Android). If it fails a target, the fallback choice is `libnice` or `pjnath`; writing STUN ourselves is not an option.
 - On the server side: **coturn**, serving STUN and TURN on the owner's machine. TURN credentials are time-limited ones derived from a secret shared between coturn and the master (coturn's `use-auth-secret` mode), so a credential leaked from one session is useless an hour later.
+- Deployment: coturn listens on **3478 and 443**, and its range of relayed ports is set low (for instance 5000-9999). Reported, not verified by us: some mobile carriers drop UDP to high ports.
 
 ### Flow
 
@@ -158,7 +165,11 @@ Tried in this order; the first that works is used:
 
 The lobby shows, per player, the path and the measured delay: `Direct`, `Relay`, `Relay (TCP), may stutter`. The test runs when joining a lobby, before any match starts, and takes a few seconds at most.
 
-No fixed-size probe (such as 32 KB) is sent. Reasons: the ICE checks plus the game's handshake already prove both directions; the lobby then exchanges traffic for as long as players wait, which exposes paths that die after a while; and a path that fails later is handled by keepalives and stepping down the ladder during play. If real use shows firewalls that only interfere after some volume, a measured probe can be added to the lobby phase; that would be decided on evidence.
+**Volume check.** A path is declared good only after about 64 KB has gone over it in each direction during the test (padding datagrams over two or three seconds, acknowledged by the other side). The ICE checks and the handshake prove both directions, but they are a few kilobytes, and so is the traffic of a lobby. Reported by a reviewer, not verified by us: some networks let a new UDP flow start and then drop it silently after roughly 16 KB. Without the check such a path would die in the first round instead of in the test. An earlier version of this document left the probe out pending evidence; this report is that evidence.
+
+**Always relay.** A setting, off by default: "Hide my address (always use the relay)". With it the game offers and accepts relayed candidates only, so neither the host nor the other players learn its address; they see the relay's. It costs delay and the owner's traffic, and is said so beside the setting.
+
+NAT type detection is not done: the old classification by STUN is unreliable, and the ICE checks answer the only question that matters (does a path work) directly.
 
 ## 4. Game transport
 
@@ -329,9 +340,9 @@ results so far: per finished match, the hash of its match record and where to fe
 Every ordinary action is a visible, selectable item. Keyboard shortcuts stay as extras.
 
 - **Online menu**: Browse Games, Create Game, Join By Code, Tournaments, Back.
-- **Browse**: a list (name, players, level, delay, lock). Up/down, confirm to join, a button to refresh.
-- **Create**: name, public or by code, password, then the lobby.
-- **Join by code**: an on-screen keyboard of letters and digits.
+- **Browse**: a list (name, players, level, delay). Up/down, confirm to join, a button to refresh.
+- **Create**: name, public or by code, then the lobby, which shows the code.
+- **Join by code**: six digits on the on-screen keyboard of digits.
 - **Lobby**: seats, settings (host), a row of actions: Ready / Not Ready, Start (host, when everybody is ready), Team, Chat, Leave. Each player's connection path and delay. Whether the server is verified, and its operator.
 - **Tournaments**: open a file or a URL; the bracket; "Play my match".
 - **Text entry** (name, password, chat): the on-screen keyboard with a gamepad or touch; a real keyboard types directly.
@@ -382,6 +393,9 @@ Phases 6 to 8 do not depend on the master (4) or on NAT traversal (5): a tournam
 What automated tests cannot show, and must be tried by people: real routers and carrier-grade NAT, real loss and delay, ten players on ten connections, the owner's server under load.
 
 ## 12. Open points
+
+- **TURN over TCP instead of our own TCP relay?** coturn can take clients over TCP and TLS on port 443, which would replace the project's relay with a standard one and one service fewer. libjuice, chosen above, is UDP only, so this means another library (libnice or pjnath, both larger) or keeping the relay. To be settled at the start of phase 5 by trying the libraries.
+- **Cached configuration or none?** A reviewer's position: outdated data is worse than refusing. Kept for now, bounded to seven days, because without it a tournament on a third party's server could not be joined while the owner's site is down; the price is that a revoked certificate stays accepted for up to those seven days by a player who cannot reach the site.
 
 - Whether one datagram per snapshot is enough with ten players (phase 3 measures it).
 - Whether libjuice builds and works on every target (phase 5).
