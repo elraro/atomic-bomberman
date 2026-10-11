@@ -1,6 +1,6 @@
 # Online play over the internet (target design)
 
-Status: **phase 1 is implemented** (the screens of today's network mode worked with a gamepad, the on-screen keyboard, the ready state; described in `networking.md`). Nothing else in this document is implemented yet. It describes where the network mode is going. What the game does today is in `networking.md` (server-driven lockstep, TCP + UDP to an address, a TCP relay), which stays valid until the phases below replace its parts.
+Status: **phases 1 and 2 are implemented** (1: the screens of today's network mode worked with a gamepad, the on-screen keyboard, the ready state; 2: the link, with today's protocol moved onto it; both described in `networking.md`). Nothing else in this document is implemented yet. It describes where the network mode is going. What the game does today is in `networking.md` (server-driven lockstep over the link, to an address, a TCP relay), which stays valid until the phases below replace its parts.
 
 Like `networking.md`, this is the project's own design. Nothing here is a claim about the original game, whose IPX/serial network mode is not reproduced.
 
@@ -356,7 +356,7 @@ Each phase is usable on its own and ends with tests.
 | Phase | Content | Depends on |
 |---|---|---|
 | 1 | Gamepad-friendly online screens for today's network mode (menu items, on-screen keyboard, ready state). **Done.** | nothing |
-| 2 | The link abstraction: reliable messages over UDP; today's protocol moved onto it | nothing |
+| 2 | The link abstraction: reliable messages over UDP; today's protocol moved onto it. **Done.** | nothing |
 | 3 | Snapshot model replacing lockstep, with measurements of size and behaviour under loss | 2 |
 | 4 | Master server (guest sessions, lobbies, status), signed configuration, browse / create / join by code in the game | 1 |
 | 5 | pjnath + coturn: discovery, hole punching, TURN over UDP, TCP and TLS, the ladder, volume check, always-relay setting, connection display; the old relay removed | 2, 4 |

@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "net/link.hpp"
 #include "net/protocol.hpp"
 #include "net/relay.hpp"
 #include "net/socket.hpp"
@@ -30,7 +31,7 @@ class Client {
 public:
     enum class State {
         Idle,
-        Connecting,  // TCP connection and Hello under way
+        Connecting,  // key exchange and Hello under way
         Lobby,       // also while a match the client is not shown yet is running
         Round,
         Result,
@@ -72,9 +73,11 @@ public:
     int localPlayers() const;  // how many players this computer has asked for
     const LobbyState& lobby() const { return lobby_; }
     const std::deque<ChatLine>& chat() const { return chat_; }
-    bool udpActive() const { return udpOn_; }
+    // The connection runs over UDP (otherwise inside a TCP connection: no UDP path, or a relay).
+    bool udpActive() const { return keyed_ && !overTcp_; }
+    int linkRttMs() const { return link_.rttMs(); }
     bool viaRelay() const { return viaRelay_; }
-    bool encrypted() const { return keyed_ && socket_.encrypted(); }
+    bool encrypted() const { return keyed_; }
 
     void setInput(const PlayerInput& in) { input_[0] = packInput(in); }
     void setInput(int local, const PlayerInput& in) { input_[static_cast<std::size_t>(local)] = packInput(in); }
@@ -127,7 +130,7 @@ public:
     std::uint32_t stepsApplied() const { return applied_; }
     int snapshotsLoaded() const { return snapshots_; }
 
-    // Test hooks: no UDP at all; and access to break the state on purpose.
+    // No UDP at all: the connection goes inside a TCP connection from the start.
     void disableUdp() { udpAllowed_ = false; }
 
 private:
@@ -137,6 +140,10 @@ private:
         World::Secrets secrets;
     };
     void fail(const std::string& why);
+    void transmit(const Bytes& packet);
+    void send(ClientMsg type, const Bytes& payload);
+    void sendKey(std::uint64_t nowMs);
+    void handlePacket(const Bytes& packet, std::uint64_t nowMs);
     void handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& payload, std::uint64_t nowMs);
     void handleSteps(const StepsMsg& m);
     void beginRound(const RoundStartMsg& m, std::uint64_t nowMs);
@@ -147,8 +154,14 @@ private:
 
     State state_ = State::Idle;
     std::string error_;
-    TcpSocket socket_;
+    Link link_;
     UdpSocket udp_;
+    TcpSocket tcp_;
+    bool overTcp_ = false;     // the packets travel as frames of a TCP connection
+    bool tcpIntro_ = false;    // that connection is up (and the relay has been told what is wanted)
+    bool udpHeard_ = false;    // the server has answered over UDP
+    std::uint64_t keySentAt_ = 0;
+    Bytes cookie_;
     Address server_{};
     std::string name_;
     std::string address_;      // as given to connect()
@@ -161,11 +174,9 @@ private:
     bool identityOnLoopback_ = false;
     std::string password_;
     std::uint64_t connectAt_ = 0;
-    bool helloSent_ = false;   // the key exchange was started
     bool keyed_ = false;       // both sides hold the connection's keys
     Key secret_{}, public_{};
     SessionKeys keys_;
-    std::uint64_t udpSent_ = 0, udpReceived_ = 0;  // datagram counters, one per direction
     bool welcomed_ = false;
     std::uint8_t id_ = 0;
     std::uint32_t token_ = 0;
@@ -174,10 +185,6 @@ private:
     std::deque<ChatLine> chat_;
 
     bool udpAllowed_ = true;
-    bool udpOn_ = false;
-    int probes_ = 0;
-    std::uint64_t probeAt_ = 0;
-    std::uint64_t udpStepsAt_ = 0;   // when steps last arrived by UDP
 
     RoundStartMsg start_;
     RoundEndMsg end_;

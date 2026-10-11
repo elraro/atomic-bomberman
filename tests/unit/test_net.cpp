@@ -678,6 +678,125 @@ void testUdpLoss() {
     CHECK(h.server.steps() > 100);
 }
 
+// A line that loses four packets in ten from the first packet on: joining, the lobby, chat
+// and a whole round still work, and nothing arrives twice.
+void testLossFromTheStart() {
+    Harness h;
+    CHECK(h.start("pass", 2));
+    setTestUdpLoss(40);
+    Client& ann = h.join("Ann", "pass");
+    Client& bob = h.join("Bob", "pass");
+    const bool joined = h.until([&] { return ann.state() == Client::State::Lobby && bob.state() == Client::State::Lobby && ann.lobby().clients.size() == 2 && bob.ready(); });
+    CHECK(joined);
+    CHECK(ann.udpActive() && bob.udpActive());
+    for (int i = 0; i < 5; ++i) {
+        bob.sendChat("line " + std::to_string(i));
+        h.spin(400);
+    }
+    const bool chatted = h.until([&] {
+        int lines = 0;
+        for (const ChatLine& line : ann.chat()) lines += !line.fromServer ? 1 : 0;
+        return lines == 5;
+    });
+    CHECK(chatted);
+    int n = 0;
+    bool order = true;
+    for (const ChatLine& line : ann.chat())
+        if (!line.fromServer) order = order && line.text == "line " + std::to_string(n++);
+    CHECK(order);
+    ann.sendStart();
+    const bool started = h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; });
+    const bool finished = started && playToResult(h, {&ann, &bob});
+    setTestUdpLoss(0);
+    CHECK(started);
+    CHECK(finished);
+    if (!finished) return;
+    CHECK_EQ(ann.world()->stateHash(true), h.server.world()->stateHash(true));
+    CHECK_EQ(bob.world()->stateHash(true), h.server.world()->stateHash(true));
+    CHECK_EQ(ann.snapshotsLoaded() + bob.snapshotsLoaded(), 0);
+}
+
+// A network that lets no UDP through at all: after two seconds without an answer the
+// client tries the same inside a TCP connection, and plays there.
+void testNoUdpPath() {
+    Harness h;
+    CHECK(h.start("", 2));
+    setTestUdpLoss(100);
+    Client& ann = h.join("Ann");
+    const bool joined = h.until([&] { return ann.state() == Client::State::Lobby && !ann.lobby().clients.empty(); });
+    CHECK(joined);
+    CHECK(!ann.udpActive());
+    CHECK(ann.encrypted());
+    ann.sendStart();
+    const bool finished = h.until([&] { return ann.state() == Client::State::Round; }) && playToResult(h, {&ann});
+    setTestUdpLoss(0);
+    CHECK(finished);
+    if (finished) CHECK_EQ(ann.world()->stateHash(true), h.server.world()->stateHash(true));
+}
+
+// The first packet of a stranger costs the server nothing: it answers with a cookie and
+// keeps no memory of it. Only who repeats the cookie from that address gets further.
+void testCookie() {
+    Harness h;
+    CHECK(h.start());
+    UdpSocket raw;
+    CHECK(raw.open(0));
+    const Address server{kLoopback, h.server.port()};
+    auto key = [&](const Bytes& cookie) {
+        ByteWriter w;
+        w.u32(kUdpMagic);
+        w.u8(kClientKey);
+        w.u16(kProtocolVersion);
+        Key secret{};
+        randomBytes(secret.data(), 32);
+        for (std::uint8_t b : x25519Base(secret)) w.u8(b);
+        for (std::uint8_t b : cookie) w.u8(b);
+        while (w.data().size() < 96) w.u8(0);
+        return w.data();
+    };
+    auto answer = [&]() {
+        Address from;
+        Bytes data;
+        for (int i = 0; i < 400; ++i) {
+            h.turn();
+            if (raw.receiveFrom(from, data)) return data;
+        }
+        return Bytes{};
+    };
+    CHECK(raw.sendTo(server, key(Bytes(kCookieBytes, 0))));
+    const Bytes first = answer();
+    CHECK_EQ(first.size(), 5 + kCookieBytes);
+    CHECK(first.size() < 96);  // shorter than what was sent
+    if (first.size() != 5 + kCookieBytes) return;
+    CHECK_EQ(first[4], kCookie);
+    // A cookie made up is no better than none.
+    CHECK(raw.sendTo(server, key(Bytes(kCookieBytes, 7))));
+    const Bytes second = answer();
+    CHECK(second.size() == 5 + kCookieBytes && second[4] == kCookie);
+    // The right one, from the address it was given to: the server's key comes back.
+    CHECK(raw.sendTo(server, key(Bytes(first.begin() + 5, first.end()))));
+    const Bytes third = answer();
+    CHECK(third.size() == 5 + 32 + 32 + 4 && third[4] == kServerKey);
+    // From another address the same cookie is worth nothing.
+    UdpSocket other;
+    CHECK(other.open(0));
+    CHECK(other.sendTo(server, key(Bytes(first.begin() + 5, first.end()))));
+    Address from;
+    Bytes data;
+    bool gotKey = false;
+    for (int i = 0; i < 200; ++i) {
+        h.turn();
+        if (other.receiveFrom(from, data)) gotKey = gotKey || (data.size() > 4 && data[4] == kServerKey);
+    }
+    CHECK(!gotKey);
+    CHECK_EQ(h.server.players(), 0);
+    // Whoever got a key and then says nothing more is forgotten after five seconds.
+    h.now += 6000;
+    h.spin(100);
+    Client& ann = h.join("Ann");
+    CHECK(h.until([&] { return ann.state() == Client::State::Lobby; }));
+}
+
 // Client-side prediction: the picture runs ahead of the confirmed state, and is right
 // whenever nobody changes what they are doing.
 void testPrediction() {
@@ -1265,14 +1384,23 @@ void testEncryptionOnTheWire() {
     CHECK(seen.find("has joined") == std::string::npos);       // what the server says
     // The password is not even sent in disguise: its proof differs for every connection.
     const std::string firstSession = seen;
-    // One flipped bit in a later message: the server ends the connection rather than act on it.
+    // One flipped bit in a later packet: the server does not act on it. To the link it is a
+    // lost packet, so the message is sent again and arrives once, as it was written.
+    spin([] { return false; }, 400);  // (the server takes one chat line per 300 ms)
     tamperAt = frames + 1;
     ann.sendChat("this one is altered on the way");
-    CHECK(spin([&] { return ann.state() == Client::State::Failed; }));
-    CHECK_EQ(h.server.players(), 0);
-    bool arrived = false;
-    for (const std::string& line : h.log) arrived = arrived || line.find("altered on the way") != std::string::npos;
-    CHECK(!arrived);
+    CHECK(spin([&] {
+        for (const std::string& line : h.log)
+            if (line.find("altered on the way") != std::string::npos) return true;
+        return false;
+    }));
+    CHECK(frames > tamperAt);  // the altered one did pass, and a repeat after it
+    int arrived = 0;
+    for (const std::string& line : h.log) arrived += line == "CHAT  Annabel Lee: this one is altered on the way" ? 1 : 0;
+    CHECK_EQ(arrived, 1);
+    CHECK(ann.state() == Client::State::Lobby);
+    ann.disconnect();
+    CHECK(spin([&] { return h.server.players() == 0; }));
 
     // Speaking without the key exchange, or in the clear after it, gets nowhere.
     TcpSocket raw;
@@ -1622,6 +1750,9 @@ int main() {
         {"round over tcp only", [] { testRound(false); }},
         {"leave during round", testLeaveDuringRound},
         {"udp loss", testUdpLoss},
+        {"loss from the first packet", testLossFromTheStart},
+        {"no udp path", testNoUdpPath},
+        {"cookie", testCookie},
         {"prediction", testPrediction},
         {"back to the lobby", testBackToLobby},
         {"two players at one computer", testTwoPlayersOneComputer},

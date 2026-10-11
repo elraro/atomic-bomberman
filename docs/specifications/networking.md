@@ -56,33 +56,37 @@ Known effect: other players are seen a little in the past (by the round trip) wh
 
 ## Transport
 
-One port number (default **27410**) for both protocols.
+One port number (default **27410**), UDP. Since protocol version 7 a connection is a **link** (`src/net/link.*`; phase 2 of `online-play.md`): encrypted packets of at most 1200 bytes that offer two services.
 
-| Channel | Used for |
+| Service | Used for |
 |---|---|
-| TCP | Joining, lobby state, settings, chat, round start, round result, snapshots. Reliable and ordered. |
-| UDP | The two messages that repeat during a round: inputs to the server, steps to the clients. Also finding servers on the LAN: every server, whatever its own port, also listens on UDP **27409** (a port several servers on one machine can share) and answers searches there. |
+| Messages: reliable and ordered, any size up to 1 MiB | Joining, lobby state, settings, chat, round start, round result, snapshots. |
+| Datagrams: unreliable, unordered, at most 1100 bytes | The two things that repeat during a round: inputs to the server, steps to the clients. |
 
-UDP loss is handled without retransmission requests: every input message carries the number of the last step the client has; every step message carries **all steps after that one** (at most 40, i.e. 2 s). A lost datagram is covered by the next one.
+How the link delivers messages: they are written one after another into a stream (`u32` length, `u8` type, payload), the stream is cut into numbered segments of at most 1000 bytes, and every packet carries the number of the next segment its sender is waiting for and a bit for each of the 32 after it that has already come. A segment not acknowledged is sent again after twice the measured round trip plus 20 ms (between 60 ms and 1 s, half as long again with each repeat, 3 s at most), or at once when two later ones have been acknowledged past it. At most 64 segments are under way. A datagram never waits for any of this. With nothing to say, a packet goes out once a second; 15 s of silence is a lost connection. Going away is said in a last packet, after everything before it has been delivered.
 
-UDP is optional. After joining, the client sends UDP probes carrying the token it was given over TCP; when the server's answer arrives it reports "UDP works" over TCP. Until then, or if steps stop arriving by UDP for 2 s during a round, both directions use TCP for these messages too. So the game works through a TCP-only tunnel, only less smoothly.
+Round traffic handles loss by repetition instead: every input datagram carries the number of the last step the client has; every step datagram carries **all steps after that one** (at most 40, i.e. 2 s). A lost datagram is covered by the next one. (A step too large for a datagram goes as a message.)
+
+Every server, whatever its own port, also listens on UDP **27409** (a port several servers on one machine can share) and answers searches of the local network there.
+
+**Where UDP does not get through.** A client that hears nothing over UDP for two seconds opens a TCP connection to the same port number and sends the very same packets through it, each as one frame (`u32` length, `u8` type `0x7E`, the packet). The link above is unchanged; only the carrier differs. Play is then less smooth, since a lost TCP segment delays everything behind it. A relay (below) carries connections this way too. This carrier goes away when TURN over TCP replaces it (`online-play.md`, phase 5).
 
 IPv4 and IPv6: a server listens for both on one port where the system allows it (IPv4 alone otherwise); a client uses whichever the address it was given resolves to. An IPv6 literal with a port is written `[address]:port`. A link-local IPv6 address is given with its interface, `[fe80::1%eth0]:port`.
 
-Protocol version 5 (1: one player per client; 2: several players, prizes, campaign stages; 3: encryption; 4: secrets kept on the server; 5: server identity).
+Protocol version 7 (1: one player per client; 2: several players, prizes, campaign stages; 3: encryption; 4: secrets kept on the server; 5: server identity; 6: ready state; 7: the link, everything over UDP).
 
 ## Encryption and the password
 
 Everything a connection carries is encrypted and authenticated, except the two key messages that set it up and searches on the local network.
 
-1. The client's first frame, in the clear: `ABMN`, the protocol version, and a fresh X25519 public key.
-2. The server answers in the clear with its own fresh public key (or with Reject if the versions differ).
-3. Both compute the shared secret and from it, with both public keys, a master value (SHA-256) and four keys: TCP to server, TCP to client, UDP to server, UDP to client.
-4. From then on every TCP frame is `u32 length` + ChaCha20-Poly1305 of (type, payload), with the frame's number in its direction as the nonce. A frame that fails to open ends the connection: nothing can be altered, dropped, repeated or reordered unnoticed.
-5. A connection's datagrams are `ABMU`, `0x80`, the session number, a counter, then ChaCha20-Poly1305 of the datagram under the UDP key of its direction (header authenticated). A receiver accepts a counter only if it is higher than the last one accepted, so a recorded datagram cannot be replayed. The session number only names the connection; knowing it gives nothing.
+1. The client's first packet, in the clear: `ABMU`, `0x81`, the protocol version, a fresh X25519 public key and a 16-byte cookie (zeros the first time), filled up to 96 bytes.
+2. A server that does not find its own cookie in it answers with one (`0x84`, 16 bytes: a keyed hash of the sender's address that changes every ten seconds) and remembers nothing. The client says its first packet again with the cookie. So a stranger's packet costs the server no work and no memory, a forged sender address gets nowhere, and no answer is longer than what was sent. (Inside a TCP connection there is no cookie: the connection itself shows the address.)
+3. The server then answers in the clear with its own fresh public key, its identity key and the connection's number (`0x82`), or with a refusal if the versions differ (`0x83`, text). The client repeats its first packet every 250 ms until an answer comes; the server answers a repeat with the same answer.
+4. Both compute the shared secret and from it, with both public keys, a master value (SHA-256) and one key for each direction.
+5. From then on every packet is `ABMU`, `0x80`, the connection's number, a packet counter, then ChaCha20-Poly1305 of the contents under the key of its direction (header authenticated). A receiver takes each counter once: higher than all before, or among the last 64 and not seen. A packet that does not open, or was seen, is dropped without an answer; to the link that is a lost packet. The connection's number only names the connection; knowing it gives nothing. A packet that opens may come from a new address (a router that changed its mapping), and the answers follow it there.
 6. **Password.** The client never sends it. Hello carries HMAC-SHA-256 keyed with a hash of the password over the connection's master value: proof of knowing the password that is useless on any other connection. The server compares it in constant time.
 
-What this gives: someone who can read the traffic learns nothing (not the chat, not the names, not the password) and cannot later decrypt a recording even with the password, because the keys exist only for that connection. Someone who can alter the traffic can only break the connection.
+What this gives: someone who can read the traffic learns nothing (not the chat, not the names, not the password) and cannot later decrypt a recording even with the password, because the keys exist only for that connection. Someone who can alter the traffic can only delay or stop it: an altered packet counts as lost and is sent again.
 
 **Server identity.** A server has a lasting X25519 key (kept in its identity file, made on first start); its public half is sent with the key exchange and shown as a fingerprint such as `3F9A-11C0-7B42-E5D8` (in the server's log and in the lobby). The connection's keys are derived from the fresh exchange *and* from the secret between the client's fresh key and that lasting key, so whoever shows an identity without owning it never gets the keys. A client remembers the identity of each address it has joined (`known_servers.txt`); if the server at an address later shows another identity, the client refuses to connect and says so, and the player can choose to forget the old one. Servers on the same machine and games joined through a relay are not remembered.
 
@@ -97,19 +101,19 @@ What this does not give: the first visit to a server is taken on trust. An attac
 - More than 20 connection attempts from one address in ten seconds: blocked for a minute.
 - Five wrong passwords from one address in a minute: blocked for five minutes.
 - More than 400 messages a second on a connection (a client sends about 40): dropped, and the address blocked for a minute.
-- At most 30 answers a second to LAN searches.
+- At most 30 answers a second to LAN searches, and 200 cookies a second.
+- A connection that has exchanged keys and then does not join within five seconds is forgotten.
 
 All of these go by address, so players behind one router share them, and an address is not a person: a banned player with a new address is back.
 
-### TCP framing
+### Messages
 
-`u32 length` (little endian, of what follows, at most 1 MiB), `u8 type`, payload. Integers are little endian; strings are `u16 length` + UTF-8 bytes.
+Carried by the link. Integers are little endian; strings are `u16 length` + UTF-8 bytes.
 
 Client to server:
 
 | Type | Payload | Meaning |
 |---|---|---|
-| KeyExchange | magic `ABMN`, `u16` protocol version, 32-byte public key | First message, in the clear. Answered by KeyExchange or Reject. |
 | Hello | name, 32-byte password proof | First encrypted message. Answered by Welcome or Reject. |
 | Ban | `u8` client id | Administrator. |
 | Admin | `u8` client id | Administrator: hand the role over. |
@@ -124,7 +128,6 @@ Client to server:
 | Locals | `u8` count | Players at this computer, 1-4 (in the lobby). |
 | Kick | `u8` client id | Administrator. |
 | Input | as the UDP message | When UDP is not in use. |
-| UdpState | `u8` on | "My UDP path works / stopped working". |
 | NeedState | | Hash mismatch: send a snapshot. |
 | Continue | | Key pressed on the result screen. |
 | Pong | `u32` | Echo of Ping. |
@@ -133,7 +136,6 @@ Server to client:
 
 | Type | Payload | Meaning |
 |---|---|---|
-| KeyExchange | 32-byte public key, 32-byte identity key | In the clear. |
 | Roulette | seed, gold player, prize, frames | The bonus wheel is shown before the match. |
 | Welcome | client id, session number, server name | |
 | Reject | reason text | Wrong version, wrong password, server full, kicked. |
@@ -145,18 +147,21 @@ Server to client:
 | Snapshot | round id, step number, `World` state | Answer to NeedState; also for late joiners. |
 | Ping | `u32` | Once a second; the measured times are in the Lobby message. |
 
-### UDP datagrams
+### Datagrams
 
-`u32` magic `ABMU`, `u8` type, payload.
+Carried by the link, sealed like everything else.
 
 | Type | Direction | Payload |
 |---|---|---|
-| Probe | C to S | session number |
-| ProbeAck | S to C | |
 | Input | C to S | token, round id, last step held, four input bytes (one per player at that computer) |
-| Steps | S to C | as the TCP message |
+| Steps | S to C | round id, first step, steps with their secrets, hash |
+
+In the clear on the discovery port (`u32` magic `ABMU`, `u8` type, payload):
+
+| Type | Direction | Payload |
+|---|---|---|
 | Query | broadcast to the discovery port **27409** | protocol version |
-| Info | S to C | protocol version, TCP port, server name, players, seats, phase, password needed |
+| Info | S to C | protocol version, port, server name, players, seats, phase, password needed |
 
 An input byte: bits 0-3 north, east, south, west; bit 4 bomb; bit 5 action.
 
@@ -186,10 +191,10 @@ The dedicated server reads the game data (tuning values, schemes, level extras) 
 For a host whose router lets nothing in and will not be told to. A relay is a third machine that both sides can reach (`atomic_server --relay-server`, TCP port **27408**):
 
 1. The host's server connects out to the relay and is given a six-character code.
-2. A player joins with the address `CODE@relay-address`. The relay tells the host, the host opens one more connection out, and the relay links the two: from then on it copies every frame from one to the other.
+2. A player joins with the address `CODE@relay-address`. The relay tells the host, the host opens one more connection out, and the relay links the two: from then on it copies every frame from one to the other (each frame is one packet of the link).
 3. Through that link the player and the host do the usual key exchange. The relay carries only encrypted frames; it cannot read or change the game, and it cannot pose as the host to someone who knows the host's identity or shares a password with it. It can refuse or drop the link.
 
-Everything goes over TCP (the relay carries no UDP), so play is as with a TCP-only path. The host's bans and limits see the player's real address, which the relay passes on. There is no public relay: somebody in the group has to run one on a reachable machine. There is no UDP hole punching.
+Everything goes inside TCP (the relay carries no UDP), so play is as where UDP does not get through. The host's bans and limits see the player's real address, which the relay passes on. There is no public relay: somebody in the group has to run one on a reachable machine. There is no UDP hole punching.
 
 ## Client
 
@@ -208,6 +213,8 @@ Everything goes over TCP (the relay carries no UDP), so play is as with a TCP-on
 
 - Core: state saved and loaded into a fresh `World` continues identically; the hash changes when any gameplay field changes.
 - Codec: every message survives encode/decode; truncated messages are refused.
+- Link: messages complete and in order over a line that loses 40 % of the packets, repeats and delays others; datagrams never held back; altered, foreign and repeated packets refused.
+- Connection: loss from the very first packet; no UDP at all (the client goes on inside TCP); the cookie.
 - Loopback: a server and two clients in one process over 127.0.0.1 play a round to its result with equal hashes; chat arrives; a wrong password is refused; a forced mismatch is repaired by a snapshot; a late joiner reaches the same state; with UDP blocked the round still completes over TCP.
 
 ## Limits accepted for now

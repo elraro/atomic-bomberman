@@ -712,3 +712,13 @@ Not a discovery about the original. A reviewer's comments on `online-play.md` le
 - **User decision:** the last resort where UDP is blocked is TURN over TCP / TLS through coturn; the project's own TCP relay is removed when phase 5 works. Consequences written down: the ICE library changes from libjuice (UDP only) to pjnath, to be confirmed by building it; the link abstraction has a single kind (datagrams), which makes phase 2 smaller.
 
 Nothing of it is implemented.
+
+### Modern: the link (online play, phase 2)
+
+Not a discovery about the original; a record of what was built and seen.
+
+- `src/net/link.*`: reliable ordered messages and plain datagrams over encrypted packets; knows no sockets. Client and server now speak only through it. One UDP port; the key exchange travels as packets, with a cookie before the server does any work for a stranger. Protocol version 7.
+- Where no UDP answer comes within two seconds the client sends the same packets as frames of a TCP connection; the relay carries connections that way too. Both go when phase 5 brings TURN over TCP.
+- A changed behaviour: an altered packet is dropped and the message sent again, where before an altered TCP frame ended the connection.
+- Validation (Level 4 for the link's rules): `ab_net_tests` "link" (300 messages each way at 40 % loss with repeats and delays, datagram delay bounded, forged and replayed packets), "loss from the first packet", "no udp path", "cookie"; all earlier network tests unchanged except the tampering check.
+- Not done: any real network. Loss, delay and reordering were simulated in the process.

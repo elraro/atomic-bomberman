@@ -24,37 +24,55 @@ void writeKnown(const std::string& path, const std::map<std::string, std::string
 
 constexpr std::uint64_t kConnectTimeoutMs = 8000;
 constexpr std::size_t kChatKept = 100;
-constexpr int kMaxProbes = 12;
+constexpr std::uint64_t kSilenceMs = 15000;  // the server sends something every second
 }  // namespace
 
+void Client::transmit(const Bytes& packet) {
+    if (overTcp_) tcp_.send(kPacketFrame, packet);
+    else udp_.sendTo(server_, packet);
+}
+
+void Client::send(ClientMsg type, const Bytes& payload) {
+    if (keyed_) link_.sendMessage(static_cast<std::uint8_t>(type), payload);
+}
+
 void Client::fail(const std::string& why) {
-    socket_.close();
+    tcp_.close();
     udp_.close();
+    link_.reset();
+    keyed_ = false;
     world_.reset();
     predicted_.reset();
     predictedValid_ = false;
     queue_.clear();
-    udpOn_ = false;
     error_ = why;
     state_ = State::Failed;
 }
 
 void Client::disconnect() {
-    socket_.close();
+    if (keyed_) {
+        // The server is told, twice in case one is lost; it would notice the silence anyway.
+        link_.close();
+        for (int i = 0; i < 2; ++i) link_.sendNow(clock_, [this](const Bytes& p) { transmit(p); });
+        if (overTcp_) tcp_.pump();
+    }
+    tcp_.close();
     udp_.close();
+    link_.reset();
+    keyed_ = false;
     world_.reset();
     predicted_.reset();
     predictedValid_ = false;
     queue_.clear();
     chat_.clear();
     lobby_ = LobbyState{};
-    udpOn_ = false;
     error_.clear();
     state_ = State::Idle;
 }
 
 void Client::connect(const std::string& address, const std::string& name, const std::string& password, std::uint64_t nowMs) {
     disconnect();
+    clock_ = nowMs;
     address_ = address;
     identity_.clear();
     identityKnown_ = false;
@@ -62,13 +80,13 @@ void Client::connect(const std::string& address, const std::string& name, const 
     name_ = name;
     password_ = password;
     connectAt_ = nowMs;
-    helloSent_ = false;
     satOut_ = false;
     keyed_ = false;
-    udpSent_ = udpReceived_ = 0;
     welcomed_ = false;
-    probes_ = 0;
-    probeAt_ = 0;
+    tcpIntro_ = false;
+    udpHeard_ = false;
+    keySentAt_ = 0;
+    cookie_.assign(kCookieBytes, 0);
     // "CODE@relay": the game is reached through a relay, by the code its host was given.
     std::string relay;
     viaRelay_ = splitRelayAddress(address, &relayCode_, &relay);
@@ -78,7 +96,11 @@ void Client::connect(const std::string& address, const std::string& name, const 
         return;
     }
     server_ = *to;
-    if (!socket_.connect(server_)) {
+    randomBytes(secret_.data(), secret_.size());
+    public_ = x25519Base(secret_);
+    // Over UDP if it can be had; a relay carries TCP only.
+    overTcp_ = viaRelay_ || !udpAllowed_ || !udp_.open(0, false, false, server_.v6);
+    if (overTcp_ && !tcp_.connect(server_)) {
         fail("Cannot connect to " + server_.text());
         return;
     }
@@ -119,35 +141,35 @@ void Client::sendChat(const std::string& text) {
     if (clean.empty() || !welcomed_) return;
     ByteWriter w;
     w.text(clean);
-    socket_.send(static_cast<std::uint8_t>(ClientMsg::Chat), w.data());
+    send(ClientMsg::Chat, w.data());
 }
 
 void Client::sendOption(Option option, int direction) {
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(option));
     w.i8(direction);
-    socket_.send(static_cast<std::uint8_t>(ClientMsg::Option), w.data());
+    send(ClientMsg::Option, w.data());
 }
 
-void Client::sendStart() { socket_.send(static_cast<std::uint8_t>(ClientMsg::Start), {}); }
-void Client::sendReady(bool ready) { socket_.send(static_cast<std::uint8_t>(ClientMsg::Ready), {static_cast<std::uint8_t>(ready ? 1 : 0)}); }
+void Client::sendStart() { send(ClientMsg::Start, {}); }
+void Client::sendReady(bool ready) { send(ClientMsg::Ready, {static_cast<std::uint8_t>(ready ? 1 : 0)}); }
 bool Client::ready() const {
     const ClientInfo* me = lobby_.client(id_);
     return me != nullptr && me->ready;
 }
-void Client::sendTeam(int local) { socket_.send(static_cast<std::uint8_t>(ClientMsg::Team), {static_cast<std::uint8_t>(local)}); }
-void Client::sendLocalPlayers(int count) { socket_.send(static_cast<std::uint8_t>(ClientMsg::Locals), {static_cast<std::uint8_t>(count)}); }
-void Client::sendContinue() { socket_.send(static_cast<std::uint8_t>(ClientMsg::Continue), {}); }
+void Client::sendTeam(int local) { send(ClientMsg::Team, {static_cast<std::uint8_t>(local)}); }
+void Client::sendLocalPlayers(int count) { send(ClientMsg::Locals, {static_cast<std::uint8_t>(count)}); }
+void Client::sendContinue() { send(ClientMsg::Continue, {}); }
 
 void Client::sendKick(std::uint8_t id) {
     ByteWriter w;
     w.u8(id);
-    socket_.send(static_cast<std::uint8_t>(ClientMsg::Kick), w.data());
+    send(ClientMsg::Kick, w.data());
 }
 
 void Client::leaveMatch() {
     if (state_ != State::Round && state_ != State::Result) return;
-    socket_.send(static_cast<std::uint8_t>(ClientMsg::LeaveMatch), {});
+    send(ClientMsg::LeaveMatch, {});
     satOut_ = true;
     world_.reset();
     predicted_.reset();
@@ -160,25 +182,25 @@ void Client::leaveMatch() {
 void Client::sendBan(std::uint8_t id) {
     ByteWriter w;
     w.u8(id);
-    socket_.send(static_cast<std::uint8_t>(ClientMsg::Ban), w.data());
+    send(ClientMsg::Ban, w.data());
 }
 
 void Client::sendUnban(const std::string& address) {
     ByteWriter w;
     w.text(address);
-    socket_.send(static_cast<std::uint8_t>(ClientMsg::Unban), w.data());
+    send(ClientMsg::Unban, w.data());
 }
 
 void Client::sendAdmin(std::uint8_t id) {
     ByteWriter w;
     w.u8(id);
-    socket_.send(static_cast<std::uint8_t>(ClientMsg::Admin), w.data());
+    send(ClientMsg::Admin, w.data());
 }
 
 void Client::sendLogin(const std::string& password) {
     ByteWriter w;
     w.text(password);
-    socket_.send(static_cast<std::uint8_t>(ClientMsg::Login), w.data());
+    send(ClientMsg::Login, w.data());
 }
 
 void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
@@ -193,7 +215,6 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     ready_ = false;  // until the snapshot that follows the round start
     nextStepAt_ = nowMs;
     lastStepAt_ = nowMs;
-    udpStepsAt_ = nowMs;
     inputSentAt_ = 0;
     predicted_.reset();
     predictedValid_ = false;
@@ -230,52 +251,12 @@ void Client::handleSteps(const StepsMsg& m) {
 
 void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& payload, std::uint64_t nowMs) {
     ByteReader r(payload);
-    // Until the keys are agreed only the server's key (or a refusal) is listened to; after
-    // that, a second key message means nothing.
-    if (!keyed_ && viaRelay_ && static_cast<RelayMsg>(type) == RelayMsg::Refuse) return fail(cleanText(r.text(256), 200));
-    if (!keyed_ && static_cast<ServerMsg>(type) != ServerMsg::KeyExchange && static_cast<ServerMsg>(type) != ServerMsg::Reject) return fail("Bad answer from the server");
     // Having gone back to the lobby, the rest of the match is none of this client's business.
     if (satOut_ && (static_cast<ServerMsg>(type) == ServerMsg::RoundStart || static_cast<ServerMsg>(type) == ServerMsg::Steps ||
                     static_cast<ServerMsg>(type) == ServerMsg::Snapshot || static_cast<ServerMsg>(type) == ServerMsg::RoundEnd ||
                     static_cast<ServerMsg>(type) == ServerMsg::Roulette))
         return;
     switch (static_cast<ServerMsg>(type)) {
-        case ServerMsg::KeyExchange: {
-            if (keyed_) break;
-            Key theirs{}, identity{};
-            for (std::uint8_t& b : theirs) b = r.u8();
-            for (std::uint8_t& b : identity) b = r.u8();
-            if (!r.ok()) return fail("Bad answer from the server");
-            // Is this the server that was at this address before? (A server on this very
-            // machine is not asked.) Whoever answers must also own the identity it shows:
-            // without that key it cannot arrive at the connection's keys.
-            identity_ = fingerprint(identity);
-            // (Not through a relay either: its codes are new each time, so there is nothing to remember by.)
-            if (!knownFile_.empty() && !viaRelay_ && (!server_.loopback() || identityOnLoopback_)) {
-                std::map<std::string, std::string> known = readKnown(knownFile_);
-                const auto it = known.find(server_.text());
-                if (it != known.end() && it->second != identity_) {
-                    identityChanged_ = true;
-                    return fail("This is not the server that was at " + server_.text() + " before (identity " + identity_ + ", remembered " + it->second +
-                                "). Someone may be listening in, or the server was set up anew.");
-                }
-                identityKnown_ = it != known.end();
-                if (!identityKnown_) {
-                    known[server_.text()] = identity_;
-                    writeKnown(knownFile_, known);
-                }
-            }
-            if (!deriveSession(secret_, theirs, public_, theirs, x25519(secret_, identity), identity, keys_)) return fail("Bad answer from the server");
-            socket_.setKeys(keys_.toServer, keys_.toClient);
-            keyed_ = true;
-            secret_ = {};
-            HelloMsg hello;
-            hello.name = name_;
-            // Not the password itself: a value that shows we know it, good for this connection only.
-            if (!password_.empty()) hello.proof = passwordProof(password_, keys_.master);
-            socket_.send(static_cast<std::uint8_t>(ClientMsg::Hello), encoded(hello));
-            break;
-        }
         case ServerMsg::Welcome: {
             WelcomeMsg m;
             if (!decode(r, m)) return fail("Bad answer from the server");
@@ -284,7 +265,6 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             serverName_ = m.serverName;
             welcomed_ = true;
             state_ = State::Lobby;
-            if (udpAllowed_ && !viaRelay_) udp_.open(0, false, false, server_.v6);  // a relay carries TCP only
             break;
         }
         case ServerMsg::Reject: fail(r.text(256)); break;
@@ -354,7 +334,7 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             if (m.step > 0) ++snapshots_;  // the one at the start of a round is not a repair
             break;
         }
-        case ServerMsg::Ping: socket_.send(static_cast<std::uint8_t>(ClientMsg::Pong), payload); break;
+        case ServerMsg::Ping: send(ClientMsg::Pong, payload); break;
         default: break;
     }
 }
@@ -366,93 +346,146 @@ void Client::sendInput(std::uint64_t nowMs) {
     m.roundId = start_.roundId;
     m.haveStep = applied_ + static_cast<std::uint32_t>(queue_.size());
     m.input = input_;
-    if (udpOn_) udp_.sendTo(server_, sealDatagram(token_, ++udpSent_, keys_.udpToServer, datagram(UdpMsg::Input, m)));
-    else socket_.send(static_cast<std::uint8_t>(ClientMsg::Input), encoded(m));
+    link_.sendDatagram(static_cast<std::uint8_t>(ClientMsg::Input), encoded(m));
     inputSent_ = input_;
     inputSentAt_ = nowMs;
+}
+
+// The first packet, in the clear: a fresh public key, and the cookie if the server asked for
+// one. Longer than the answer, so that nobody can use a server to send much to a forged address.
+void Client::sendKey(std::uint64_t nowMs) {
+    ByteWriter w;
+    w.u32(kUdpMagic);
+    w.u8(kClientKey);
+    w.u16(kProtocolVersion);
+    for (std::uint8_t b : public_) w.u8(b);
+    for (std::uint8_t b : cookie_) w.u8(b);
+    while (w.data().size() < 96) w.u8(0);
+    transmit(w.data());
+    keySentAt_ = nowMs;
+}
+
+void Client::handlePacket(const Bytes& packet, std::uint64_t nowMs) {
+    ByteReader r(packet);
+    if (r.u32() != kUdpMagic) return;
+    const std::uint8_t kind = r.u8();
+    if (kind == kSealedDatagram) {
+        if (keyed_) link_.receive(packet, nowMs);
+        return;
+    }
+    if (keyed_ || !r.ok()) return;  // once the keys are agreed nothing in the clear is listened to
+    if (!overTcp_) udpHeard_ = true;
+    if (kind == kCookie) {
+        // "Say that again with this": shows the server that the answer reaches us.
+        cookie_.assign(kCookieBytes, 0);
+        for (std::uint8_t& b : cookie_) b = r.u8();
+        if (r.ok()) sendKey(nowMs);
+        return;
+    }
+    if (kind == kClearReject) return fail(cleanText(r.text(256), 200));
+    if (kind != kServerKey) return;
+    Key theirs{}, identity{};
+    for (std::uint8_t& b : theirs) b = r.u8();
+    for (std::uint8_t& b : identity) b = r.u8();
+    const std::uint32_t token = r.u32();
+    if (!r.ok()) return fail("Bad answer from the server");
+    // Is this the server that was at this address before? (A server on this very
+    // machine is not asked.) Whoever answers must also own the identity it shows:
+    // without that key it cannot arrive at the connection's keys.
+    identity_ = fingerprint(identity);
+    // (Not through a relay either: its codes are new each time, so there is nothing to remember by.)
+    if (!knownFile_.empty() && !viaRelay_ && (!server_.loopback() || identityOnLoopback_)) {
+        std::map<std::string, std::string> known = readKnown(knownFile_);
+        const auto it = known.find(server_.text());
+        if (it != known.end() && it->second != identity_) {
+            identityChanged_ = true;
+            return fail("This is not the server that was at " + server_.text() + " before (identity " + identity_ + ", remembered " + it->second +
+                        "). Someone may be listening in, or the server was set up anew.");
+        }
+        identityKnown_ = it != known.end();
+        if (!identityKnown_) {
+            known[server_.text()] = identity_;
+            writeKnown(knownFile_, known);
+        }
+    }
+    if (!deriveSession(secret_, theirs, public_, theirs, x25519(secret_, identity), identity, keys_)) return fail("Bad answer from the server");
+    token_ = token;
+    link_.start(keys_.udpToServer, keys_.udpToClient, token, nowMs);
+    keyed_ = true;
+    secret_ = {};
+    HelloMsg hello;
+    hello.name = name_;
+    // Not the password itself: a value that shows we know it, good for this connection only.
+    if (!password_.empty()) hello.proof = passwordProof(password_, keys_.master);
+    send(ClientMsg::Hello, encoded(hello));
 }
 
 void Client::update(std::uint64_t nowMs) {
     if (state_ == State::Idle || state_ == State::Failed) return;
     clock_ = nowMs;
+    const auto over = [this]() { return state_ == State::Failed || state_ == State::Idle; };
 
-    const bool alive = socket_.pump();
-    if (socket_.connected() && !helloSent_) {
-        // The only thing sent in the clear: a fresh public key. Everything after the
-        // server's answer is encrypted with keys both sides derive from the exchange.
-        if (viaRelay_) {
-            // First a word to the relay; everything after it is passed on to the host.
-            ByteWriter join;
-            join.u32(kRelayMagic);
-            join.text(relayCode_);
-            socket_.send(static_cast<std::uint8_t>(RelayMsg::Join), join.data());
+    if (overTcp_) {
+        const bool alive = tcp_.pump();
+        if (tcp_.connected() && !tcpIntro_) {
+            if (viaRelay_) {
+                // First a word to the relay; everything after it is passed on to the host.
+                ByteWriter join;
+                join.u32(kRelayMagic);
+                join.text(relayCode_);
+                tcp_.send(static_cast<std::uint8_t>(RelayMsg::Join), join.data());
+            }
+            tcpIntro_ = true;
+            sendKey(nowMs);  // once: this line loses nothing
         }
-        randomBytes(secret_.data(), secret_.size());
-        public_ = x25519Base(secret_);
-        ByteWriter w;
-        w.u32(kTcpMagic);
-        w.u16(kProtocolVersion);
-        for (std::uint8_t b : public_) w.u8(b);
-        socket_.send(static_cast<std::uint8_t>(ClientMsg::KeyExchange), w.data());
-        helloSent_ = true;
-    }
-    std::uint8_t type = 0;
-    std::vector<std::uint8_t> payload;
-    while (state_ != State::Failed && state_ != State::Idle && socket_.receive(type, payload)) handleFrame(type, payload, nowMs);
-    if (state_ == State::Failed || state_ == State::Idle) return;
-    if (!alive) return fail(welcomed_ ? "The connection to the server was lost" : "Cannot connect to " + server_.text());
-    if (!welcomed_ && nowMs - connectAt_ > kConnectTimeoutMs) return fail("No answer from " + server_.text());
-
-    if (welcomed_ && udp_.isOpen()) {
-        // Until the server answers a probe, everything goes over TCP.
-        if (!udpOn_ && probes_ < kMaxProbes && nowMs - probeAt_ >= 250) {
-            ByteWriter w;
-            w.u32(kUdpMagic);
-            w.u8(static_cast<std::uint8_t>(UdpMsg::Probe));
-            w.u32(token_);
-            udp_.sendTo(server_, sealDatagram(token_, ++udpSent_, keys_.udpToServer, w.data()));
-            probeAt_ = nowMs;
-            ++probes_;
+        std::uint8_t type = 0;
+        Bytes payload;
+        while (!over() && tcp_.receive(type, payload)) {
+            if (!keyed_ && viaRelay_ && static_cast<RelayMsg>(type) == RelayMsg::Refuse) {
+                ByteReader r(payload);
+                return fail(cleanText(r.text(256), 200));
+            }
+            if (type == kPacketFrame) handlePacket(payload, nowMs);
         }
+        if (over()) return;
+        if (!alive) return fail(welcomed_ ? "The connection to the server was lost" : "Cannot connect to " + server_.text());
+    } else {
         Address from;
-        std::vector<std::uint8_t> data;
-        for (int n = 0; n < 256 && udp_.receiveFrom(from, data); ++n) {
-            if (!(from == server_)) continue;
-            // Only datagrams sealed with this connection's key, and never an old one again.
-            std::uint32_t session = 0;
-            std::uint64_t counter = 0;
-            std::vector<std::uint8_t> inner;
-            if (!peekSealed(data, &session, &counter) || session != token_ || counter <= udpReceived_ || !openSealed(data, keys_.udpToClient, inner)) continue;
-            udpReceived_ = counter;
-            ByteReader r(inner);
-            if (r.u32() != kUdpMagic) continue;
-            const auto kind = static_cast<UdpMsg>(r.u8());
-            if (kind == UdpMsg::ProbeAck && !udpOn_ && probes_ <= kMaxProbes) {
-                udpOn_ = true;
-                udpStepsAt_ = nowMs;
-                ByteWriter w;
-                w.flag(true);
-                socket_.send(static_cast<std::uint8_t>(ClientMsg::UdpState), w.data());
-            } else if (kind == UdpMsg::Steps) {
-                StepsMsg m;
-                if (decode(r, m)) {
-                    handleSteps(m);
-                    udpStepsAt_ = nowMs;
-                }
+        Bytes data;
+        for (int n = 0; n < 256 && !over() && udp_.receiveFrom(from, data); ++n)
+            if (from == server_) handlePacket(data, nowMs);
+        if (over()) return;
+        if (!keyed_) {
+            if (keySentAt_ == 0 || nowMs - keySentAt_ >= 250) sendKey(nowMs);
+            // Not a word over UDP: perhaps this network lets none through. The same inside a TCP connection.
+            if (!udpHeard_ && nowMs - connectAt_ > 2000) {
+                udp_.close();
+                overTcp_ = true;
+                if (!tcp_.connect(server_)) return fail("Cannot connect to " + server_.text());
             }
         }
-        // Steps stopped coming by UDP in the middle of a round: back to TCP for good.
-        if (udpOn_ && state_ == State::Round && !ended_ && nowMs - udpStepsAt_ > 3000) {
-            udpOn_ = false;
-            probes_ = kMaxProbes + 1;
-            ByteWriter w;
-            w.flag(false);
-            socket_.send(static_cast<std::uint8_t>(ClientMsg::UdpState), w.data());
-        }
+    }
+    if (!welcomed_ && nowMs - connectAt_ > kConnectTimeoutMs) return fail("No answer from " + server_.text());
+    if (!keyed_) {
+        if (overTcp_) tcp_.pump();
+        return;
     }
 
+    std::uint8_t type = 0;
+    Bytes payload;
+    while (!over() && link_.nextMessage(type, payload)) handleFrame(type, payload, nowMs);
+    while (!over() && link_.nextDatagram(type, payload)) {
+        if (static_cast<ServerMsg>(type) != ServerMsg::Steps || satOut_) continue;
+        ByteReader r(payload);
+        StepsMsg m;
+        if (decode(r, m)) handleSteps(m);
+    }
+    if (over()) return;
+    if (link_.closedByPeer() || link_.broken() || nowMs - link_.lastHeard() > kSilenceMs) return fail("The connection to the server was lost");
+
     if (state_ == State::Round) sendInput(nowMs);
-    socket_.pump();
+    link_.update(nowMs, [this](const Bytes& p) { transmit(p); });
+    if (overTcp_) tcp_.pump();
 }
 
 // Things a player does with their own hands: worth hearing without the round trip.
@@ -496,7 +529,7 @@ void Client::applyStep(const Step& step, const EventSink& events) {
     if (const auto it = hashes_.find(applied_); it != hashes_.end()) {
         if ((it->second != world_->stateHash(true) || !world_->secretsInStep()) && !awaitingState_) {
             awaitingState_ = true;
-            socket_.send(static_cast<std::uint8_t>(ClientMsg::NeedState), {});
+            send(ClientMsg::NeedState, {});
         }
         hashes_.erase(hashes_.begin(), std::next(it));
     }

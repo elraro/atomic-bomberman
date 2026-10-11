@@ -13,6 +13,7 @@
 
 #include "game/ai.hpp"
 #include "game/match.hpp"
+#include "net/link.hpp"
 #include "net/protocol.hpp"
 #include "net/relay.hpp"
 #include "net/socket.hpp"
@@ -89,6 +90,12 @@ private:
     void saveBans() const;
     void pumpRelay();
     void handleDatagram(const Address& from, const std::vector<std::uint8_t>& data, bool viaDiscovery);
+    // The first packet of a connection (the client's key). `viaTcp`: it came inside that peer's TCP connection.
+    void handleKey(Peer* viaTcp, const Address& from, const std::vector<std::uint8_t>& data);
+    bool admit(const std::string& host);  // may this address open one more connection?
+    Key cookieFor(const Address& from, std::uint64_t period) const;
+    void transmit(Peer& p, const Bytes& packet);
+    void send(Peer& p, ServerMsg type, const Bytes& payload);
     void applyInput(Peer& p, const InputMsg& m);
     void changeOption(Option option, int direction);
     void reject(Peer& p, const std::string& reason);
@@ -121,6 +128,8 @@ private:
     bool mapperReported_ = false;
     std::string routerNotice_;  // told to everyone who joins
     std::vector<std::unique_ptr<Peer>> peers_;
+    std::vector<std::unique_ptr<Peer>> closing_;  // gone from the game; their last messages are still being delivered
+    Key cookieSecret_{};
     std::uint64_t now_ = 0;
     std::uint64_t joinCounter_ = 0;
     Key identitySecret_{}, identityPublic_{};
@@ -168,6 +177,8 @@ private:
     std::uint64_t pingSentAt_ = 0;
     std::uint64_t infoWindowAt_ = 0;
     int infoSent_ = 0;
+    std::uint64_t cookieWindowAt_ = 0;
+    int cookiesSent_ = 0;
     // Addresses kept out: until a time, or for good (kForever, written to the ban file).
     std::map<std::string, std::uint64_t> blocked_;
     std::map<std::string, std::deque<std::uint64_t>> connects_;        // recent connection times per address

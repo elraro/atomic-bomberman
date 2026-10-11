@@ -34,7 +34,13 @@ std::string hostOf(const Address& a) {
 }  // namespace
 
 struct Server::Peer {
+    Link link;
+    bool viaTcp = false;           // the packets travel as frames of this TCP connection (no UDP path, or a relay)
     TcpSocket socket;
+    Address address{};             // where its packets come from and go to
+    Key clientPublic{};            // the key it opened the connection with
+    Bytes keyAnswer;               // what was answered, to say again if the answer got lost
+    std::uint64_t closeUntil = 0;
     std::uint8_t id = 0;
     bool joined = false;
     bool gone = false;
@@ -43,10 +49,8 @@ struct Server::Peer {
     std::uint32_t token = 0;       // session number: names the connection in its datagrams (not a secret)
     bool keyed = false;            // the key exchange is done
     SessionKeys keys;
-    std::uint64_t udpSent = 0, udpReceived = 0;
     std::uint64_t order = 0;       // join order: the lowest is the administrator
     std::uint64_t connectedAt = 0;
-    std::uint64_t lastHeard = 0;
     std::uint64_t lastChat = 0;
     std::uint64_t lastSnapshot = 0;
     std::uint64_t frameWindowAt = 0;
@@ -57,12 +61,9 @@ struct Server::Peer {
     bool out = false;              // went back to the lobby during this match: its seats are played by the computer until it ends
     bool playing() const { return seated() && !out; }
     int pingMs = 0;
-    bool udpKnown = false;
-    Address udpAddress{};
-    bool udpOn = false;
     std::uint32_t ackRound = 0;
     std::uint32_t ackStep = 0;     // steps the client holds (from its input messages)
-    std::uint32_t sentStep = 0;    // steps sent over TCP
+    std::uint32_t sentStep = 0;    // steps sent as messages (those too large for a datagram)
     std::array<std::uint8_t, kMaxLocalPlayers> input{};
     bool wantsContinue = false;
     bool ready = false;            // said so in the lobby; asked again after every match
@@ -70,6 +71,15 @@ struct Server::Peer {
 
 Server::Server() = default;
 Server::~Server() { stop(); }
+
+void Server::transmit(Peer& p, const Bytes& packet) {
+    if (p.viaTcp) p.socket.send(kPacketFrame, packet);
+    else udp_.sendTo(p.address, packet);
+}
+
+void Server::send(Peer& p, ServerMsg type, const Bytes& payload) {
+    if (p.keyed) p.link.sendMessage(static_cast<std::uint8_t>(type), payload);
+}
 
 void Server::log(const std::string& line) const {
     if (config_.log) config_.log(line);
@@ -84,8 +94,8 @@ bool Server::start(const ServerConfig& config) {
         return false;
     }
     if (!udp_.open(listener_.port(), false, false, true)) {
-        // Not fatal: clients fall back to TCP; the server just cannot be found on the LAN.
-        log("WARN  UDP port " + std::to_string(listener_.port()) + " is not available: TCP only, no LAN discovery");
+        // Not fatal: clients fall back to a TCP connection; the server just cannot be found on the LAN.
+        log("WARN  UDP port " + std::to_string(listener_.port()) + " is not available: slower connections inside TCP only, no LAN discovery");
     }
     if (config.discoverable && !discovery_.open(kDiscoveryPort, false, true))
         log("WARN  UDP port " + std::to_string(kDiscoveryPort) + " is not available: this server will not show up in LAN searches");
@@ -128,6 +138,7 @@ bool Server::start(const ServerConfig& config) {
         }
     }
     identityPublic_ = x25519Base(identitySecret_);
+    randomBytes(cookieSecret_.data(), cookieSecret_.size());
     adminId_ = -1;
     blocked_.clear();
     connects_.clear();
@@ -173,7 +184,16 @@ void Server::stop() {
     for (auto& p : peers_) {
         if (p->joined) reject(*p, "The server has shut down");
     }
+    // Said twice in case one is lost; a client would notice the silence anyway.
+    for (auto* list : {&peers_, &closing_})
+        for (auto& p : *list) {
+            if (!p->keyed) continue;
+            p->link.close();
+            for (int i = 0; i < 2; ++i) p->link.sendNow(now_, [&](const Bytes& packet) { transmit(*p, packet); });
+            if (p->viaTcp) p->socket.pump();
+        }
     peers_.clear();
+    closing_.clear();
     mapper_.stop();
     relayControl_.close();
     adopting_.clear();
@@ -230,7 +250,7 @@ Server::Peer* Server::admin() {
 
 void Server::broadcast(ServerMsg type, const std::vector<std::uint8_t>& payload) {
     for (auto& p : peers_)
-        if (p->joined && !p->gone) p->socket.send(static_cast<std::uint8_t>(type), payload);
+        if (p->joined && !p->gone) send(*p, type, payload);
 }
 
 void Server::say(const std::string& text) {
@@ -304,15 +324,14 @@ void Server::passwordFailed(Peer& p) {
 }
 
 void Server::tell(Peer& p, const std::string& text) {
-    p.socket.send(static_cast<std::uint8_t>(ServerMsg::Chat), encoded(ChatMsg{kServerSender, "", text}));
+    send(p, ServerMsg::Chat, encoded(ChatMsg{kServerSender, "", text}));
 }
 
 void Server::reject(Peer& p, const std::string& reason) {
     ByteWriter w;
     w.text(reason);
-    p.socket.send(static_cast<std::uint8_t>(ServerMsg::Reject), w.data());
-    p.socket.pump();
-    p.gone = true;
+    send(p, ServerMsg::Reject, w.data());
+    p.gone = true;  // its link goes on until the message has arrived (update())
 }
 
 // The chosen scheme, or the built-in arena when there is no game data.
@@ -463,7 +482,7 @@ void Server::handleHello(Peer& p, const std::vector<std::uint8_t>& payload) {
         if (!equalConstantTime(expected.data(), hello.proof.data(), expected.size())) {
             const bool none = hello.proof == Key{};
             reject(p, none ? "This server needs a password" : "Wrong password");
-            log("INFO  Refused (password) from " + p.socket.peer().text());
+            log("INFO  Refused (password) from " + p.address.text());
             passwordFailed(p);
             return;
         }
@@ -483,26 +502,19 @@ void Server::handleHello(Peer& p, const std::vector<std::uint8_t>& payload) {
     };
     for (int n = 2; taken(name); ++n) name = cleanText(hello.name.empty() ? "Player" : hello.name, kMaxName - 2) + " " + std::to_string(n);
     p.name = name;
-    for (bool unique = false; !unique;) {
-        std::uint8_t raw[4];
-        randomBytes(raw, 4);
-        p.token = static_cast<std::uint32_t>(raw[0]) | (static_cast<std::uint32_t>(raw[1]) << 8) | (static_cast<std::uint32_t>(raw[2]) << 16) | (static_cast<std::uint32_t>(raw[3]) << 24);
-        unique = true;
-        for (auto& q : peers_) unique = unique && (q.get() == &p || !q->joined || q->token != p.token);
-    }
     p.order = ++joinCounter_;
     p.joined = true;
     p.seats = {-1, -1, -1, -1};
     p.wanted = 1;
-    p.socket.send(static_cast<std::uint8_t>(ServerMsg::Welcome), encoded(WelcomeMsg{p.id, p.token, config_.name}));
-    log("INFO  Joined id=" + std::to_string(p.id) + " name=\"" + p.name + "\" from " + p.socket.peer().text());
+    send(p, ServerMsg::Welcome, encoded(WelcomeMsg{p.id, p.token, config_.name}));
+    log("INFO  Joined id=" + std::to_string(p.id) + " name=\"" + p.name + "\" from " + p.address.text());
     if (phase_ == Phase::Lobby) {
         rebuildSeats();
     } else {
         // In the middle of a match: watch it from the present state.
-        p.socket.send(static_cast<std::uint8_t>(ServerMsg::RoundStart), roundStart_);
+        send(p, ServerMsg::RoundStart, roundStart_);
         sendSnapshot(p);
-        if (phase_ == Phase::Result) p.socket.send(static_cast<std::uint8_t>(ServerMsg::RoundEnd), roundEnd_);
+        if (phase_ == Phase::Result) send(p, ServerMsg::RoundEnd, roundEnd_);
     }
     lobbyDirty_ = true;
     if (!routerNotice_.empty()) tell(p, routerNotice_);
@@ -521,7 +533,6 @@ void Server::applyInput(Peer& p, const InputMsg& m) {
 }
 
 void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint8_t>& payload) {
-    p.lastHeard = now_;
     // Far more messages than a game client ever sends: not a game client.
     if (now_ - p.frameWindowAt >= 1000) p.frameWindowAt = now_, p.frames = 0;
     if (++p.frames > kFramesPerSecond) {
@@ -529,37 +540,6 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
         log("WARN  Flood of messages from " + host + ": dropped and blocked for a minute");
         block(host, now_ + 60000);
         p.gone = true;
-        return;
-    }
-    if (!p.keyed) {
-        // The first message, in the clear: the client's public key. Ours goes back the same
-        // way, and from then on both directions are encrypted.
-        ByteReader r(payload);
-        const std::uint32_t magic = r.u32();
-        const std::uint16_t version = r.u16();
-        Key theirs{};
-        for (std::uint8_t& b : theirs) b = r.u8();
-        if (static_cast<ClientMsg>(type) != ClientMsg::KeyExchange || magic != kTcpMagic || !r.ok()) {
-            p.gone = true;  // not one of ours
-            return;
-        }
-        if (version != kProtocolVersion) {
-            reject(p, "Different game version (server protocol " + std::to_string(kProtocolVersion) + ", yours " + std::to_string(version) + ")");
-            return;
-        }
-        Key secret{};
-        randomBytes(secret.data(), secret.size());
-        const Key ours = x25519Base(secret);
-        if (!deriveSession(secret, theirs, theirs, ours, x25519(identitySecret_, theirs), identityPublic_, p.keys)) {
-            p.gone = true;
-            return;
-        }
-        ByteWriter w;
-        for (std::uint8_t b : ours) w.u8(b);
-        for (std::uint8_t b : identityPublic_) w.u8(b);
-        p.socket.send(static_cast<std::uint8_t>(ServerMsg::KeyExchange), w.data());
-        p.socket.setKeys(p.keys.toClient, p.keys.toServer);
-        p.keyed = true;
         return;
     }
     if (!p.joined) {
@@ -656,7 +636,7 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
             const Key b = sha256(reinterpret_cast<const std::uint8_t*>(config_.adminPassword.data()), config_.adminPassword.size());
             if (config_.adminPassword.empty() || !equalConstantTime(a.data(), b.data(), a.size())) {
                 tell(p, "That is not the administrator password");
-                log("INFO  Refused (administrator password) from " + p.socket.peer().text());
+                log("INFO  Refused (administrator password) from " + p.address.text());
                 passwordFailed(p);
                 break;
             }
@@ -672,17 +652,6 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
         case ClientMsg::Input: {
             InputMsg m;
             if (decode(r, m)) applyInput(p, m);
-            break;
-        }
-        case ClientMsg::UdpState: {
-            const bool on = r.flag();
-            if (!r.ok()) break;
-            if (on && p.udpKnown) {
-                p.udpOn = true;
-            } else if (p.udpOn) {
-                p.udpOn = false;
-                p.sentStep = p.ackRound == roundId_ ? p.ackStep : 0;  // go on over TCP from what it has
-            }
             break;
         }
         case ClientMsg::NeedState:
@@ -703,32 +672,140 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
     }
 }
 
+// May this address open one more connection? Counts the attempt.
+bool Server::admit(const std::string& host) {
+    if (peers_.size() >= kMaxConnections || blocked(host)) return false;
+    int same = 0;
+    for (const auto& q : peers_) same += !q->gone && q->host == host ? 1 : 0;
+    if (same >= config_.maxPerAddress) return false;
+    std::deque<std::uint64_t>& recent = connects_[host];
+    recent.push_back(now_);
+    while (!recent.empty() && now_ - recent.front() > 10000) recent.pop_front();
+    if (recent.size() > kConnectsPerTenSeconds) {
+        block(host, now_ + 60000);
+        log("WARN  Too many connections from " + host + ": blocked for a minute");
+        return false;
+    }
+    return true;
+}
+
+// What a client at this address must say back before the server does any work for it: shows
+// that the address is its own. Changes every ten seconds; the one before is still taken.
+Key Server::cookieFor(const Address& from, std::uint64_t period) const {
+    const std::string text = from.text() + "/" + std::to_string(period);
+    return hmacSha256(cookieSecret_, reinterpret_cast<const std::uint8_t*>(text.data()), text.size());
+}
+
+void Server::handleKey(Peer* viaTcp, const Address& from, const std::vector<std::uint8_t>& data) {
+    ByteReader r(data);
+    r.u32();
+    r.u8();
+    const std::uint16_t version = r.u16();
+    Key theirs{};
+    for (std::uint8_t& b : theirs) b = r.u8();
+    std::array<std::uint8_t, kCookieBytes> cookie{};
+    for (std::uint8_t& b : cookie) b = r.u8();
+    if (!r.ok()) {
+        if (viaTcp != nullptr) viaTcp->gone = true;  // not one of ours
+        return;
+    }
+    auto answer = [&](const Bytes& packet) {
+        if (viaTcp != nullptr) viaTcp->socket.send(kPacketFrame, packet), viaTcp->socket.pump();
+        else udp_.sendTo(from, packet);
+    };
+    Peer* p = viaTcp;
+    if (p == nullptr) {
+        // The same key from the same place again: our answer was lost. Say it again.
+        for (auto& q : peers_)
+            if (!q->viaTcp && !q->gone && q->keyed && q->clientPublic == theirs && q->address == from) {
+                udp_.sendTo(from, q->keyAnswer);
+                return;
+            }
+        const std::string host = hostOf(from);
+        if (blocked(host)) return;
+        if (now_ - cookieWindowAt_ >= 1000) cookieWindowAt_ = now_, cookiesSent_ = 0;
+        const std::uint64_t period = now_ / 10000;
+        const Key now = cookieFor(from, period), before = cookieFor(from, period - 1);
+        if (!equalConstantTime(cookie.data(), now.data(), kCookieBytes) && !equalConstantTime(cookie.data(), before.data(), kCookieBytes)) {
+            if (++cookiesSent_ > 200) return;  // a flood gets no more answers this second
+            ByteWriter w;
+            w.u32(kUdpMagic);
+            w.u8(kCookie);
+            for (std::size_t i = 0; i < kCookieBytes; ++i) w.u8(now[i]);
+            udp_.sendTo(from, w.data());
+            return;
+        }
+    } else if (p->keyed) {
+        return;
+    }
+    if (version != kProtocolVersion) {
+        ByteWriter w;
+        w.u32(kUdpMagic);
+        w.u8(kClearReject);
+        w.text("Different game version (server protocol " + std::to_string(kProtocolVersion) + ", yours " + std::to_string(version) + ")");
+        answer(w.data());
+        if (viaTcp != nullptr) viaTcp->gone = true;
+        return;
+    }
+    if (p == nullptr) {
+        const std::string host = hostOf(from);
+        if (!admit(host)) return;
+        auto fresh = std::make_unique<Peer>();
+        fresh->host = host;
+        fresh->address = from;
+        fresh->connectedAt = now_;
+        p = fresh.get();
+        peers_.push_back(std::move(fresh));
+    }
+    // Our fresh key goes back in the clear with the connection's number; from then on
+    // everything in both directions is encrypted.
+    Key secret{};
+    randomBytes(secret.data(), secret.size());
+    const Key ours = x25519Base(secret);
+    if (!deriveSession(secret, theirs, theirs, ours, x25519(identitySecret_, theirs), identityPublic_, p->keys)) {
+        p->gone = true;
+        return;
+    }
+    for (bool unique = false; !unique;) {
+        std::uint8_t raw[4];
+        randomBytes(raw, 4);
+        p->token = static_cast<std::uint32_t>(raw[0]) | (static_cast<std::uint32_t>(raw[1]) << 8) | (static_cast<std::uint32_t>(raw[2]) << 16) | (static_cast<std::uint32_t>(raw[3]) << 24);
+        unique = true;
+        for (auto* list : {&peers_, &closing_})
+            for (auto& q : *list) unique = unique && (q.get() == p || q->token != p->token);
+    }
+    ByteWriter w;
+    w.u32(kUdpMagic);
+    w.u8(kServerKey);
+    for (std::uint8_t b : ours) w.u8(b);
+    for (std::uint8_t b : identityPublic_) w.u8(b);
+    w.u32(p->token);
+    p->clientPublic = theirs;
+    p->keyAnswer = w.data();
+    p->link.start(p->keys.udpToClient, p->keys.udpToServer, p->token, now_);
+    p->keyed = true;
+    answer(p->keyAnswer);
+}
+
 void Server::handleDatagram(const Address& from, const std::vector<std::uint8_t>& data, bool viaDiscovery) {
-    // A connection's datagram: sealed with that connection's key and numbered. Whatever does
+    // A connection's packet: sealed with that connection's key and numbered. Whatever does
     // not open, or repeats an old number, is dropped without an answer.
     std::uint32_t session = 0;
     std::uint64_t counter = 0;
     if (peekSealed(data, &session, &counter)) {
         if (viaDiscovery) return;
-        for (auto& p : peers_) {
-            if (!p->joined || p->gone || p->token != session) continue;
-            std::vector<std::uint8_t> inner;
-            if (counter <= p->udpReceived || !openSealed(data, p->keys.udpToServer, inner)) return;
-            p->udpReceived = counter;
-            p->udpKnown = true;
-            p->udpAddress = from;  // follows a changed NAT mapping; only the key holder can cause this
-            p->lastHeard = now_;
-            ByteReader r(inner);
-            if (r.u32() != kUdpMagic) return;
-            const auto type = static_cast<UdpMsg>(r.u8());
-            if (type == UdpMsg::Probe) {
-                udp_.sendTo(from, sealDatagram(p->token, ++p->udpSent, p->keys.udpToClient, datagram(UdpMsg::ProbeAck)));
-            } else if (type == UdpMsg::Input) {
-                InputMsg m;
-                if (decode(r, m)) applyInput(*p, m);
+        for (auto* list : {&peers_, &closing_})
+            for (auto& p : *list) {
+                if (!p->keyed || p->viaTcp || p->token != session) continue;
+                // A packet that opens may come from a new address (a changed NAT mapping): only the key holder can cause this.
+                if (p->link.receive(data, now_)) p->address = from;
+                return;
             }
-            return;
-        }
+        return;
+    }
+    if (!viaDiscovery && data.size() >= 5 && data[4] == kClientKey) {
+        ByteReader magic(data);
+        if (magic.u32() == kUdpMagic) handleKey(nullptr, from, data);
         return;
     }
     // In the clear: only a search for servers.
@@ -819,8 +896,10 @@ void Server::pumpRelay() {
             a.socket.pump();
             auto p = std::make_unique<Peer>();
             p->host = a.host;
+            p->viaTcp = true;
+            p->address = relayAddress_;
             p->socket = std::move(a.socket);
-            p->connectedAt = p->lastHeard = now_;
+            p->connectedAt = now_;
             peers_.push_back(std::move(p));
             adopting_.erase(adopting_.begin() + static_cast<std::ptrdiff_t>(i));
         } else if (!up || now_ - a.since > 5000) {
@@ -1060,17 +1139,18 @@ void Server::sendSteps(Peer& p) {
         m.hash = hashes_[from + m.steps.size() - 1];
         return m;
     };
-    if (p.udpOn && p.udpKnown) {
-        // Everything the client has not acknowledged, so a lost datagram needs no request.
-        const std::uint32_t from = p.ackRound == roundId_ ? std::min(p.ackStep, total) : 0;
-        const std::uint32_t count = std::min<std::uint32_t>(total - from, kMaxStepsPerMessage);
-        if (count > 0) udp_.sendTo(p.udpAddress, sealDatagram(p.token, ++p.udpSent, p.keys.udpToClient, datagram(UdpMsg::Steps, message(from, count, true))));
-        return;
-    }
-    while (p.sentStep < total) {
-        const std::uint32_t count = std::min<std::uint32_t>(total - p.sentStep, kMaxStepsPerMessage);
-        p.socket.send(static_cast<std::uint8_t>(ServerMsg::Steps), encoded(message(p.sentStep, count, false)));
-        p.sentStep += count;
+    // Everything the client has not acknowledged, so a lost datagram needs no request.
+    const std::uint32_t from = p.ackRound == roundId_ ? std::min(p.ackStep, total) : 0;
+    const std::uint32_t count = std::min<std::uint32_t>(total - from, kMaxStepsPerMessage);
+    if (count == 0) return;
+    const StepsMsg m = message(from, count, true);
+    const Bytes bytes = encoded(m);
+    if (p.link.sendDatagram(static_cast<std::uint8_t>(ServerMsg::Steps), bytes)) return;
+    // A step too large for a datagram goes as a message, once.
+    const std::uint32_t upTo = from + static_cast<std::uint32_t>(m.steps.size());
+    if (upTo > p.sentStep) {
+        send(p, ServerMsg::Steps, bytes);
+        p.sentStep = upTo;
     }
 }
 
@@ -1080,7 +1160,7 @@ void Server::sendSnapshot(Peer& p) {
     m.roundId = roundId_;
     m.step = static_cast<std::uint32_t>(history_.size());
     m.state = world_->saveState(true);  // without the hidden powerups and the random generator
-    p.socket.send(static_cast<std::uint8_t>(ServerMsg::Snapshot), encoded(m));
+    send(p, ServerMsg::Snapshot, encoded(m));
     p.lastSnapshot = now_;
     p.ackRound = roundId_;
     p.ackStep = m.step;
@@ -1128,40 +1208,15 @@ void Server::update(std::uint64_t nowMs) {
     now_ = nowMs;
 
     while (auto socket = listener_.accept()) {
-        if (peers_.size() >= kMaxConnections) continue;  // dropped: the socket closes here
         const std::string host = hostOf(socket->peer());
-        if (blocked(host)) continue;
-        std::deque<std::uint64_t>& recent = connects_[host];
-        recent.push_back(now_);
-        while (!recent.empty() && now_ - recent.front() > 10000) recent.pop_front();
-        if (recent.size() > kConnectsPerTenSeconds) {
-            block(host, now_ + 60000);
-            log("WARN  Too many connections from " + host + ": blocked for a minute");
-            continue;
-        }
-        int same = 0;
-        for (const auto& q : peers_) same += !q->gone && q->host == host ? 1 : 0;
-        if (same >= config_.maxPerAddress) continue;
+        if (!admit(host)) continue;  // dropped: the socket closes here
         auto p = std::make_unique<Peer>();
         p->host = host;
+        p->viaTcp = true;
+        p->address = socket->peer();
         p->socket = std::move(*socket);
-        p->connectedAt = p->lastHeard = now_;
+        p->connectedAt = now_;
         peers_.push_back(std::move(p));
-    }
-
-    for (std::size_t i = 0; i < peers_.size(); ++i) {
-        Peer& p = *peers_[i];
-        if (p.gone) continue;
-        const bool alive = p.socket.pump();
-        std::uint8_t type = 0;
-        std::vector<std::uint8_t> payload;
-        while (!p.gone && p.socket.receive(type, payload)) handleFrame(p, type, payload);
-        if (!alive) p.gone = true;
-        if (!p.joined && now_ - p.connectedAt > kHelloTimeoutMs) p.gone = true;
-        if (p.joined && !p.gone && now_ - p.lastHeard > kSilenceTimeoutMs) {
-            log("INFO  Timed out id=" + std::to_string(p.id));
-            reject(p, "Connection timed out");
-        }
     }
     pumpRelay();
     if (udp_.isOpen()) {
@@ -1174,6 +1229,42 @@ void Server::update(std::uint64_t nowMs) {
         std::vector<std::uint8_t> data;
         for (int n = 0; n < 64 && discovery_.receiveFrom(from, data); ++n) handleDatagram(from, data, true);
     }
+    for (std::size_t i = 0; i < peers_.size(); ++i) {
+        Peer& p = *peers_[i];
+        if (p.gone) continue;
+        if (p.viaTcp) {
+            // Inside a TCP connection each frame is one packet.
+            const bool alive = p.socket.pump();
+            std::uint8_t type = 0;
+            Bytes payload;
+            while (!p.gone && p.socket.receive(type, payload)) {
+                if (type != kPacketFrame || payload.size() < 5) {
+                    p.gone = true;  // not one of ours
+                } else if (payload[4] == kClientKey) {
+                    handleKey(&p, p.address, payload);
+                } else if (p.keyed) {
+                    p.link.receive(payload, now_);
+                }
+            }
+            if (!alive) p.gone = true;
+        }
+        std::uint8_t type = 0;
+        Bytes payload;
+        while (!p.gone && p.link.nextMessage(type, payload)) handleFrame(p, type, payload);
+        while (!p.gone && p.link.nextDatagram(type, payload)) {
+            if (static_cast<ClientMsg>(type) != ClientMsg::Input || !p.joined) continue;
+            ByteReader r(payload);
+            InputMsg m;
+            if (decode(r, m)) applyInput(p, m);
+        }
+        if (p.gone) continue;
+        if (p.link.closedByPeer() || p.link.broken()) p.gone = true;
+        if (!p.joined && now_ - p.connectedAt > kHelloTimeoutMs) p.gone = true;
+        if (p.joined && !p.gone && now_ - p.link.lastHeard() > kSilenceTimeoutMs) {
+            log("INFO  Timed out id=" + std::to_string(p.id));
+            reject(p, "Connection timed out");
+        }
+    }
     // Departures, one at a time: each may change seats or end the match.
     for (std::size_t i = 0; i < peers_.size();) {
         if (!peers_[i]->gone) {
@@ -1183,6 +1274,12 @@ void Server::update(std::uint64_t nowMs) {
         std::unique_ptr<Peer> p = std::move(peers_[i]);
         peers_.erase(peers_.begin() + static_cast<std::ptrdiff_t>(i));
         leave(*p);
+        // What it was last told (why it has to go, for one) is still delivered.
+        if (p->keyed && !p->link.closedByPeer() && (!p->viaTcp || p->socket.open())) {
+            p->link.close();
+            p->closeUntil = now_ + 2000;
+            closing_.push_back(std::move(p));
+        }
     }
 
     if (phase_ == Phase::Round) {
@@ -1197,7 +1294,7 @@ void Server::update(std::uint64_t nowMs) {
         if (now_ - resendAt_ >= 100) {
             resendAt_ = now_;
             for (auto& p : peers_)
-                if (p->joined && !p->out && p->udpOn && p->ackRound == roundId_ && p->ackStep < history_.size()) sendSteps(*p);
+                if (p->joined && !p->out && p->ackRound == roundId_ && p->ackStep < history_.size()) sendSteps(*p);
         }
         bool everyone = true, anyone = false;
         for (auto& p : peers_)
@@ -1249,8 +1346,14 @@ void Server::update(std::uint64_t nowMs) {
         refreshLobby();
         broadcast(ServerMsg::Lobby, encoded(lobby_));
     }
-    for (auto& p : peers_)
-        if (!p->gone && !p->socket.pump()) p->gone = true;
+    // Out with everything that is due.
+    for (auto* list : {&peers_, &closing_})
+        for (auto& p : *list) {
+            if (p->gone && list == &peers_) continue;
+            if (p->keyed) p->link.update(now_, [&](const Bytes& packet) { transmit(*p, packet); });
+            if (p->viaTcp && !p->socket.pump() && list == &peers_) p->gone = true;
+        }
+    std::erase_if(closing_, [&](const std::unique_ptr<Peer>& p) { return p->link.idle() || now_ >= p->closeUntil || (p->viaTcp && !p->socket.open()); });
 }
 
 }  // namespace ab::net
