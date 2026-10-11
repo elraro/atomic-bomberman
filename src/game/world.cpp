@@ -1542,6 +1542,7 @@ void World::keepToConfirmed(const World& confirmed, const std::array<bool, kMaxP
 namespace {
 
 struct StateWriter {
+    static constexpr bool reading = false;
     bool publicView = false;
     std::vector<std::uint8_t> out;
     void value(std::int64_t& v) {
@@ -1561,6 +1562,7 @@ struct StateWriter {
 };
 
 struct StateReader {
+    static constexpr bool reading = true;
     static constexpr bool publicView = false;
     const std::vector<std::uint8_t>& in;
     std::size_t pos = 0;
@@ -1590,7 +1592,48 @@ struct StateReader {
     }
 };
 
+// The public state as numbers in fixed places (World::snapshotFields).
+struct FieldWriter {
+    static constexpr bool reading = false;
+    static constexpr bool publicView = true;
+    std::int64_t clock = 0;  // the round's time, once it has been written
+    std::vector<std::int64_t> out;
+    void value(std::int64_t& v) { out.push_back(v); }
+    std::size_t count(std::size_t n, std::size_t) {
+        out.push_back(static_cast<std::int64_t>(n));
+        return n;
+    }
+};
+
+struct FieldReader {
+    static constexpr bool reading = true;
+    static constexpr bool publicView = true;
+    std::int64_t clock = 0;
+    const std::vector<std::int64_t>& in;
+    std::size_t pos = 0;
+    bool ok = true;
+    explicit FieldReader(const std::vector<std::int64_t>& fields) : in(fields) {}
+    void value(std::int64_t& v) {
+        if (pos >= in.size()) {
+            ok = false;
+            v = 0;
+            return;
+        }
+        v = in[pos++];
+    }
+    std::size_t count(std::size_t, std::size_t limit) {
+        std::int64_t v = 0;
+        value(v);
+        if (v < 0 || static_cast<std::uint64_t>(v) > limit) {
+            ok = false;
+            return 0;
+        }
+        return static_cast<std::size_t>(v);
+    }
+};
+
 struct StateHasher {
+    static constexpr bool reading = false;
     bool publicView = false;
     std::uint32_t h = 2166136261u;
     void value(std::int64_t& v) {
@@ -1610,6 +1653,22 @@ void field(A& a, T& v) {
     auto x = static_cast<std::int64_t>(v);
     a.value(x);
     v = static_cast<T>(x);
+}
+// An age that grows with the round's clock: in a snapshot, the moment it began. Only
+// while it is running; a value left behind in something no longer active is written as it is.
+template <class A, class T>
+void aged(A& a, T& v, bool running) {
+    if constexpr (requires { a.clock; }) {
+        // (Which of the two ways it was written has to be read back the same way, so the
+        // reader is told too: `running` comes from a field read before this one.)
+        if (!running) return field(a, v);
+        // Zero stays zero (nothing is ageing there); otherwise the moment, plus one to tell it from that.
+        std::int64_t began = v == 0 ? 0 : a.clock - static_cast<std::int64_t>(v) + 1;
+        a.value(began);
+        v = began == 0 ? T{} : static_cast<T>(a.clock - (began - 1));
+    } else {
+        field(a, v);
+    }
 }
 template <class A>
 void field(A& a, bool& v) {
@@ -1666,7 +1725,7 @@ void field(A& a, Bomb& b) {
     field(a, b.y);
     field(a, b.range);
     field(a, b.fuseMs);
-    field(a, b.elapsedMs);
+    aged(a, b.elapsedMs, b.active);
     field(a, b.dir);
     field(a, b.speed);
     field(a, b.moveAcc);
@@ -1685,7 +1744,7 @@ void field(A& a, Flame& f) {
     field(a, f.active);
     field(a, f.burningBrick);
     field(a, f.owner);
-    field(a, f.ageMs);
+    aged(a, f.ageMs, f.active);
     field(a, f.dir);
     field(a, f.tip);
 }
@@ -1721,7 +1780,7 @@ void field(A& a, Player& p) {
     field(a, p.holding);
     field(a, p.stunTicks);
     field(a, p.disease);
-    field(a, p.diseaseMs);
+    aged(a, p.diseaseMs, p.alive);
     field(a, p.diseaseDurationMs);
     field(a, p.diseaseCooldown);
     field(a, p.deathAnim);
@@ -1760,6 +1819,7 @@ void World::archive(A& a) {
     if (!a.publicView) rng_.setState(rng);
     field(a, tickCount_);
     field(a, roundMs_);
+    if constexpr (requires { a.clock; }) a.clock = roundMs_;
     field(a, startFreezeMs_);
     field(a, contenders_);
     field(a, totalMs_);
@@ -1777,7 +1837,6 @@ void World::archive(A& a) {
     field(a, campaignResult_);
     field(a, campaignRetry_);
     field(a, campaignClearMs_);
-    field(a, aliens_, 1000);
     field(a, walls_.armed);
     field(a, walls_.timerMs);
     field(a, walls_.cursor);
@@ -1785,11 +1844,10 @@ void World::archive(A& a) {
     field(a, walls_.ring);
     field(a, wallsClosed_);
     field(a, hurryAnnounced_);
-    field(a, extras_, 1000);
     field(a, conveyorSpeed_);
     field(a, tiles_);
     field(a, flames_);
-    if (a.publicView) {
+    if (a.publicView && !A::reading) {
         // Hidden powerups are nobody's business yet.
         std::array<Powerup, kGridW * kGridH> shown = powerups_;
         for (Powerup& p : shown)
@@ -1801,6 +1859,9 @@ void World::archive(A& a) {
     field(a, players_);
     field(a, startCells_);
     field(a, bombs_, kMaxBombs);
+    // What changes in length comes last, so that a snapshot's other numbers keep their places.
+    field(a, extras_, 1000);
+    field(a, aliens_, 1000);
     std::size_t n = a.count(pending_.size(), 1000);
     pending_.resize(n);
     for (Pending& p : pending_) {
@@ -1821,6 +1882,22 @@ std::uint32_t World::stateHash(bool publicView) const {
     h.publicView = publicView;
     const_cast<World*>(this)->archive(h);  // nor does the hasher
     return h.h;
+}
+
+std::vector<std::int64_t> World::snapshotFields() const {
+    FieldWriter w;
+    const_cast<World*>(this)->archive(w);  // the writer changes nothing
+    return std::move(w.out);
+}
+
+bool World::loadSnapshotFields(const std::vector<std::int64_t>& fields) {
+    World loaded = *this;
+    FieldReader r(fields);
+    loaded.archive(r);
+    if (!r.ok || r.pos != fields.size() || loaded.bombs_.size() != static_cast<std::size_t>(kMaxBombs)) return false;
+    loaded.events_.clear();
+    *this = std::move(loaded);
+    return true;
 }
 
 bool World::loadState(const std::vector<std::uint8_t>& bytes) {

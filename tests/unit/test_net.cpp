@@ -21,6 +21,8 @@
 #include "net/protocol.hpp"
 #include "net/relay.hpp"
 #include "net/server.hpp"
+#include "net/snapshot.hpp"
+#include "game/ai.hpp"
 #include "net/upnp.hpp"
 #include "resources/settings.hpp"
 
@@ -353,6 +355,83 @@ void testLink() {
         CHECK(quiet.sentPackets >= 8 && quiet.sentPackets <= 14);
         CHECK(quiet.now - quiet.a.lastHeard() < 1100);
     }
+}
+
+// Snapshots: a world rebuilt from the row of numbers, or from differences, is the public
+// state it was taken from; and how large the differences are in ten-player rounds.
+void testSnapshotFields() {
+    // The coder by itself.
+    {
+        const Fields a = {5, -3, 0, 1000000, 7, 7, 7};
+        const Fields b = {5, -4, 0, 1000050, 7, 7, 9, -1, 0};
+        Fields out;
+        CHECK(decodeDelta(a, encodeDelta(a, b), out) && out == b);
+        CHECK(decodeDelta(b, encodeDelta(b, a), out) && out == a);  // shorter than the base
+        CHECK(decodeDelta({}, encodeDelta({}, b), out) && out == b);
+        CHECK(encodeDelta(a, a).size() == 1);
+        const Fields wide = {INT64_MIN, INT64_MAX, -1};
+        CHECK(decodeDelta(b, encodeDelta(b, wide), out) && out == wide);
+        // Nonsense is refused: a place beyond the row, a row beyond the limit, a cut-off number.
+        CHECK(!decodeDelta(a, Bytes{3, 5, 2}, out));
+        CHECK(!decodeDelta(a, Bytes{0xff, 0xff, 0xff, 0x7f}, out));
+        CHECK(!decodeDelta(a, Bytes{7, 0, 0x80}, out));
+    }
+    std::size_t steps = 0, full = 0, fullMost = 0;
+    const int ages[4] = {1, 2, 5, 20};
+    std::size_t sum[4] = {}, most[4] = {}, over[4] = {};
+    for (std::uint32_t seed = 1; seed <= 8; ++seed) {
+        World w{Values::defaults(), seed};
+        Scheme s = Scheme::pillars();
+        for (int y = 0; y < kGridH; ++y)
+            for (int x = 0; x < kGridW; ++x)
+                if (s.tiles[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)] == Tile::Blank && (x + y) % 3 != 0)
+                    s.tiles[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)] = Tile::Brick;
+        w.startRound(s, true);
+        std::vector<AiPlayer> ai;
+        for (int i = 0; i < kMaxPlayers; ++i) {
+            w.addPlayer(i);
+            ai.emplace_back(seed * 100 + static_cast<std::uint32_t>(i));
+        }
+        World copy{Values::defaults(), 999};  // what a client holds: built anew from every snapshot
+        std::deque<Fields> history;
+        std::array<PlayerInput, kMaxPlayers> in{};
+        for (int t = 0; t < 20 * 150 && !w.roundOver(); ++t) {
+            for (int i = 0; i < kMaxPlayers; ++i) in[static_cast<std::size_t>(i)] = ai[static_cast<std::size_t>(i)].decide(w, i, 50);
+            w.tick(50, in);
+            w.takeEvents();
+            const Fields now = w.snapshotFields();
+            const Bytes whole = encodeDelta({}, now);
+            full += whole.size();
+            fullMost = std::max(fullMost, whole.size());
+            for (int k = 0; k < 4; ++k) {
+                if (history.size() < static_cast<std::size_t>(ages[k])) continue;
+                const Bytes d = encodeDelta(history[history.size() - static_cast<std::size_t>(ages[k])], now);
+                sum[k] += d.size();
+                most[k] = std::max(most[k], d.size());
+                over[k] += d.size() > 1000 ? 1 : 0;
+            }
+            // Rebuilt from the difference to the step before, the copy is the public state.
+            Fields rebuilt;
+            const bool decoded = decodeDelta(history.empty() ? Fields{} : history.back(), encodeDelta(history.empty() ? Fields{} : history.back(), now), rebuilt);
+            if (!decoded || rebuilt != now || !copy.loadSnapshotFields(rebuilt) || copy.stateHash(true) != w.stateHash(true)) {
+                CHECK(decoded && rebuilt == now);
+                CHECK(copy.stateHash(true) == w.stateHash(true));
+                return;
+            }
+            history.push_back(now);
+            if (history.size() > 32) history.pop_front();
+            ++steps;
+        }
+        // Nothing hidden is in a snapshot: the copy has no powerup under any brick.
+        for (int y = 0; y < kGridH; ++y)
+            for (int x = 0; x < kGridW; ++x) CHECK(copy.powerup({x, y}).state != PowerupState::Hidden);
+    }
+    CHECK(steps > 2000);
+    std::printf("     snapshots over %zu steps of ten-player rounds: whole state %zu bytes on average (%zu at most)\n", steps, full / steps, fullMost);
+    for (int k = 0; k < 4; ++k)
+        std::printf("     difference from %2d step(s) before: %zu bytes on average, %zu at most, %zu over 1000 bytes\n", ages[k], sum[k] / steps, most[k], over[k]);
+    CHECK(sum[0] / steps < 300);
+    CHECK(sum[2] / steps < 600);
 }
 
 // A server and its clients on one simulated clock.
@@ -1739,6 +1818,7 @@ int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"codec", testCodec},
         {"link", testLink},
+        {"snapshot fields", testSnapshotFields},
         {"cryptography test vectors", testCrypto},
         {"lobby", testLobby},
         {"encryption on the wire", testEncryptionOnTheWire},

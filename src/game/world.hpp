@@ -403,6 +403,15 @@ public:
     // Hash over the same fields; equal on two machines as long as they are in step.
     std::uint32_t stateHash(bool publicView = false) const;
 
+    // --- snapshots (network play, docs/specifications/online-play.md) ---
+    // The public state as a row of numbers, always in the same places, for sending as the
+    // difference from an earlier row. Ages that only grow with the clock (a flame's, a
+    // fuse's, a disease's) are written as the moment they began, so that they do not
+    // differ from one step to the next. Loading one leaves the random generator alone
+    // and puts no hidden powerups on the field.
+    std::vector<std::int64_t> snapshotFields() const;
+    bool loadSnapshotFields(const std::vector<std::int64_t>& fields);  // false: malformed, state unchanged
+
     // --- secrets (network play) ---
     // What a step used of the things clients are not told in advance: the random numbers
     // drawn, and the hidden powerups looked at (cell index and type).
