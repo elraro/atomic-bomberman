@@ -133,6 +133,8 @@ This is a **new** network mode, not the original's (which used IPX and serial li
 
 **With a gamepad alone.** Every screen of the network mode can be worked without a keyboard. A text field (name, address, password, chat) opens an on-screen keyboard: A presses the chosen key, X erases, Y is a space, Start is "done", B closes it. In a match, Start opens a menu with *Resume*, *Chat*, *Back To Lobby* and *Leave The Server*.
 
+**Online, through a master server.** Where somebody runs a master server for the game, games are found without exchanging addresses: on the host screen set *Announce online* to *Listed for everybody* or *By its code only*, and the lobby shows a six-digit code; on the join screen *Browse online games* lists the public ones and *Join online by code* takes the six digits. The game must be told where that service is (`--online-config URL --online-key HEX`, or the settings keys `online_config_url` and `online_config_key`): nothing is built in yet, because nobody runs a public one for this project. A host still has to be reachable from outside on its port (getting through routers by itself is not built yet). Setting one up: [docs/operations/online.md](docs/operations/online.md).
+
 **Dedicated server.** `atomic_server` is the same server without a window; it needs no graphics and no SDL:
 
 ```sh

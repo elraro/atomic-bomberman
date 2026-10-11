@@ -7,12 +7,17 @@
 #include <array>
 #include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <functional>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "app/net_ui.hpp"
+#ifdef AB_ONLINE
+#include "fake_http.hpp"
+#include "online/sign.hpp"
+#endif
 #include "app/pad_keys.hpp"
 #include "app/screen_keyboard.hpp"
 #include "net/server.hpp"
@@ -277,7 +282,7 @@ void testScreensByPad() {
     // --- hosting: name, port, start ---
     host.ui.openHost();
     CHECK_TEXT(host.screen(), "host");
-    host.press(PadKey::Up, 5);  // from "Start the server" to the name
+    host.press(PadKey::Up, 6);  // from "Start the server" to the name
     host.press(PadKey::Confirm);
     CHECK(host.ui.keyboardShown());
     host.press(PadKey::Erase, 40);
@@ -293,7 +298,7 @@ void testScreensByPad() {
     CHECK(host.type(port));
     CHECK(host.pressKey("Done"));
     CHECK(!host.ui.keyboardShown());
-    host.press(PadKey::Down, 3);  // password, relay, start
+    host.press(PadKey::Down, 4);  // password, relay, announce online, start
     host.press(PadKey::Confirm);
     CHECK(t.until([&] { return host.screen() == "lobby" && host.ui.client().lobby().clients.size() == 1; }));
     if (host.screen() != "lobby") return;
@@ -474,6 +479,144 @@ void testResultAndLeaveByPad() {
     CHECK_TEXT(guest.screen(), "join");
 }
 
+#ifdef AB_ONLINE
+// Online play with pad keys alone, against a stand-in master server: a host announces its
+// game and sees the code to give out; a guest finds the game in the list, and again by
+// typing the code; a game that shows another identity than the master named is refused.
+void testOnlineScreensByPad() {
+    using namespace ab::online;
+    Table t;
+    Station& host = t.host;
+    Station& guest = t.guest;
+    Seed seed{};
+    seed.fill(42);
+    std::string identity, announcedBody;  // what the stand-in master hands out and was told
+    int port = 0, announced = 0;
+    std::string config;
+    fake::FakeServer master([&](const fake::Request& q) {
+        fake::Reply r;
+        const std::string lobby = "{\"id\":\"g1\",\"name\":\"Ann's game\",\"players\":1,\"seats\":9,\"phase\":\"lobby\",\"level\":\"Arena\",\"version\":" +
+                                  std::to_string(net::kProtocolVersion) + ",\"region\":\"\",\"certified\":false}";
+        if (q.path == "/config.json") r.body = config;
+        else if (q.path == "/v1/session") r.status = 201, r.body = "{\"token\":\"t\",\"id\":\"s\",\"name\":\"x\"}";
+        else if (q.path == "/v1/lobbies" && q.method == "POST") ++announced, announcedBody = q.body, r.status = 201, r.body = "{\"id\":\"g1\",\"code\":\"408217\",\"host_token\":\"h\"}";
+        else if (q.path == "/v1/lobbies/g1" && q.method == "PUT") r.body = "{\"code\":\"408217\"}";
+        else if (q.path == "/v1/lobbies/g1" && q.method == "DELETE") r.body = "{}";
+        else if (q.path == "/v1/lobbies" && q.method == "GET") r.body = "{\"lobbies\":[" + lobby + "],\"total\":1}";
+        else if (q.path == "/v1/lobbies/by-code/408217") r.body = lobby;
+        else if (q.path.rfind("/v1/lobbies/by-code/", 0) == 0) r.status = 404, r.body = "{\"error\":\"No game with that code\"}";
+        else if (q.path == "/v1/lobbies/g1/join")
+            // The first way in leads nowhere; the second is the game.
+            r.body = "{\"lobby\":" + lobby + ",\"candidates\":[\"127.0.0.1:1\",\"127.0.0.1:" + std::to_string(port) + "\"],\"identity_key\":\"" + identity + "\",\"certificate\":\"\"}";
+        else r.status = 404, r.body = "{\"error\":\"?\"}";
+        return r;
+    });
+    const long long now = static_cast<long long>(std::time(nullptr));
+    config = signDocument(seed, "{\"serial\":1,\"issued\":" + std::to_string(now - 60) + ",\"expires\":" + std::to_string(now + 3600) + ",\"master\":{\"url\":\"" + master.url() +
+                                    "\"},\"protocol\":{\"min\":1,\"current\":" + std::to_string(net::kProtocolVersion) + "}}");
+    const std::string key = toHex(publicKeyOf(seed));
+    // The master is asked on threads of their own, in real time: these waits take real time too.
+    auto real = [&](const std::function<bool()>& done, int maxMs = 15000) {
+        for (int waited = 0; waited < maxMs && !done(); ++waited) {
+            t.turn();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return done();
+    };
+    host.ui.setOnlineConfig(master.url() + "/config.json", key);
+    guest.ui.setOnlineConfig(master.url() + "/config.json", key);
+
+    // --- the host: "Announce online" on the host screen, then start ---
+    host.cfg.netPort = freePort();
+    host.ui.openHost();
+    host.press(PadKey::Up);     // from "Start the server" to "Announce online"
+    host.press(PadKey::Right);  // listed
+    host.press(PadKey::Confirm);  // by its code only
+    CHECK(host.cfg.netOnline == 2);
+    host.press(PadKey::Down);
+    host.press(PadKey::Confirm);
+    CHECK(t.until([&] { return host.screen() == "lobby"; }));
+    CHECK(real([&] { return host.ui.onlineNote() == "Code 408217"; }));
+    CHECK(announced == 1);
+    CHECK(announcedBody.find("\"public\":false") != std::string::npos && announcedBody.find(host.ui.hostIdentityKey()) != std::string::npos);
+    identity = host.ui.hostIdentityKey();
+    port = host.ui.hostPort();
+    CHECK(port > 0 && identity.size() == 64);
+
+    // --- a guest: the list ---
+    guest.ui.openJoin();
+    guest.press(PadKey::Down, 3);  // address, password, join, browse
+    guest.press(PadKey::Confirm);
+    CHECK_TEXT(guest.screen(), "browse");
+    CHECK(real([&] { return !guest.ui.onlineBusy(); }));
+    guest.press(PadKey::Confirm);  // the first game on the list
+    CHECK(real([&] { return guest.screen() == "lobby"; }, 30000));
+    CHECK_TEXT(guest.ui.client().serverName(), host.cfg.netServerName);
+    CHECK(t.until([&] { return host.ui.client().lobby().clients.size() == 2; }));
+    // Leaving goes back to the list; Back from there to the join screen.
+    guest.press(PadKey::Left);  // round the edge of the actions to Leave
+    guest.press(PadKey::Confirm);
+    CHECK_TEXT(guest.screen(), "browse");
+    CHECK(real([&] { return !guest.ui.onlineBusy(); }));
+    guest.press(PadKey::Down, 2);  // the game, Refresh, Back
+    guest.press(PadKey::Confirm);
+    CHECK_TEXT(guest.screen(), "join");
+
+    // --- by code: typed on the keyboard of digits ---
+    guest.press(PadKey::Down, 4);  // from the address to "Join online by code"
+    guest.press(PadKey::Confirm);
+    CHECK_TEXT(guest.screen(), "code");
+    CHECK(guest.ui.keyboardShown() && guest.ui.keyboard().rows() == 2);
+    CHECK(guest.type("408217"));
+    guest.press(PadKey::Menu);  // done: the cursor is on Join
+    CHECK(!guest.ui.keyboardShown());
+    guest.press(PadKey::Confirm);
+    CHECK(real([&] { return guest.screen() == "lobby"; }, 30000));
+    guest.press(PadKey::Left);
+    guest.press(PadKey::Confirm);
+    CHECK_TEXT(guest.screen(), "code");
+    // A code nobody has: said so, and back to the code screen.
+    guest.press(PadKey::Confirm);  // the field again
+    guest.press(PadKey::Erase, 6);
+    CHECK(guest.type("111111"));
+    guest.press(PadKey::Menu);
+    guest.press(PadKey::Confirm);
+    CHECK(real([&] { return guest.screen() == "error"; }));
+    CHECK_TEXT(guest.ui.errorText(), "No game with that code");
+    guest.press(PadKey::Confirm);
+    CHECK_TEXT(guest.screen(), "code");
+
+    // --- the master names another identity than the game shows: not joined ---
+    identity = std::string(64, '7');
+    guest.press(PadKey::Confirm);
+    guest.press(PadKey::Erase, 6);
+    CHECK(guest.type("408217"));
+    guest.press(PadKey::Menu);
+    guest.press(PadKey::Confirm);
+    CHECK(real([&] { return guest.screen() == "error"; }, 30000));
+    CHECK(guest.ui.errorText().find("not the game server the master server named") != std::string::npos);
+    guest.press(PadKey::Confirm);
+    guest.press(PadKey::Down, 2);  // Join, Back
+    guest.press(PadKey::Confirm);
+    CHECK_TEXT(guest.screen(), "join");
+
+    // A game announced online takes no password.
+    Station third;
+    third.ui.setOnlineConfig(master.url() + "/config.json", key);
+    third.cfg.netOnline = 1;
+    third.cfg.netPort = freePort();
+    third.ui.openHost();
+    third.press(PadKey::Up, 3);  // announce, relay, password
+    third.press(PadKey::Confirm);
+    CHECK(third.type("secret"));
+    third.press(PadKey::Menu);
+    third.press(PadKey::Down, 3);
+    third.press(PadKey::Confirm);
+    CHECK_TEXT(third.screen(), "error");
+    CHECK(third.ui.errorText().find("no password") != std::string::npos);
+}
+#endif
+
 }  // namespace
 
 int main() {
@@ -483,6 +626,9 @@ int main() {
         {"on-screen keyboard", testScreenKeyboard},
         {"network screens by pad", testScreensByPad},
         {"result and leaving by pad", testResultAndLeaveByPad},
+#ifdef AB_ONLINE
+        {"online screens by pad", testOnlineScreensByPad},
+#endif
     };
     for (const auto& [name, fn] : tests) {
         const int before = g_failures;

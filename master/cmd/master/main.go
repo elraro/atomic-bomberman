@@ -34,6 +34,7 @@ func main() {
 	minVersion := flag.Int("min-version", 0, "lowest game protocol version let in")
 	turnSecret := flag.String("turn-secret", env("MASTER_TURN_SECRET", ""), "the secret shared with coturn (use-auth-secret)")
 	turnURLs := flag.String("turn-urls", env("MASTER_TURN_URLS", ""), "comma-separated TURN URLs handed to games")
+	configFile := flag.String("config-file", env("MASTER_CONFIG_FILE", ""), "a signed configuration document to serve at /config.json (it may be served from anywhere else just as well)")
 	trustProxy := flag.Bool("trust-proxy", env("MASTER_TRUST_PROXY", "") == "1", "take client addresses from X-Forwarded-For (only behind your own reverse proxy)")
 	flag.Parse()
 
@@ -59,6 +60,21 @@ func main() {
 		cfg.TurnURLs = strings.Split(*turnURLs, ",")
 	}
 	handler := api.New(cfg, st)
+	mux := http.NewServeMux()
+	mux.Handle("/", handler)
+	if *configFile != "" {
+		// Read anew for every request, so that a newly signed document is served at once.
+		mux.HandleFunc("GET /config.json", func(w http.ResponseWriter, _ *http.Request) {
+			document, err := os.ReadFile(*configFile)
+			if err != nil {
+				http.Error(w, "no configuration", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write(document)
+		})
+	}
 	go func() {
 		tick := time.NewTicker(5 * time.Second)
 		defer tick.Stop()
@@ -74,7 +90,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *listen,
-		Handler:           handler,
+		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       20 * time.Second,
 		WriteTimeout:      40 * time.Second, // above the longest long poll

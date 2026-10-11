@@ -31,6 +31,9 @@ struct Settings {
     std::string netAddress;           // net_address: the server last joined
     std::string netServerName;        // net_server_name: name of a game hosted from the menu
     int netPort = 27410;              // net_port: port of a game hosted from the menu
+    std::string onlineConfigUrl;      // online_config_url: where the signed configuration of online play is (several: commas); empty: the built-in ones
+    std::string onlineConfigKey;      // online_config_key: the key that must have signed it (hex); empty: the built-in one
+    int netOnline = 0;                // net_online: a hosted game is 0 not announced, 1 listed, 2 found by its code only
     std::string netRelay;             // net_relay: relay to register a hosted game with ("host[:port]"), or empty
     bool netPrediction = true;        // net_prediction: show own moves at once instead of after the round trip
     // keydef=set,index,code: two keyboard sets of six keys (up, right, down, left,

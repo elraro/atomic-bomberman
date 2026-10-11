@@ -80,6 +80,8 @@ struct Options {
     bool titleOnly = false;   // free asset set: the intro is the title screen and its call alone
     bool freeAssets = false;  // --free: the free asset set even if original game data is installed
     std::string connect;      // --connect ADDRESS: join that network game at once
+    std::string onlineConfig; // --online-config URLS: where the signed configuration of online play is
+    std::string onlineKey;    // --online-key HEX: the key that must have signed it
     int host = 0;             // --host [PORT]: host a network game at once
     bool playersSet = false;  // --players or --humans given
     bool levelSet = false;    // --level, --wins, --scheme given: they win over the saved settings
@@ -122,6 +124,8 @@ Options parseArgs(int argc, char** argv) {
                       "  --no-intro           skip the intro movie, the logo and the title screens\n"
                       "  --roulette           the round winner spins for a prize before the next round\n"
                       "  --connect ADDRESS    join the network game at host or host:port at once\n"
+                      "  --online-config URL  where the signed configuration of online play is (several: commas)\n"
+                      "  --online-key HEX     the key that must have signed it\n"
                       "  --host [PORT]        host a network game at once (default port 27410)\n"
                       "  --seed N             random seed\n"
                       "  --mute               no sound\n"
@@ -177,6 +181,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--movie-shot") o.movieShot = std::atoi(next().c_str());
         else if (a == "--campaign") o.campaign = next();
         else if (a == "--connect") o.connect = next(), o.noIntro = true;
+        else if (a == "--online-config") o.onlineConfig = next();
+        else if (a == "--online-key") o.onlineKey = next();
         else if (a == "--host") {
             o.host = ab::net::kDefaultPort;
             o.noIntro = true;
@@ -820,6 +826,7 @@ int runGame(int argc, char** argv, bool& again) {
         };
         netHooks.settingsChanged = [&]() { saveSettings(); };
         ab::NetUi net(cfg, opt.gameDir, userSchemesDir, netHooks);
+        net.setOnlineConfig(opt.onlineConfig, opt.onlineKey);
         // What the original resets once per match (0x421793): scores, kills and, with
         // "random start", the start positions: 200 swaps of two of the ten.
         auto newMatch = [&]() {

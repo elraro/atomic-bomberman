@@ -48,6 +48,11 @@ public:
     void setKnownServersFile(const std::string& path) { knownFile_ = path; }
     void forgetServer(const std::string& address);
     bool identityChanged() const { return identityChanged_; }  // why the last connection failed
+    bool answered() const { return answered_; }  // a server did answer at the address (whatever it said)
+    // The identity key (hex) the server must show: set when somebody trustworthy has named it
+    // (the master server, for a game found there). Any other server is refused, and the
+    // memory of servers visited is not consulted. Cleared by an empty string.
+    void expectIdentity(const std::string& keyHex) { expectedIdentity_ = keyHex; }
     const std::string& serverIdentity() const { return identity_; }   // fingerprint of the server in use
     bool serverWasKnown() const { return identityKnown_; }
     void checkIdentityOnLoopback() { identityOnLoopback_ = true; }  // for the tests
@@ -168,6 +173,7 @@ private:
     bool overTcp_ = false;     // the packets travel as frames of a TCP connection
     bool tcpIntro_ = false;    // that connection is up (and the relay has been told what is wanted)
     bool udpHeard_ = false;    // the server has answered over UDP
+    bool answered_ = false;    // a server has answered at all
     std::uint64_t keySentAt_ = 0;
     Bytes cookie_;
     Address server_{};
@@ -176,6 +182,7 @@ private:
     bool viaRelay_ = false;    // "CODE@relay": the connection goes to a relay, which links it to the host
     std::string relayCode_;
     std::string knownFile_;
+    std::string expectedIdentity_;
     std::string identity_;
     bool identityKnown_ = false;
     bool identityChanged_ = false;

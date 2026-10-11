@@ -81,24 +81,44 @@ if(AB_ONLINE)
     set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
     set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
     set(DISABLE_PACKAGE_CONFIG_AND_INSTALL ON CACHE BOOL "" FORCE)
+    if(POLICY CMP0135)
+        cmake_policy(SET CMP0135 NEW)  # files unpacked from an archive get the time of unpacking
+    endif()
     FetchContent_Declare(mbedtls
         URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2
-        URL_HASH SHA256=a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-        EXCLUDE_FROM_ALL)
+        URL_HASH SHA256=a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6)
     FetchContent_Declare(monocypher
         URL https://github.com/LoupVaillant/Monocypher/releases/download/4.0.3/monocypher-4.0.3.tar.gz
-        URL_HASH SHA256=8cc9bc341a66249016db9bd70e9142d8d0aef9945973744b1ac05dbc55d8ee66
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-        SOURCE_SUBDIR none)  # no build file of its own is used: two C files, compiled below
-    FetchContent_MakeAvailable(mbedtls monocypher)
+        URL_HASH SHA256=8cc9bc341a66249016db9bd70e9142d8d0aef9945973744b1ac05dbc55d8ee66)
+    # Written out step by step (rather than FetchContent_MakeAvailable) for the CMake 3.22
+    # that Android's build tools bring: only what the game links is built, and Monocypher's
+    # own build files are not used (two C files, compiled below).
+    FetchContent_GetProperties(mbedtls)
+    if(NOT mbedtls_POPULATED)
+        FetchContent_Populate(mbedtls)
+        add_subdirectory(${mbedtls_SOURCE_DIR} ${mbedtls_BINARY_DIR} EXCLUDE_FROM_ALL)
+    endif()
+    FetchContent_GetProperties(monocypher)
+    if(NOT monocypher_POPULATED)
+        FetchContent_Populate(monocypher)
+    endif()
     add_library(ab_monocypher STATIC ${monocypher_SOURCE_DIR}/src/monocypher.c ${monocypher_SOURCE_DIR}/src/optional/monocypher-ed25519.c)
     target_include_directories(ab_monocypher PUBLIC ${monocypher_SOURCE_DIR}/src ${monocypher_SOURCE_DIR}/src/optional)
     add_library(ab_online src/online/json.cpp src/online/sign.cpp src/online/http.cpp src/online/config.cpp src/online/online.cpp)
     target_include_directories(ab_online PUBLIC src)
     target_link_libraries(ab_online PUBLIC ab_monocypher MbedTLS::mbedtls Threads::Threads)
     target_compile_definitions(ab_online PUBLIC AB_ONLINE=1)
+    # Where a packaged game looks for the configuration of online play, and the key that
+    # must have signed it (docs/operations/online.md). Empty: the player has to name one.
+    set(AB_ONLINE_CONFIG_URLS "" CACHE STRING "Addresses of the signed configuration of online play, separated by commas")
+    set(AB_ONLINE_CONFIG_KEY "" CACHE STRING "The Ed25519 public key (hex) that signs it")
+    if(AB_ONLINE_CONFIG_URLS)
+        target_compile_definitions(ab_online PUBLIC AB_ONLINE_CONFIG_URLS="${AB_ONLINE_CONFIG_URLS}" AB_ONLINE_CONFIG_KEY="${AB_ONLINE_CONFIG_KEY}")
+    endif()
     ab_warnings(ab_online)
+    if(TARGET atomic_server)
+        target_link_libraries(atomic_server PRIVATE ab_online)
+    endif()
 endif()
 
 # Front end: SDL3 window, input and audio + OpenGL 3.3 renderer. Optional.
@@ -173,6 +193,9 @@ if(SDL3_FOUND)
         install(TARGETS atomic RUNTIME DESTINATION .)
     endif()
     target_link_libraries(${AB_APP} PRIVATE ab_game ab_resources ab_net ab_free SDL3::SDL3)
+    if(AB_ONLINE)
+        target_link_libraries(${AB_APP} PRIVATE ab_online)
+    endif()
     target_compile_definitions(${AB_APP} PRIVATE AB_VERSION="${PROJECT_VERSION}")
     ab_warnings(${AB_APP})
 else()
@@ -193,6 +216,9 @@ ab_warnings(ai_stats)
 # Developer tool for the network mode: a client without a window (not installed).
 add_executable(net_bot tools/diagnostics/net_bot.cpp)
 target_link_libraries(net_bot PRIVATE ab_net)
+if(AB_ONLINE)
+    target_link_libraries(net_bot PRIVATE ab_online)
+endif()
 ab_warnings(net_bot)
 
 add_executable(ab_tests tests/unit/test_core.cpp)
@@ -220,6 +246,9 @@ if(SDL3_FOUND)
     add_executable(ab_ui_tests tests/unit/test_ui.cpp src/app/net_ui.cpp src/app/pad_keys.cpp src/app/screen_keyboard.cpp
         src/rendering/gl.cpp src/rendering/renderer.cpp src/rendering/sprites.cpp)
     target_link_libraries(ab_ui_tests PRIVATE ab_game ab_resources ab_net ab_free SDL3::SDL3)
+    if(AB_ONLINE)
+        target_link_libraries(ab_ui_tests PRIVATE ab_online)
+    endif()
     ab_warnings(ab_ui_tests)
     add_test(NAME ui COMMAND ab_ui_tests)
 endif()

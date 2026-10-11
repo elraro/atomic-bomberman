@@ -1,6 +1,6 @@
 # Online play over the internet (target design)
 
-Status: **phases 1 to 3 are implemented** (1: the screens worked with a gamepad, the on-screen keyboard, the ready state; 2: the link; 3: snapshots; all described in `networking.md`). Nothing else in this document is implemented yet. It describes where the network mode is going. What the game does today is in `networking.md` (snapshots over the link, to an address, a TCP relay), which stays valid until the phases below replace its parts.
+Status: **phases 1 to 4 are implemented** (1: the screens worked with a gamepad, the on-screen keyboard, the ready state; 2: the link; 3: snapshots, all three described in `networking.md`; 4: the master server, the signed configuration, games found by list or by code: `master/README.md`, `../operations/online.md`). The rest of this document is not implemented yet. Where what was built differs from what this document first said, the difference is noted in place. It describes where the network mode is going. What the game does today is in `networking.md` (snapshots over the link, to an address, a TCP relay), which stays valid until the phases below replace its parts.
 
 Like `networking.md`, this is the project's own design. Nothing here is a claim about the original game, whose IPX/serial network mode is not reproduced.
 
@@ -107,11 +107,11 @@ Not decided, and nothing else depends on it. If names are ever to be reserved, t
 
 The game holds a small built-in **bootstrap**: one or two URLs of the configuration document and the Ed25519 public key that signs it.
 
-The document is JSON with a detached signature, fetched over HTTPS when the player opens online play:
+The document is JSON with a detached signature, fetched over HTTPS when the player opens online play. As built: the two travel in one small JSON envelope (the document's exact bytes in base64, the signature, the signing key), so that one fetch brings both; every signed document of this project has that form (`src/online/sign.*`, `master/internal/signed`).
 
 ```text
 serial, issued, expires
-master: URL
+master: URL, and the pins of its TLS key (see below)
 trust: root keys that may sign server certificates, revoked certificate serials
 stun: list of host:port
 turn: list of host:port with transport (UDP, TCP, TLS), credentials come from the master
@@ -124,6 +124,7 @@ flags: free-form switches
 - **Nothing is cached.** If no current document can be fetched and verified, everything that rests on it is refused, with the reason shown: the list of games, joining by code, relayed connections, the "verified" mark of a server, tournaments. Outdated addresses or an outdated list of revoked certificates are worse than no connection. Playing on the local network and joining by address need no configuration and keep working.
 - Because of that the file must be easy to keep reachable: it is a static signed file, the bootstrap may name several URLs for it (mirrors on different hosts), and any one that verifies will do. A mirror cannot forge it; it can only serve an older one, which the expiry (seven days at most) bounds. The highest serial seen is remembered, as a number only, to refuse a step back.
 - A command-line option and a settings key point the game at another bootstrap URL and key, for a self-hosted community.
+- **How the game knows the master (as built).** It does not consult the system's list of certificate authorities, which differs on every platform. The configuration names the master's TLS key by its pin (SHA-256 of the key), and the game talks to nobody else; the configuration itself may be fetched from anywhere, since its signature is what is checked. So the one thing a game trusts for online play is the root key in its bootstrap.
 - In the code this is one small interface (`OnlineConfig load()`), so that the source can change later without touching its users.
 
 ## 3. Connectivity
@@ -196,7 +197,7 @@ What goes where:
 
 A new datagram never waits for an old one. Encryption stays as specified in `networking.md` (fresh keys per connection, every datagram and message authenticated); TURN carries ciphertext only.
 
-Cryptography note: Ed25519 verification is new. It and, in time, the existing home-made primitives should come from **libsodium** rather than from this project's own code.
+Cryptography note: Ed25519 verification is new. It comes from an existing library (Monocypher; see section 10) rather than from this project's own code, and in time the existing home-made primitives should too.
 
 ## 5. Game model: snapshots
 
@@ -358,7 +359,7 @@ Each phase is usable on its own and ends with tests.
 | 1 | Gamepad-friendly online screens for today's network mode (menu items, on-screen keyboard, ready state). **Done.** | nothing |
 | 2 | The link abstraction: reliable messages over UDP; today's protocol moved onto it. **Done.** | nothing |
 | 3 | Snapshot model replacing lockstep, with measurements of size and behaviour under loss. **Done** (sizes in `networking.md`; no buffer of two steps yet, see there). | 2 |
-| 4 | Master server (guest sessions, lobbies, status), signed configuration, browse / create / join by code in the game | 1 |
+| 4 | Master server (guest sessions, lobbies, status), signed configuration, browse / create / join by code in the game. **Done**; a player reaches a host at the address the master saw, so the host must be reachable until phase 5. | 1 |
 | 5 | pjnath + coturn: discovery, hole punching, TURN over UDP, TCP and TLS, the ladder, volume check, always-relay setting, connection display; the old relay removed | 2, 4 |
 | 6 | Server certificates and player keys: the tool that issues certificates, the certificate in the handshake, "verified" in the lobby, revocation through the configuration | 2 (revocation: 4) |
 | 7 | Signed match records: seed by commit and reveal, signed input statements, the record, `atomic_verify`, a tool that sums statistics from records | 3, 6 |
@@ -371,9 +372,9 @@ Phases 6 to 8 do not depend on the master (4) or on NAT traversal (5): a tournam
 
 | Where | What | Note |
 |---|---|---|
-| Game | An HTTPS client | libcurl on desktop systems; on Android the platform's own through the Java side. To be settled in phase 4. |
+| Game | An HTTPS client | As built: **mbedTLS** (3.6, fetched and built with the game) under a small client of this project's own (`src/online/http.*`), the same code on every platform including Android. Chosen over libcurl and the platforms' own clients because it needs nothing installed and no Java side. |
 | Game | pjnath (PJSIP) | Phase 5. |
-| Game, server, tools | libsodium | Ed25519 for the configuration, certificates, records and tournament files; the existing primitives later. |
+| Game, server, tools | An Ed25519 implementation | As built: **Monocypher** (4.0, two C files fetched and built with the game) instead of libsodium, which has no CMake build and would have needed a different recipe on every platform. The master uses Go's standard library. The game's own X25519 / ChaCha20 code is still in use for connections. |
 | Master | Go toolchain, PostgreSQL | Separate program, own CI job. |
 | Owner's machine | master, PostgreSQL, coturn, a domain with a certificate; the configuration file also on at least one other host | |
 

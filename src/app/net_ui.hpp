@@ -17,6 +17,10 @@
 #include "game/roulette.hpp"
 #include "net/client.hpp"
 #include "net/server.hpp"
+#ifdef AB_ONLINE
+#include "online/announcer.hpp"
+#include "online/bootstrap.hpp"
+#endif
 #include "rendering/renderer.hpp"
 #include "rendering/sprites.hpp"
 #include "resources/settings.hpp"
@@ -54,12 +58,24 @@ public:
     bool keyboardShown() const { return osk_.shown(); }
     const ScreenKeyboard& keyboard() const { return osk_; }
     bool matchMenuShown() const { return menuOpen_; }
-    // For automated checks: the screen shown ("join", "host", "connecting", "error", "lobby",
-    // "wheel", "round", "result", "closed"), the connection, and a host that stays off the network
+    // For automated checks: the screen shown ("join", "host", "browse", "code", "connecting", "error",
+    // "lobby", "wheel", "round", "result", "closed"), the connection, and a host that stays off the network
     // outside this machine (no router port, no announcements).
     const char* screenName() const;
     const net::Client& client() const { return client_; }
     void setLocalOnly(bool on) { localOnly_ = on; }
+    // The configuration of online play named on the command line: where it is and the key
+    // that must have signed it. Goes before the settings and before what is built in.
+    void setOnlineConfig(const std::string& urls, const std::string& keyHex) {
+        onlineUrls_ = urls;
+        onlineKey_ = keyHex;
+    }
+    const std::string& errorText() const { return error_; }
+    bool onlineBusy() const;  // the master server is being asked something
+    // For automated checks: the hosted game's port and identity key (empty when not hosting).
+    int hostPort() const { return hosting_ ? server_.port() : 0; }
+    std::string hostIdentityKey() const { return hosting_ ? server_.identityKeyHex() : std::string(); }
+    const std::string& onlineNote() const { return onlineNote_; }  // a hosted game's standing with the master server
 
     // The SDL keycode a gamepad's key is passed to key() as. (Start has a key of its own,
     // the "menu" key of a keyboard.)
@@ -74,11 +90,20 @@ public:
     void draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int frame, std::uint64_t nowMs);
 
 private:
-    enum class Mode { Closed, Join, Host, Connecting, Session, Error };
+    enum class Mode { Closed, Join, Host, Connecting, Session, Error, Browse, Code };
 
     void close();
     void connectTo(const std::string& address, bool remember);
     void startHost();
+    // Online play (the master server): see docs/specifications/online-play.md.
+    bool onlineBegin();  // false: not possible, and the error screen says why
+    void openBrowse();
+    void openCode(bool pad);
+    void askJoin(const std::string& lobbyId, const std::string& code);
+    void updateOnline(std::uint64_t nowMs);
+    void showError(const std::string& why);
+    void drawBrowse(Renderer& r, SpriteBank& bank, int frame);
+    void drawCode(Renderer& r, SpriteBank& bank, int frame);
     void leave();
     void submitChat();
     void edit(std::string* value, std::size_t maxLength, bool digitsOnly, bool pad);
@@ -141,6 +166,19 @@ private:
     int shownServers_ = 0;       // servers listed at the last update
     std::uint64_t connectingSince_ = 0;
     bool localOnly_ = false;
+    std::string onlineUrls_, onlineKey_;  // from the command line
+    std::string onlineName_;              // the name the session with the master was opened under
+    std::string codeText_;                // the join code being typed
+    enum class Asking { Nothing, Find, Join } asking_ = Asking::Nothing;  // what the master is being asked
+    std::vector<std::string> candidates_; // the ways to the game server the master named
+    std::size_t candidate_ = 0;           // the one being tried
+    std::string expectIdentity_;          // the identity that server must show
+    bool hostOnline_ = false;             // the hosted game is announced to the master
+    std::string onlineNote_;
+#ifdef AB_ONLINE
+    online::Online online_;
+    online::HostAnnouncer announcer_;
+#endif
     std::string chatText_;
     bool chatOpen_ = false;      // the chat line during a match
     bool continueSent_ = false;

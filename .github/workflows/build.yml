@@ -54,6 +54,14 @@ jobs:
       - name: Build
         working-directory: master
         run: go build -o bin/ ./cmd/...
+      # The real programs together: the master over TLS, a signed configuration, a game
+      # server that announces itself, clients that find it by code and in the list.
+      - name: Build the game server and the test client (no window needed)
+        run: |
+          cmake -S . -B build-online -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-online --target atomic_server net_bot --parallel
+      - name: Online play end to end
+        run: tests/integration/online.sh build-online master/bin
 
   linux:
     name: linux (${{ matrix.arch }})

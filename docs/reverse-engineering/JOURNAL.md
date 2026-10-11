@@ -733,3 +733,14 @@ Not a discovery about the original; a record of what was built and seen.
 - Measured (three ten-player rounds of computer players, 6088 steps): 123 bytes on average against the step before, 283 against five steps before (844 at most), whole state 3572 bytes.
 - Validation (Level 4): `ab_net_tests` "snapshot fields", "round over udp/tcp", "loss from the first packet" (events once each), "left behind", "prediction"; one run of the real programs (dedicated server, one bot over UDP, one inside TCP, the game joining).
 - Not done: a real network; a person judging how other players' movement looks at loss (no smoothing buffer was added).
+
+### Modern: master server, signed configuration, games by list or code (online play, phase 4)
+
+Not a discovery about the original; a record of what was built and seen.
+
+- `master/` (Go): guest sessions, lobbies with six-digit codes from the cryptographic random source, signalling queues, relay credentials in coturn's scheme, status; a memory store and a PostgreSQL store behind one interface; `abconfig` to make keys, sign and check documents, print a TLS key's pin, make a self-signed certificate.
+- `src/online/`: JSON, Ed25519 (Monocypher) and the signed-document envelope, an HTTPS client on mbedTLS that knows a server by the pin of its key, the configuration and its rules (signature, seven days at most, not expired, serial not lower than seen; nothing cached), the master client, the announcer for hosts.
+- The game: "Announce online" on the host screen, "Browse online games" and "Join online by code" on the join screen, the code in the lobby; a server named by the master must show the identity the master named. `atomic_server --online listed|code`.
+- Differences from the specification as first written, noted there: Monocypher instead of libsodium, mbedTLS with a pinned key instead of libcurl and the system's authorities, signature and document in one envelope.
+- Validation: master tests against PostgreSQL 18 locally and PostgreSQL 17 in CI; `ab_online_tests` (149 checks); `ab_ui_tests` "online screens by pad"; `tests/integration/online.sh` with the real programs; the Browse, Code and lobby screens looked at from unattended runs; the Android package built with the two new libraries for its three processor types.
+- Not done: any of it across a real network; a public master (nothing is built into the released game, so a player must name a configuration); Android on a device with the online screens.

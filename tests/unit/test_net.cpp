@@ -832,7 +832,8 @@ void testLossFromTheStart() {
     Client& bob = h.join("Bob", "pass");
     const bool joined = h.until([&] { return ann.state() == Client::State::Lobby && bob.state() == Client::State::Lobby && ann.lobby().clients.size() == 2 && bob.ready(); }, 60000);
     CHECK(joined);
-    CHECK(ann.udpActive() && bob.udpActive());
+    // (Not checked: that both are on UDP. With four packets in ten lost a client may hear
+    // nothing for two seconds and go on inside TCP, as it is meant to; seen on macOS.)
     // One after the other has arrived (the server takes one chat line per 300 ms from a
     // player, and a line held up by a lost packet could otherwise arrive on the heels of the next).
     bool chatted = true;

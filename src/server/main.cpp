@@ -16,6 +16,10 @@
 
 #include "free/free_data.hpp"
 #include "net/relay.hpp"
+#ifdef AB_ONLINE
+#include "online/announcer.hpp"
+#include "online/bootstrap.hpp"
+#endif
 #include "net/server.hpp"
 #include "resources/settings.hpp"
 
@@ -82,6 +86,9 @@ const char* const kUsage =
     "  --relay ADDRESS        register with a relay, for players who cannot reach this machine (they join with CODE@ADDRESS)\n"
     "  --relay-server         be a relay instead of a game server (port 27408 unless --port is given)\n"
     "  --identity-file FILE   the server's lasting key (default: server.key in the per-user folder)\n"
+    "  --online listed|code   announce the game on the master server: in its list, or to be found by its code only\n"
+    "  --online-config URL    where the signed configuration of online play is (several: commas)\n"
+    "  --online-key HEX       the key that must have signed it\n"
     "  --ban-file FILE    where banned addresses are kept (default: bans.txt in the per-user folder)\n"
     "Commands on standard input: status, say TEXT, kick NAME, ban NAME, unban ADDRESS, bans, quit.\n";
 
@@ -93,6 +100,7 @@ int main(int argc, char** argv) {
     std::string gameDir;
     bool schemesDirGiven = false;
     bool relayServer = false, portGiven = false;
+    std::string onlineMode, onlineConfig, onlineKey;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
@@ -130,6 +138,9 @@ int main(int argc, char** argv) {
         else if (a == "--identity-file") config.identityFile = next();
         else if (a == "--relay") config.relay = next();
         else if (a == "--relay-server") relayServer = true;
+        else if (a == "--online") onlineMode = next();
+        else if (a == "--online-config") onlineConfig = next();
+        else if (a == "--online-key") onlineKey = next();
         else {
             std::fprintf(stderr, "ERROR unknown argument %s (see --help)\n", a.c_str());
             return 2;
@@ -178,6 +189,37 @@ int main(int argc, char** argv) {
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);
 
+    // Announced on the master server, if asked for.
+    bool online = false;
+#ifdef AB_ONLINE
+    ab::online::Online master;
+    ab::online::HostAnnouncer announcer;
+    std::string onlineSaid;
+    if (!onlineMode.empty()) {
+        ab::online::Bootstrap bootstrap;
+        std::string why;
+        if (onlineMode != "listed" && onlineMode != "code") {
+            logLine("ERROR --online needs \"listed\" or \"code\"");
+            return 2;
+        }
+        if (!config.password.empty()) {
+            logLine("ERROR a game announced online has no password; to keep it private use --online code");
+            return 2;
+        }
+        if (!ab::online::chooseBootstrap(onlineConfig, onlineKey, bootstrap, why)) {
+            logLine("ERROR " + why);
+            return 2;
+        }
+        master.configure(bootstrap, userDataDir().empty() ? std::string() : userDataDir() + "online-serial.txt", config.name, ab::net::kProtocolVersion);
+        online = true;
+    }
+#else
+    if (!onlineMode.empty()) {
+        logLine("ERROR this server was built without online play");
+        return 2;
+    }
+#endif
+
     // Console commands, read on a thread of their own so the server never waits for input.
     std::mutex commandsMutex;
     std::vector<std::string> commands;
@@ -191,6 +233,16 @@ int main(int argc, char** argv) {
 
     while (!g_stop) {
         server.update(ab::net::clockMs());
+#ifdef AB_ONLINE
+        if (online) {
+            master.update();
+            announcer.update(ab::net::clockMs(), master, server, config.name, onlineMode == "listed");
+            // Said once each time it changes: the code to give out, or why it is not announced.
+            const std::string now = master.announced() ? "INFO  Online: " + onlineMode + ", code " + master.code()
+                                    : !master.error().empty() ? "WARN  Online: " + master.error() : std::string();
+            if (!now.empty() && now != onlineSaid) logLine(onlineSaid = now);
+        }
+#endif
         std::vector<std::string> todo;
         {
             const std::lock_guard<std::mutex> lock(commandsMutex);
@@ -226,6 +278,17 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     logLine("INFO  Shutting down");
+#ifdef AB_ONLINE
+    if (online && master.announced()) {
+        // The master is told that the game is gone (it would notice within half a minute anyway).
+        master.withdraw();
+        for (int i = 0; i < 1500 && master.busy(); ++i) {
+            master.update();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+#endif
+    (void)online;
     server.stop();
     std::fflush(stdout);
     std::_Exit(0);  // the console thread may still be waiting for a line

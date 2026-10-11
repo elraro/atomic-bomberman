@@ -4,15 +4,20 @@
 package main
 
 import (
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"flag"
 	"fmt"
+	"math/big"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -26,6 +31,8 @@ abconfig sign -key NAME.key -in DOC.json -out SIGNED.json [-stamp] [-days 7] [-s
 abconfig verify -pub HEX -in SIGNED.json     check a signed document and print it
 abconfig pin -cert CERT.pem                  the pin of a TLS certificate's key, for "master.tls_pins"
 abconfig example                             an example configuration document
+abconfig selfsigned -host NAME -out NAME     a TLS certificate signed by itself (NAME.crt, NAME.tls.key), for a master
+                                             server without a certificate from an authority: the game goes by the pin
 `
 
 func die(format string, args ...any) {
@@ -59,6 +66,7 @@ func main() {
 	stamp := fs.Bool("stamp", false, "set serial, issued and expires")
 	days := fs.Int("days", 7, "with -stamp: days until the document expires (7 at most)")
 	serial := fs.Int64("serial", 0, "with -stamp: the serial (default: the present time)")
+	host := fs.String("host", "", "with selfsigned: the name or address the master server is reached by")
 	_ = fs.Parse(os.Args[2:])
 
 	switch os.Args[1] {
@@ -150,10 +158,60 @@ func main() {
 		fmt.Println(hex.EncodeToString(sum[:]))
 	case "example":
 		fmt.Print(exampleConfig)
+	case "selfsigned":
+		if *host == "" || *out == "" {
+			die("selfsigned needs -host and -out")
+		}
+		certPEM, keyPEM, err := selfSigned(*host)
+		if err != nil {
+			die("%v", err)
+		}
+		if err := os.WriteFile(*out+".crt", certPEM, 0o644); err != nil {
+			die("%v", err)
+		}
+		if err := os.WriteFile(*out+".tls.key", keyPEM, 0o600); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("certificate: %s.crt, key: %s.tls.key (valid for ten years)\n", *out, *out)
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
+}
+
+// selfSigned makes an ECDSA P-256 key and a certificate for it, valid for ten years.
+func selfSigned(host string) (certPEM, keyPEM []byte, err error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	number, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 120))
+	if err != nil {
+		return nil, nil, err
+	}
+	template := x509.Certificate{
+		SerialNumber:          number,
+		Subject:               pkix.Name{CommonName: host},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().AddDate(10, 0, 0),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		template.IPAddresses = []net.IP{ip}
+	} else {
+		template.DNSNames = []string{host}
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), nil
 }
 
 const exampleConfig = `{

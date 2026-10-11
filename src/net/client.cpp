@@ -85,6 +85,7 @@ void Client::connect(const std::string& address, const std::string& name, const 
     welcomed_ = false;
     tcpIntro_ = false;
     udpHeard_ = false;
+    answered_ = false;
     keySentAt_ = 0;
     cookie_.assign(kCookieBytes, 0);
     // "CODE@relay": the game is reached through a relay, by the code its host was given.
@@ -396,6 +397,8 @@ void Client::handlePacket(const Bytes& packet, std::uint64_t nowMs) {
         return;
     }
     if (keyed_ || !r.ok()) return;  // once the keys are agreed nothing in the clear is listened to
+    if (kind != kCookie && kind != kClearReject && kind != kServerKey) return;
+    answered_ = true;
     if (!overTcp_) udpHeard_ = true;
     if (kind == kCookie) {
         // "Say that again with this": shows the server that the answer reaches us.
@@ -415,8 +418,12 @@ void Client::handlePacket(const Bytes& packet, std::uint64_t nowMs) {
     // machine is not asked.) Whoever answers must also own the identity it shows:
     // without that key it cannot arrive at the connection's keys.
     identity_ = fingerprint(identity);
+    if (!expectedIdentity_.empty()) {
+        Key expected{};
+        if (!fromHex(expectedIdentity_, expected) || expected != identity) return fail("This is not the game server the master server named (another identity)");
+    }
     // (Not through a relay either: its codes are new each time, so there is nothing to remember by.)
-    if (!knownFile_.empty() && !viaRelay_ && (!server_.loopback() || identityOnLoopback_)) {
+    if (expectedIdentity_.empty() && !knownFile_.empty() && !viaRelay_ && (!server_.loopback() || identityOnLoopback_)) {
         std::map<std::string, std::string> known = readKnown(knownFile_);
         const auto it = known.find(server_.text());
         if (it != known.end() && it->second != identity_) {

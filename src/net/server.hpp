@@ -57,6 +57,7 @@ public:
     const std::string& error() const { return error_; }
     // What players compare to know it is this server: "3F9A-11C0-7B42-E5D8".
     std::string identity() const { return fingerprint(identityPublic_); }
+    std::string identityKeyHex() const { return toHex(identityPublic_); }  // the whole key, for the master server
     // The code players give to join through the relay (empty until the relay has answered).
     const std::string& relayCode() const { return relayCode_; }
 

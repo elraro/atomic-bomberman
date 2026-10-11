@@ -16,9 +16,12 @@ namespace {
 
 using State = net::Client::State;
 
-constexpr int kJoinFields = 4;   // name, address, password, join; then the servers found, then back
-constexpr int kHostRows = 7;     // name, server name, port, password, relay, start, back
-constexpr int kHostStartRow = 5;
+constexpr int kJoinFields = 6;   // name, address, password, join, browse online, join by code; then the servers found, then back
+constexpr int kHostRows = 8;     // name, server name, port, password, relay, announce online, start, back
+constexpr int kHostOnlineRow = 5;
+constexpr int kHostStartRow = 6;
+constexpr int kBrowseShown = 12; // games on the list at a time
+const char* const kOnlineChoice[3] = {"No", "Listed for everybody", "By its code only"};
 constexpr int kLobbySettings = 14;             // the fourteen settings...
 constexpr int kLobbyRows = kLobbySettings + 1; // ...and below them the row of actions
 constexpr int kMenuItems = 4;
@@ -91,6 +94,8 @@ void NetUi::hostNow(int port, bool startMatch) {
 
 void NetUi::joinNow(const std::string& address) {
     openJoin();
+    candidates_.clear();
+    expectIdentity_.clear();
     connectTo(address, false);
 }
 
@@ -107,6 +112,12 @@ void NetUi::close() {
     errorItem_ = 0;
     escapeAt_ = 0;
     lastState_ = State::Idle;
+#ifdef AB_ONLINE
+    if (hostOnline_) online_.withdraw();  // (sent by the next updates)
+#endif
+    hostOnline_ = false;
+    onlineNote_.clear();
+    asking_ = Asking::Nothing;
     mode_ = Mode::Closed;
 }
 
@@ -115,7 +126,8 @@ void NetUi::leave() {
     const Mode back = entry_;
     close();
     mode_ = entry_ = back;
-    row_ = back == Mode::Host ? kHostStartRow : 1;
+    row_ = back == Mode::Host ? kHostStartRow : back == Mode::Join ? 1 : 0;
+    if (back == Mode::Browse) openBrowse();  // with a fresh list
     if (hooks_.lobbyEntered) hooks_.lobbyEntered();
 }
 
@@ -137,6 +149,8 @@ const char* NetUi::screenName() const {
         case Mode::Host: return "host";
         case Mode::Connecting: return "connecting";
         case Mode::Error: return "error";
+        case Mode::Browse: return "browse";
+        case Mode::Code: return "code";
         case Mode::Session: break;
     }
     if (client_.roulette() != nullptr) return "wheel";
@@ -173,6 +187,7 @@ void NetUi::finishKeyboard(bool submit) {
     osk_.close();
     if (editing_ != nullptr) {
         // A field keeps what was typed either way, as with Esc on a real keyboard.
+        if (mode_ == Mode::Code) row_ = codeText_.size() == 6 ? 1 : 0;
         editing_ = nullptr;
         cfg_.netName = net::cleanText(cfg_.netName, net::kMaxName);
         if (hooks_.settingsChanged) hooks_.settingsChanged();
@@ -252,6 +267,7 @@ void NetUi::connectTo(const std::string& address, bool remember) {
     }
     connectingTo_ = address;
     connectingSince_ = clock();
+    client_.expectIdentity(expectIdentity_);  // set for a game the master server named; empty otherwise
     client_.setPrediction(cfg_.netPrediction);
     if (!userSchemesDir_.empty()) client_.setKnownServersFile(userSchemesDir_ + "/../known_servers.txt");
     client_.connect(address, playerName(), password_, clock());
@@ -260,12 +276,133 @@ void NetUi::connectTo(const std::string& address, bool remember) {
     mode_ = Mode::Connecting;
 }
 
+bool NetUi::onlineBusy() const {
+#ifdef AB_ONLINE
+    return online_.busy();
+#else
+    return false;
+#endif
+}
+
+void NetUi::showError(const std::string& why) {
+    error_ = why;
+    identityChanged_ = false;
+    errorItem_ = 0;
+    asking_ = Asking::Nothing;
+    mode_ = Mode::Error;
+}
+
+// The session with the master server is set up on first use (and again under a new name).
+bool NetUi::onlineBegin() {
+#ifdef AB_ONLINE
+    if (online_.configured() && onlineName_ == playerName()) return true;
+    online::Bootstrap bootstrap;
+    std::string why;
+    const bool given = !onlineUrls_.empty() || !onlineKey_.empty();
+    if (!online::chooseBootstrap(given ? onlineUrls_ : cfg_.onlineConfigUrl, given ? onlineKey_ : cfg_.onlineConfigKey, bootstrap, why)) {
+        showError(why);
+        return false;
+    }
+    online_.configure(bootstrap, userSchemesDir_.empty() ? std::string() : userSchemesDir_ + "/../online-serial.txt", playerName(), net::kProtocolVersion);
+    onlineName_ = playerName();
+    return true;
+#else
+    showError("This copy of the game was built without online play");
+    return false;
+#endif
+}
+
+void NetUi::openBrowse() {
+    mode_ = Mode::Join;
+    entry_ = Mode::Join;
+    if (!onlineBegin()) return;
+    mode_ = entry_ = Mode::Browse;
+    row_ = 0;
+#ifdef AB_ONLINE
+    online_.refreshLobbies();
+#endif
+}
+
+void NetUi::openCode(bool pad) {
+    mode_ = Mode::Join;
+    entry_ = Mode::Join;
+    if (!onlineBegin()) return;
+    mode_ = entry_ = Mode::Code;
+    row_ = 0;
+    codeText_.clear();
+    edit(&codeText_, 6, true, pad);  // straight to typing it
+}
+
+// The master server is asked how to reach that game; update() goes on from its answer.
+void NetUi::askJoin(const std::string& lobbyId, const std::string& code) {
+#ifdef AB_ONLINE
+    connectingTo_ = "the master server";
+    connectingSince_ = clock();
+    lastState_ = State::Idle;
+    mode_ = Mode::Connecting;
+    if (lobbyId.empty()) {
+        asking_ = Asking::Find;
+        online_.findByCode(code);
+    } else {
+        asking_ = Asking::Join;
+        online_.join(lobbyId, code);
+    }
+#else
+    (void)lobbyId;
+    (void)code;
+#endif
+}
+
+void NetUi::updateOnline(std::uint64_t nowMs) {
+#ifdef AB_ONLINE
+    if (hosting_ && hostOnline_) {
+        announcer_.update(nowMs, online_, server_, net::cleanText(cfg_.netServerName, 32), cfg_.netOnline == 1);
+        if (online_.announced()) onlineNote_ = std::string(cfg_.netOnline == 1 ? "Listed, code " : "Code ") + online_.code();
+        else onlineNote_ = online_.error().empty() ? "Announcing..." : "Not announced online";
+    }
+    if (asking_ == Asking::Nothing || online_.busy()) return;
+    if (!online_.error().empty()) return showError(online_.error());
+    if (asking_ == Asking::Find) {
+        online::LobbyInfo found;
+        if (!online_.takeFound(found)) return showError("No game with that code");
+        asking_ = Asking::Join;
+        online_.join(found.id, codeText_);
+        return;
+    }
+    online::JoinInfo info;
+    if (!online_.takeJoin(info)) return showError("The master server gave no answer");
+    asking_ = Asking::Nothing;
+    if (info.candidates.empty()) return showError("That game has not said how it can be reached");
+    // The ways in are tried one after the other; whoever answers must show the identity the master named.
+    candidates_ = info.candidates;
+    candidate_ = 0;
+    expectIdentity_ = info.identityKey;
+    connectTo(candidates_[0], false);
+#else
+    (void)nowMs;
+#endif
+}
+
 void NetUi::startHost() {
     const int port = std::atoi(portText_.c_str());
     if (port < 1 || port > 65535) {
         error_ = "The port must be a number from 1 to 65535";
         mode_ = Mode::Error;
         return;
+    }
+    candidates_.clear();
+    expectIdentity_.clear();
+    hostOnline_ = false;
+    if (cfg_.netOnline != 0) {
+        // A game the master announces has no password: the master would hand out the way to it
+        // before the password is asked for. A private game is one found by its code only.
+        if (!password_.empty()) return showError("A game announced online has no password. To keep it private, announce it \"by its code only\".");
+        if (!onlineBegin()) return;
+        hostOnline_ = true;
+        onlineNote_ = "Announcing...";
+#ifdef AB_ONLINE
+        announcer_.reset();
+#endif
     }
     cfg_.netPort = port;
     if (hooks_.settingsChanged) hooks_.settingsChanged();
@@ -386,7 +523,8 @@ void NetUi::key(unsigned key, bool ctrl, bool pad) {
         if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE || key == SDLK_ESCAPE) {
             errorItem_ = 0;
             mode_ = entry_;
-            row_ = entry_ == Mode::Host ? kHostStartRow : 1;
+            row_ = entry_ == Mode::Host ? kHostStartRow : entry_ == Mode::Join ? 1 : 0;
+            if (entry_ == Mode::Browse) openBrowse();
         }
         return;
     }
@@ -408,6 +546,8 @@ void NetUi::key(unsigned key, bool ctrl, bool pad) {
                 // Enter on the address joins at once.
                 if (wasAddress && key != SDLK_ESCAPE && !net::cleanText(cfg_.netAddress, 64).empty()) {
                     sound(10);
+                    candidates_.clear();
+                    expectIdentity_.clear();
                     connectTo(net::cleanText(cfg_.netAddress, 64), true);
                 }
             }
@@ -417,6 +557,11 @@ void NetUi::key(unsigned key, bool ctrl, bool pad) {
         const int rows = mode_ == Mode::Join ? kJoinFields + servers + 1 : kHostRows;
         if (key == SDLK_UP) row_ = (row_ + rows - 1) % rows, sound(20);
         if (key == SDLK_DOWN) row_ = (row_ + 1) % rows, sound(20);
+        if ((key == SDLK_LEFT || key == SDLK_RIGHT) && mode_ == Mode::Host && row_ == kHostOnlineRow) {
+            cfg_.netOnline = (cfg_.netOnline + (key == SDLK_LEFT ? 2 : 1)) % 3;
+            sound(20);
+            if (hooks_.settingsChanged) hooks_.settingsChanged();
+        }
         if (key == SDLK_ESCAPE) close();
         if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
             sound(10);
@@ -426,21 +571,74 @@ void NetUi::key(unsigned key, bool ctrl, bool pad) {
                 else if (row_ == 1) edit(&cfg_.netAddress, 64, false, pad);
                 else if (row_ == 2) edit(&password_, 32, false, pad);
                 else if (row_ == 3 && address.empty()) sound(40);
-                else if (row_ == 3) connectTo(address, true);
-                else if (row_ - kJoinFields < servers) connectTo(browser_.servers()[static_cast<std::size_t>(row_ - kJoinFields)].address.text(), false);
-                else close();
+                else if (row_ == 4) openBrowse();
+                else if (row_ == 5) openCode(pad);
+                else if (row_ >= kJoinFields + servers) close();
+                else {
+                    candidates_.clear();
+                    expectIdentity_.clear();
+                    if (row_ == 3) connectTo(address, true);
+                    else connectTo(browser_.servers()[static_cast<std::size_t>(row_ - kJoinFields)].address.text(), false);
+                }
             } else {
                 if (row_ == 0) edit(&cfg_.netName, net::kMaxName, false, pad);
                 else if (row_ == 1) edit(&cfg_.netServerName, 32, false, pad);
                 else if (row_ == 2) edit(&portText_, 5, true, pad);
                 else if (row_ == 3) edit(&password_, 32, false, pad);
                 else if (row_ == 4) edit(&cfg_.netRelay, 64, false, pad);
-                else if (row_ == kHostStartRow) startHost();
+                else if (row_ == kHostOnlineRow) {
+                    cfg_.netOnline = (cfg_.netOnline + 1) % 3;
+                    if (hooks_.settingsChanged) hooks_.settingsChanged();
+                } else if (row_ == kHostStartRow) startHost();
                 else close();
             }
         }
         return;
     }
+#ifdef AB_ONLINE
+    if (mode_ == Mode::Browse) {
+        // The games the master lists, then Refresh and Back.
+        const int games = static_cast<int>(online_.lobbies().size());
+        const int rows = games + 2;
+        row_ = std::clamp(row_, 0, rows - 1);
+        if (key == SDLK_UP) row_ = (row_ + rows - 1) % rows, sound(20);
+        if (key == SDLK_DOWN) row_ = (row_ + 1) % rows, sound(20);
+        if (key == SDLK_ESCAPE) openJoin();
+        if (key == SDLK_F5 || ((key == SDLK_RETURN || key == SDLK_KP_ENTER) && row_ == games)) {
+            sound(10);
+            if (!online_.busy()) online_.refreshLobbies();
+        } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+            sound(10);
+            if (row_ == games + 1) openJoin();
+            else if (online_.lobbies()[static_cast<std::size_t>(row_)].version != net::kProtocolVersion) sound(40);
+            else askJoin(online_.lobbies()[static_cast<std::size_t>(row_)].id, "");
+        }
+        return;
+    }
+    if (mode_ == Mode::Code) {
+        // The code (six digits), Join, Back.
+        if (editing_ != nullptr) {
+            if (key == SDLK_BACKSPACE) removeLastChar(*editing_);
+            if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_ESCAPE) {
+                editing_ = nullptr;
+                osk_.close();
+                row_ = codeText_.size() == 6 ? 1 : 0;
+            }
+            return;
+        }
+        if (key == SDLK_UP) row_ = (row_ + 2) % 3, sound(20);
+        if (key == SDLK_DOWN) row_ = (row_ + 1) % 3, sound(20);
+        if (key == SDLK_ESCAPE) openJoin();
+        if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+            if (row_ == 0) edit(&codeText_, 6, true, pad);
+            else if (row_ == 2) openJoin();
+            else if (codeText_.size() != 6) sound(40);
+            else askJoin("", codeText_);
+            if (row_ != 1 || codeText_.size() == 6) sound(10);
+        }
+        return;
+    }
+#endif
     if (mode_ != Mode::Session) return;
 
     const State state = client_.state();
@@ -550,6 +748,9 @@ void NetUi::key(unsigned key, bool ctrl, bool pad) {
 
 void NetUi::update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxLocalPlayers>& locals) {
     now_ = nowMs;
+#ifdef AB_ONLINE
+    online_.update();  // also when closed: a game withdrawn is still to be told to the master
+#endif
     if (mode_ == Mode::Closed) return;
     if (mode_ == Mode::Join) {
         browser_.update(nowMs);
@@ -560,6 +761,7 @@ void NetUi::update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxL
         shownServers_ = servers;
     }
     if (hosting_) server_.update(nowMs);
+    updateOnline(nowMs);
     if (mode_ != Mode::Connecting && mode_ != Mode::Session) return;
 
     client_.update(nowMs);
@@ -600,6 +802,11 @@ void NetUi::update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxL
     }
     if (state == lastState_) return;
     if (state == State::Failed) {
+        // Nobody at that address: the next way the master named, if there is one.
+        if (!client_.answered() && candidate_ + 1 < candidates_.size()) {
+            connectTo(candidates_[++candidate_], false);
+            return;
+        }
         error_ = client_.error();
         identityChanged_ = client_.identityChanged();
         const Mode back = entry_;
@@ -693,13 +900,15 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
         fieldRow(1, "Address:", &cfg_.netAddress, false, "(host, host:port or CODE@relay)");
         fieldRow(2, "Password:", &password_, true, "(none)");
         item(3, "Join this address", 86.0f + 24.0f * 3.0f);
-        label(r, bank, "Games on the local network:", 80, 190, 1, 1, 1);
+        item(4, "Browse online games", 86.0f + 24.0f * 4.0f);
+        item(5, "Join online by code", 86.0f + 24.0f * 5.0f);
+        label(r, bank, "Games on the local network:", 80, 236, 1, 1, 1);
         const auto& servers = browser_.servers();
-        if (servers.empty()) label(r, bank, "(searching...)", 100, 212, 0.7f, 0.7f, 0.7f);
-        for (std::size_t i = 0; i < servers.size() && i < 8; ++i) {
+        if (servers.empty()) label(r, bank, "(searching...)", 100, 258, 0.7f, 0.7f, 0.7f);
+        for (std::size_t i = 0; i < servers.size() && i < 6; ++i) {
             static const char* const kPhase[4] = {"in the lobby", "playing", "playing", "playing"};
             const net::ServerInfo& info = servers[i].info;
-            const float y = 212.0f + 22.0f * static_cast<float>(i);
+            const float y = 258.0f + 22.0f * static_cast<float>(i);
             const bool on = row_ == kJoinFields + static_cast<int>(i);
             const std::string line = info.name + "   " + std::to_string(info.players) + " player" + (info.players == 1 ? "" : "s") + ", " +
                                      kPhase[static_cast<int>(info.phase)] + (info.password ? "   (password)" : "") +
@@ -707,7 +916,7 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
             label(r, bank, line, 100, y, on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
             if (on) r.sprite(bank, "cursor1", frame / 8, -1, 82.0f, y + 15.0f);
         }
-        item(kJoinFields + static_cast<int>(servers.size()), "Back", 394);
+        item(kJoinFields + static_cast<int>(servers.size()), "Back", 404);
         label(r, bank, editing_ != nullptr ? "Type, then Enter" : "Up/Down: select   Enter: change / join   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
     } else {
         fieldRow(0, "Your name:", &cfg_.netName, false, "Player");
@@ -715,15 +924,85 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
         fieldRow(2, "Port:", &portText_, false, "");
         fieldRow(3, "Password:", &password_, true, "(none)");
         fieldRow(4, "Relay:", &cfg_.netRelay, false, "(none)");
-        item(kHostStartRow, "Start the server", 86.0f + 24.0f * 5.0f + 6.0f);
-        item(kHostStartRow + 1, "Back", 86.0f + 24.0f * 6.0f + 6.0f);
+        {
+            // A choice, changed with left and right (or by choosing it).
+            const float y = 86.0f + 24.0f * static_cast<float>(kHostOnlineRow);
+            const bool on = row_ == kHostOnlineRow;
+            label(r, bank, "Announce online:", 80, y, on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
+            label(r, bank, kOnlineChoice[std::clamp(cfg_.netOnline, 0, 2)], 230, y, 1, 1, 1);
+            if (on) r.sprite(bank, "cursor1", frame / 8, -1, 62.0f, y + 15.0f);
+        }
+        item(kHostStartRow, "Start the server", 86.0f + 24.0f * 6.0f + 6.0f);
+        item(kHostStartRow + 1, "Back", 86.0f + 24.0f * 7.0f + 6.0f);
         const std::vector<std::string> notes = {"Others join with your address and this port (TCP and UDP).",
                                                 "On the same network they find the game by themselves.",
                                                 "If your router lets nothing in: name a relay, and give out the code it shows.",
                                                 "For a server without a window run atomic_server."};
-        for (std::size_t i = 0; i < notes.size(); ++i) label(r, bank, notes[i], 60, 276.0f + 22.0f * static_cast<float>(i), 0.75f, 0.75f, 0.75f);
+        for (std::size_t i = 0; i < notes.size(); ++i) label(r, bank, notes[i], 60, 300.0f + 22.0f * static_cast<float>(i), 0.75f, 0.75f, 0.75f);
         label(r, bank, editing_ != nullptr ? "Type, then Enter" : "Up/Down: select   Enter: change / start   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
     }
+}
+
+// The games the master server lists.
+void NetUi::drawBrowse(Renderer& r, SpriteBank& bank, int frame) {
+#ifdef AB_ONLINE
+    r.image(bank.picture("glue0"));
+    r.quad(40, 40, 560, 400, 0.0f, 0.0f, 0.10f, 0.85f);
+    label(r, bank, "Online Games", 55, 50, 1.0f, 0.95f, 0.3f);
+    const auto& games = online_.lobbies();
+    const int count = static_cast<int>(games.size());
+    const std::string status = online_.busy() ? "Asking the master server..."
+                               : !online_.error().empty() ? online_.error()
+                               : count == 0 ? "No games are open just now."
+                               : std::to_string(online_.lobbiesTotal()) + (online_.lobbiesTotal() == 1 ? " game" : " games");
+    const std::vector<std::string> statusLines = wrap(r, bank, status, 520);
+    for (std::size_t i = 0; i < statusLines.size() && i < 2; ++i) label(r, bank, statusLines[i], 60, 74.0f + 18.0f * static_cast<float>(i), 0.6f, 0.8f, 1.0f);
+    // A window of the list that keeps the cursor in sight.
+    const int first = std::clamp(row_ - kBrowseShown + 1, 0, std::max(0, count - kBrowseShown));
+    for (int i = first; i < count && i < first + kBrowseShown; ++i) {
+        const online::LobbyInfo& g = games[static_cast<std::size_t>(i)];
+        const float y = 116.0f + 22.0f * static_cast<float>(i - first);
+        const bool on = row_ == i;
+        const bool other = g.version != net::kProtocolVersion;
+        const float lit = other ? 0.55f : 0.85f;
+        label(r, bank, wrap(r, bank, g.name, 200).front(), 80, y, on ? 1.0f : lit, on ? 0.95f : lit, on ? 0.3f : lit);
+        label(r, bank, std::to_string(g.players) + "/" + std::to_string(g.seats), 290, y, lit, lit, lit);
+        label(r, bank, other ? "other version" : g.phase == "lobby" ? "in the lobby" : "playing", 340, y, lit, lit, lit);
+        label(r, bank, wrap(r, bank, g.level, 130).front(), 450, y, lit, lit, lit);
+        if (on) r.sprite(bank, "cursor1", frame / 8, -1, 62.0f, y + 15.0f);
+    }
+    auto item = [&](int row, const std::string& text, float y) {
+        const bool on = row == row_;
+        label(r, bank, text, 80, y, on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
+        if (on) r.sprite(bank, "cursor1", frame / 8, -1, 62.0f, y + 15.0f);
+    };
+    item(count, "Refresh", 388);
+    item(count + 1, "Back", 412);
+    label(r, bank, "Up/Down: select   Enter: join   Esc: back", 60, 448, 0.4f, 1.0f, 1.0f);
+#else
+    (void)r, (void)bank, (void)frame;
+#endif
+}
+
+// Joining a game by the six digits its host gives out.
+void NetUi::drawCode(Renderer& r, SpriteBank& bank, int frame) {
+    r.image(bank.picture("glue0"));
+    r.quad(40, 40, 560, 380, 0.0f, 0.0f, 0.10f, 0.85f);
+    label(r, bank, "Join Online By Code", 55, 50, 1.0f, 0.95f, 0.3f);
+    const bool typing = editing_ == &codeText_;
+    const bool blink = (frame / 20) % 2 == 0;
+    auto item = [&](int row, const std::string& text, float y) {
+        const bool on = row == row_ && !typing;
+        label(r, bank, text, 80, y, on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
+        if (on) r.sprite(bank, "cursor1", frame / 8, -1, 62.0f, y + 15.0f);
+    };
+    item(0, "Code:", 96);
+    label(r, bank, codeText_ + (typing ? (blink ? "_" : " ") : codeText_.empty() ? "(six digits)" : ""), 230, 96, typing ? 0.4f : 1.0f, 1.0f, 1.0f);
+    if (typing) r.sprite(bank, "cursor1", frame / 8, -1, 62.0f, 111.0f);
+    item(1, "Join", 132);
+    item(2, "Back", 156);
+    label(r, bank, "The host of a game sees its code in the lobby.", 60, 200, 0.75f, 0.75f, 0.75f);
+    label(r, bank, typing ? "Type the code, then Enter" : "Up/Down: select   Enter: choose   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
 }
 
 void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t nowMs) {
@@ -769,7 +1048,10 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
         label(r, bank, "server id " + client_.serverIdentity(), 24, 296, 0.6f, 0.6f, 0.6f);
     }
 
-    label(r, bank, wrap(r, bank, client_.serverName(), 284).front(), 332, 16, 1.0f, 0.95f, 0.3f);
+    // The game's name, and for a game announced online its standing there (the code to give out).
+    const float noteWidth = onlineNote_.empty() ? 0.0f : r.textWidth(bank, onlineNote_) + 12.0f;
+    label(r, bank, wrap(r, bank, client_.serverName(), 284.0f - noteWidth).front(), 332, 16, 1.0f, 0.95f, 0.3f);
+    if (!onlineNote_.empty()) label(r, bank, onlineNote_, 618.0f - r.textWidth(bank, onlineNote_), 16, 0.4f, 1.0f, 1.0f);
     // What the lobby is waiting for, then the settings.
     {
         const net::ClientInfo* a = lobby.client(lobby.admin);
@@ -977,6 +1259,10 @@ void NetUi::draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int fr
     r.begin(windowW, windowH);
     if (mode_ == Mode::Join || mode_ == Mode::Host) {
         drawEntry(r, bank, frame);
+    } else if (mode_ == Mode::Browse) {
+        drawBrowse(r, bank, frame);
+    } else if (mode_ == Mode::Code) {
+        drawCode(r, bank, frame);
     } else if (mode_ == Mode::Session && client_.roulette() != nullptr && wheel_) {
         drawRoulette(r, bank);
         drawChat(r, bank, nowMs);

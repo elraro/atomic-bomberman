@@ -202,14 +202,24 @@ Everything goes inside TCP (the relay carries no UDP), so play is as where UDP d
 
 - Sends its inputs (first keyboard set, or the first gamepad) whenever they change, whenever a newer state has arrived, and at least every 50 ms.
 - With prediction: takes up the server's states as they arrive and paces the picture by its own clock. Without (watchers, or prediction off): takes up one state per 50 ms; with more than 3 waiting two per 50 ms, with more than 20 as fast as it can. The drawing glides from the state before to the newest over one step.
-- Screens: join (name, address, servers found on the LAN), host (server name, port, password), lobby (seats, settings, chat), match, result.
+- Screens: join (name, address, servers found on the LAN, the two online entries), host (server name, port, password, relay, announce online), browse (the master's list of games), join by code, lobby (seats, settings, chat; the code of a game announced online), match, result.
 - Chat: typed directly in the lobby; in a match `T` opens the line, Enter sends, Esc closes. The last lines stay on screen for 8 s.
 - Everything a screen can do is an item that can be chosen (phase 1 of `online-play.md`), so that a gamepad is enough:
-  - Join: the three fields, "Join this address", the servers found, "Back". Host: the five fields, "Start the server", "Back". The box shown while connecting has "Cancel"; an error has "Ok" and, for a changed server identity, "Forget the old identity".
+  - Join: the three fields, "Join this address", "Browse online games", "Join online by code", the servers found, "Back". Host: the five fields, "Announce online" (no / listed for everybody / by its code only), "Start the server", "Back". Browse: the games, "Refresh", "Back". Code: the six digits, "Join", "Back". The box shown while connecting has "Cancel"; an error has "Ok" and, for a changed server identity, "Forget the old identity".
   - Lobby: the settings, and under them a row of actions: Start (administrator) or Ready (the others), Team (one per player at this computer, with team play), Players (one more at this computer with each press; after four, one), Chat, Leave. The cursor starts on the first action. A line above the settings says what the lobby waits for.
   - Match and result: a menu (Start on a gamepad) with Resume, Chat, Back To Lobby, Leave The Server. The match goes on behind it; this computer's players stand still while it, the chat line or the on-screen keyboard is open.
 - Gamepad as keys: d-pad or left stick are the arrows (a held direction repeats after 400 ms, then every 130 ms; the stick counts from half deflection and is released below 30 %), A confirms, B goes back, X erases, Y is a space, Start opens the menu (in the lobby: jumps to the actions). During a round only Start is a key; the rest steer the players.
 - On-screen keyboard: opens when a text field is chosen, or the chat opened, with a gamepad. Ten columns: digits, three rows of letters, a row of marks (`- _ : @ / ! ( ) + =`), then Shift, Space, Erase, Done; a field of digits (the port) has the digits, Erase and Done. It moves round the edges. Done (or Start) ends the typing and sends a chat line; B ends it too, keeps a field's text and drops a chat line. A real keyboard goes on typing directly while it is shown. On a phone, typing by touch uses the phone's own keyboard.
+
+## Games found through a master server
+
+Phase 4 of `online-play.md`; how the service is run is in `../operations/online.md`, the master's calls in `../../master/README.md`.
+
+- The game fetches the signed configuration (never kept from an earlier day), opens a guest session with the master it names, and from then on asks it: the list, a game by its code, how to reach a game.
+- A hosted game set to be announced tells the master its name, seats, phase, scheme, identity key and port when any of them changes and every ten seconds; the master gives it a six-digit code, shown in the lobby. It is withdrawn when the host stops. A game announced online has no password.
+- Joining: the master names the ways to the game server (the address it saw the host at with the port the host named, then any the host added) and the server's identity key. The game tries them in order until one answers, and **refuses a server that shows another identity** than the master named; the memory of servers visited is not consulted for such a game.
+- The dedicated server does the same with `--online listed` or `--online code`.
+- A copy of the game built without the online library (`-DAB_ONLINE=OFF`) says so when an online entry is chosen.
 
 ## Test plan
 
@@ -217,6 +227,7 @@ Everything goes inside TCP (the relay carries no UDP), so play is as where UDP d
 - Codec: every message survives encode/decode; truncated messages are refused.
 - Link: messages complete and in order over a line that loses 40 % of the packets, repeats and delays others; datagrams never held back; altered, foreign and repeated packets refused.
 - Connection: loss from the very first packet; no UDP at all (the client goes on inside TCP); the cookie.
+- Online: `ab_online_tests` (JSON, Ed25519 against RFC 8032's vectors, signed documents, the configuration's rules, the HTTP client, the master client against a stand-in master); `ab_ui_tests` "online screens by pad"; `tests/integration/online.sh` with the real master over TLS.
 - Loopback: a server and clients in one process over 127.0.0.1 play rounds to their results and end on the server's state; chat arrives; a wrong password is refused; a late joiner comes in with one whole state; nothing hidden is on any client; events are told once each at 40 % loss; a client cut off for five seconds is given the whole state again.
 - Snapshots: a world rebuilt from differences is the public state; the coder refuses nonsense; sizes are measured and printed.
 
