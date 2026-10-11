@@ -77,7 +77,7 @@ Every server, whatever its own port, also listens on UDP **27409** (a port sever
 
 IPv4 and IPv6: a server listens for both on one port where the system allows it (IPv4 alone otherwise); a client uses whichever the address it was given resolves to. An IPv6 literal with a port is written `[address]:port`. A link-local IPv6 address is given with its interface, `[fe80::1%eth0]:port`.
 
-Protocol version 8 (1: one player per client; 2: several players, prizes, campaign stages; 3: encryption; 4: secrets kept on the server; 5: server identity; 6: ready state; 7: the link, everything over UDP; 8: snapshots instead of lockstep).
+Protocol version 9 (1: one player per client; 2: several players, prizes, campaign stages; 3: encryption; 4: secrets kept on the server; 5: server identity; 6: ready state; 7: the link, everything over UDP; 8: snapshots instead of lockstep; 9: player keys, the certificate message).
 
 ## Encryption and the password
 
@@ -100,7 +100,7 @@ What this does not give: the first visit to a server is taken on trust. An attac
 
 - **Administrator**: whoever has been connected longest, until the role is handed over (`/admin NAME`) or taken with the server's administrator password (`/login PASSWORD`, if the server was started with one). When the administrator leaves, the role falls back to whoever has been there longest.
 - **Kick**: the player's address may not connect for five minutes.
-- **Ban** (administrator: `/ban NAME`; dedicated server console: `ban NAME`): the address stays out until `unban ADDRESS`. Bans are kept in the server's ban file and survive a restart. The administrator is told the address when banning.
+- **Ban** (administrator: `/ban NAME`; dedicated server console: `ban NAME`): the address stays out until `unban ADDRESS`, and so does the player's key if they showed one (`unban key:...`). Bans are kept in the server's ban file and survive a restart. The administrator is told the address when banning.
 - At most 10 connections from one address at a time (`maxPerAddress`).
 - More than 20 connection attempts from one address in ten seconds: blocked for a minute.
 - Five wrong passwords from one address in a minute: blocked for five minutes.

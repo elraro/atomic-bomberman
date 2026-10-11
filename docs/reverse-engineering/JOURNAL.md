@@ -744,3 +744,13 @@ Not a discovery about the original; a record of what was built and seen.
 - Differences from the specification as first written, noted there: Monocypher instead of libsodium, mbedTLS with a pinned key instead of libcurl and the system's authorities, signature and document in one envelope.
 - Validation: master tests against PostgreSQL 18 locally and PostgreSQL 17 in CI; `ab_online_tests` (149 checks); `ab_ui_tests` "online screens by pad"; `tests/integration/online.sh` with the real programs; the Browse, Code and lobby screens looked at from unattended runs; the Android package built with the two new libraries for its three processor types.
 - Not done: any of it across a real network; a public master (nothing is built into the released game, so a player must name a configuration); Android on a device with the online screens.
+
+### Modern: server certificates and player keys (online play, phase 6)
+
+Not a discovery about the original; a record of what was built and seen.
+
+- `abconfig cert` makes a certificate out to a server's identity key and signing key with its operator's name; `atomic_server --show-keys`, `--certificate`, `--signing-key-file`. The server sends the certificate to every client; the game judges it against the root keys and revoked serials of the configuration and shows "verified server of NAME" in the lobby.
+- Player keys: `player.key`, proved at joining by a signature bound to the connection; named in the lobby state; a ban names the key too. Protocol version 9.
+- The network library still has no signature code: the program around it hands in a function to check signatures, and one to sign.
+- Validation (Level 4): `ab_online_tests` "server certificates and key files" (expired, revoked, unknown root, other identity, wrong kind, incomplete); `ab_net_tests` "player keys and certificate"; `tests/integration/online.sh` (a certified server verified by two clients, the certificate refused on another server, a revoked one no longer accepted).
+- Not done: a certificate seen in the game's lobby by a person (the screen line was not captured); renewal in practice.

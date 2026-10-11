@@ -40,6 +40,13 @@ struct ServerConfig {
     std::string relay;                  // "host[:port]" of a relay to register with, for players who cannot reach this machine; empty: none
     std::string identityFile;           // the server's lasting key (made on first start); empty: a new identity every start
     std::string adminPassword;          // whoever gives it ("/login PASSWORD") becomes administrator; empty: off
+    // The server's certificate (a signed document, sent to every client as it is; the server
+    // does not judge it). Empty: none.
+    std::string certificate;
+    // Checks an Ed25519 signature (key, message, signature). The network library has no such
+    // code of its own; the program that owns the server hands it in. Empty: player keys are
+    // not looked at, and every player counts as having none.
+    std::function<bool(const Key&, const std::vector<std::uint8_t>&, const std::array<std::uint8_t, 64>&)> verifySignature;
     std::function<void(const std::string&)> log;  // one line per event; may be empty
 };
 

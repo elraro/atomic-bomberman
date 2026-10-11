@@ -2,7 +2,7 @@
 
 What the owner of an online service for the game has to set up, and what a group that wants its own has to do. The design is in [`../specifications/online-play.md`](../specifications/online-play.md); the master server's own notes are in [`../../master/README.md`](../../master/README.md).
 
-State of things: this covers what exists (phases 1 to 4: the master server, the signed configuration, games found by list or by code). Reaching players behind routers without forwarded ports (STUN / TURN, phase 5), server certificates, match records and tournaments are not built yet; where a step below prepares for them it says so.
+State of things: this covers what exists (the master server, the signed configuration, games found by list or by code, server certificates and player keys). Reaching players behind routers without forwarded ports (STUN / TURN, phase 5), match records and tournaments are not built yet; where a step below prepares for them it says so.
 
 ## The parts
 
@@ -68,7 +68,8 @@ bin/abconfig example > config.json      # then edit it
 
 - `protocol.min`: games older than this are told they are too old. The game's protocol version is `kProtocolVersion` in `src/net/protocol.hpp`.
 - `status.state`: `"maintenance"` closes online play with the message shown.
-- `stun`, `turn`, `trust`: for phases 5 and 6; leave them empty for now.
+- `stun`, `turn`: for phase 5; leave them empty for now.
+- `trust.roots`: the public keys that may sign server certificates (section 6); the root key itself, or a second key kept for that purpose. `trust.revoked`: serials of certificates no longer to be believed.
 
 On the offline machine, at least once a week:
 
@@ -106,9 +107,21 @@ The log says `Online: listed, code 123456` once the master has the game. A game 
 
 Players reach a game server **at the address the master saw it at, with the port it said**. So for now the machine must be reachable from outside on that port (UDP, and TCP as the fallback): a public address, a forwarded port, or a router that honours UPnP (`--upnp`; the game asks by itself when hosting). Getting through routers without that is phase 5.
 
-## 6. Checking it
+## 6. Certificates for game servers
 
-`tests/integration/online.sh BUILD_DIR master/bin` runs all of the above on one machine with made-up keys: master over TLS, signed configuration, two game servers, three clients, and the refusals (wrong code, configuration signed by another key, master with another key than the pinned one). The CI job `master` runs it on every change.
+A certificate says who answers for a dedicated server. Players' games show "verified server of NAME" in the lobby when it holds. It is made by hand, by whoever holds a key listed in `trust.roots`:
+
+1. The server's operator runs `atomic_server --show-keys` (on the machine and under the user the server runs as) and sends the two keys it prints: the identity key and the signing key. Neither is secret.
+2. The key holder, offline: `abconfig cert -key root.key -identity HEX -signing HEX -operator "Tuesday League" -contact admin@example.org -out tuesday.cert` (90 days; `-days N` for another span, 366 at most). The serial printed is what a revocation names.
+3. The operator starts the server with `--certificate tuesday.cert`. It says whose certificate it shows and how many days are left, and refuses to start with one made out to other keys.
+
+To take a certificate back before it runs out, add its serial to `trust.revoked` and sign the configuration anew; games pick that up the next time they fetch it (they keep none, so within the hour at the latest for a running game, at once for a newly started one).
+
+A game hosted from the menu never has a certificate: its host could alter their own game, and nobody answers for it.
+
+## 7. Checking it
+
+`tests/integration/online.sh BUILD_DIR master/bin` runs all of the above on one machine with made-up keys: master over TLS, signed configuration, two game servers (one with a certificate), clients that find them by code and in the list and play, and the refusals (wrong code, configuration signed by another key, master with another key than the pinned one, a certificate used by another server, a revoked certificate). The CI job `master` runs it on every change.
 
 ## What has not been done
 

@@ -58,6 +58,10 @@ public:
     // Fetches the configuration and opens a session, unless that is done already.
     void connect();
     bool ready() const { return haveConfig_ && !token_.empty(); }
+    // Only the configuration, without a session: for what needs the keys in it and not the
+    // master (checking a server's certificate). haveConfig() says when it is there.
+    void loadConfig();
+    bool haveConfig() const { return haveConfig_; }
     bool busy() const { return !queue_.empty(); }
     // Why the last thing asked for did not work; empty if it did. Cleared by the next request.
     const std::string& error() const { return error_; }

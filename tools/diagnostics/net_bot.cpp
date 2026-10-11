@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <string>
 #include <thread>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "net/client.hpp"
 #ifdef AB_ONLINE
 #include "online/bootstrap.hpp"
+#include "online/certificate.hpp"
 #include "online/online.hpp"
 #endif
 
@@ -98,6 +100,19 @@ int main(int argc, char** argv) {
         return 1;
 #endif
     }
+#ifdef AB_ONLINE
+    // With a configuration named, a server's certificate can be judged whichever way the server was found.
+    ab::online::Online trust;
+    bool judged = false;
+    {
+        ab::online::Bootstrap bootstrap;
+        std::string why;
+        if (ab::online::chooseBootstrap(onlineConfig, onlineKey, bootstrap, why)) {
+            trust.configure(bootstrap, "", name, ab::net::kProtocolVersion);
+            trust.loadConfig();
+        }
+    }
+#endif
     std::size_t candidate = 0;
     client.connect(address, name, password, ab::net::clockMs());
     ab::Rng rng(static_cast<std::uint32_t>(ab::net::clockMs()) + static_cast<std::uint32_t>(name.size()) * 7919u);
@@ -111,6 +126,27 @@ int main(int argc, char** argv) {
         client.update(now);
         client.advance(now, nullptr, nullptr);
         const State state = client.state();
+#ifdef AB_ONLINE
+        trust.update();
+        if (!judged && state == State::Lobby && !trust.busy()) {
+            judged = true;
+            ab::online::ServerCertificate cert;
+            std::string why;
+            if (client.certificate().empty()) std::printf("[%s] certificate: none\n", name.c_str());
+            else if (!trust.haveConfig()) std::printf("[%s] certificate: not checked (no configuration)\n", name.c_str());
+            else if (ab::online::readCertificate(client.certificate(), trust.config().roots, trust.config().revoked, static_cast<long long>(std::time(nullptr)), client.serverIdentityKey(), cert, why))
+                std::printf("[%s] certificate: verified, operator \"%s\", serial %lld\n", name.c_str(), cert.operatorName.c_str(), cert.serial);
+            else std::printf("[%s] certificate: not accepted (%s)\n", name.c_str(), why.c_str());
+        }
+#endif
+        // "--matches 0": only here to look. The lobby is reached (and the certificate judged): done.
+        if (matches <= 0 && state == State::Lobby) {
+#ifdef AB_ONLINE
+            if (judged) return 0;
+#else
+            return 0;
+#endif
+        }
         for (; chatSeen < client.chat().size(); ++chatSeen) {
             const ab::net::ChatLine& line = client.chat()[chatSeen];
             std::printf("[%s] chat %s: %s\n", name.c_str(), line.fromServer ? "*" : line.name.c_str(), line.text.c_str());

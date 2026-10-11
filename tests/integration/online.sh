@@ -33,14 +33,17 @@ KEY=$(cat "$WORK/root.pub")
 PIN=$("$BIN/abconfig" pin -cert "$WORK/master.crt") || fail "pin"
 cat > "$WORK/config.json" <<JSON
 {
+  "kind": "configuration",
   "master": {"url": "https://127.0.0.1:$MASTER_PORT", "tls_pins": ["$PIN"]},
   "stun": [], "turn": [],
   "protocol": {"min": 1, "current": 1},
   "status": {"state": "ok", "message": ""},
-  "trust": {"roots": [], "revoked": []},
+  "trust": {"roots": ["$KEY"], "revoked": [REVOKED]},
   "flags": {}
 }
 JSON
+sed 's/REVOKED/424242/' "$WORK/config.json" > "$WORK/config-revoking.json"
+sed -i 's/REVOKED//' "$WORK/config.json"
 "$BIN/abconfig" sign -key "$WORK/root.key" -in "$WORK/config.json" -out "$WORK/signed.json" -stamp >/dev/null || fail "sign"
 "$BIN/abconfig" verify -pub "$KEY" -in "$WORK/signed.json" >/dev/null || fail "verify"
 
@@ -51,8 +54,19 @@ ONLINE=(--online-config "$CONFIG" --online-key "$KEY")
 for _ in $(seq 50); do grep -q "master listening" "$WORK/master.log" && break; sleep 0.1; done
 grep -q "master listening" "$WORK/master.log" || fail "the master did not start"
 
-# A game server that is found by its code only, and one that is listed.
-"$BUILD/atomic_server" --port "$GAME_PORT" --name "By code" --hidden --computers 1 --wins 1 --online code "${ONLINE[@]}" >"$WORK/server-code.log" 2>&1 </dev/null &
+# The first game server has a certificate: its operator shows its two keys to the owner of
+# the root key and gets a certificate made out to them.
+KEYFILES=(--identity-file "$WORK/id.key" --signing-key-file "$WORK/sign.key")
+"$BUILD/atomic_server" --show-keys "${KEYFILES[@]}" >"$WORK/keys.txt" 2>&1 || fail "--show-keys"
+IDENTITY=$(sed -n 's/^identity key: *//p' "$WORK/keys.txt")
+SIGNING=$(sed -n 's/^signing key: *//p' "$WORK/keys.txt")
+"$BIN/abconfig" cert -key "$WORK/root.key" -identity "$IDENTITY" -signing "$SIGNING" -operator "Integration Test" -serial 424242 -out "$WORK/server.cert" >/dev/null || fail "cert"
+# Another server cannot use it: it is made out to keys that are not its own.
+"$BUILD/atomic_server" --port $((GAME_PORT + 5)) --hidden --identity-file "$WORK/other-id.key" --signing-key-file "$WORK/other-sign.key" --certificate "$WORK/server.cert" >"$WORK/thief.log" 2>&1 </dev/null
+grep -q "not a certificate for this server's keys" "$WORK/thief.log" || fail "a server should refuse to start with somebody else's certificate"
+
+# A game server that is found by its code only (the one with the certificate), and one that is listed.
+"$BUILD/atomic_server" --port "$GAME_PORT" --name "By code" --hidden --computers 1 --wins 1 --online code "${ONLINE[@]}" "${KEYFILES[@]}" --certificate "$WORK/server.cert" >"$WORK/server-code.log" 2>&1 </dev/null &
 pids+=($!)
 "$BUILD/atomic_server" --port $((GAME_PORT + 1)) --name "Listed game" --hidden --computers 1 --wins 1 --online listed "${ONLINE[@]}" >"$WORK/server-listed.log" 2>&1 </dev/null &
 pids+=($!)
@@ -78,6 +92,10 @@ grep -q "master: code $CODE is \"By code\"" "$WORK/ann.log" || fail "the code di
 grep -q "done: matches=1" "$WORK/ann.log" && grep -q "done: matches=1" "$WORK/bob.log" && grep -q "done: matches=1" "$WORK/cat.log" || fail "a match was not played to its end"
 grep -q "master: 1 game(s) listed" "$WORK/cat.log" || fail "the list should show the listed game and not the one found by code"
 echo "ok   two players by code, one from the list: matches played"
+grep -q 'certificate: verified, operator "Integration Test", serial 424242' "$WORK/ann.log" || fail "the certificate should have been verified"
+grep -q "certificate: none" "$WORK/cat.log" || fail "the listed server has no certificate"
+grep -q "Certificate 424242 of \"Integration Test\": [0-9]* days left" "$WORK/server-code.log" || fail "the server should say whose certificate it shows"
+echo "ok   the server's certificate is verified by the players' games"
 
 # What must not work.
 timeout 30 "$BUILD/net_bot" "code:000000" Dan "${ONLINE[@]}" >"$WORK/dan.log" 2>&1
@@ -95,6 +113,12 @@ sleep 0.5
 timeout 30 "$BUILD/net_bot" "code:$CODE" Fay "${ONLINE[@]}" >"$WORK/fay.log" 2>&1
 grep -q "does not match" "$WORK/fay.log" || fail "a master with another key than the pinned one should be refused"
 echo "ok   refused: a wrong code, a configuration signed by another key, a master with another key"
+
+# A revoked certificate: the configuration lists its serial, and the games no longer accept it.
+"$BIN/abconfig" sign -key "$WORK/root.key" -in "$WORK/config-revoking.json" -out "$WORK/signed.json" -stamp -serial 99999999990 >/dev/null
+timeout 60 "$BUILD/net_bot" "code:$CODE" Hal --matches 0 "${ONLINE[@]}" >"$WORK/hal.log" 2>&1
+grep -q "certificate: not accepted (the certificate has been revoked)" "$WORK/hal.log" || fail "a revoked certificate should not be accepted"
+echo "ok   a revoked certificate is no longer accepted"
 
 # Stopping the game server takes its game off the master.
 kill -TERM "${pids[1]}"

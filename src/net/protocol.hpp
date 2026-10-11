@@ -17,7 +17,7 @@ namespace ab::net {
 
 inline constexpr std::uint32_t kTcpMagic = 0x4E4D4241u;  // "ABMN"
 inline constexpr std::uint32_t kUdpMagic = 0x554D4241u;  // "ABMU"
-inline constexpr std::uint16_t kProtocolVersion = 8;
+inline constexpr std::uint16_t kProtocolVersion = 9;
 inline constexpr std::uint16_t kDefaultPort = 27410;
 // Every server also listens here for searches on the local network, whatever its own port.
 inline constexpr std::uint16_t kDiscoveryPort = 27409;
@@ -29,7 +29,7 @@ inline constexpr int kMaxLocalPlayers = 4;  // players at one computer
 
 // Messages and datagrams of a connection, all of them carried by its link.
 enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, Continue, Pong, Locals, Ban, Unban, Admin, Login, LeaveMatch, Ready };
-enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Delta, RoundEnd, Snapshot, Ping, Roulette };
+enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Delta, RoundEnd, Snapshot, Ping, Roulette, Certificate };
 // A datagram of a connection: its contents are encrypted. Searches on the LAN stay in the clear.
 inline constexpr std::uint8_t kSealedDatagram = 0x80;
 // In the clear, before a connection has keys: the client's key (with the cookie the server
@@ -151,6 +151,7 @@ struct ClientInfo {
     int players = 1; // players at this computer
     int pingMs = 0;
     bool ready = false;  // has said so in the lobby (the administrator need not: starting says it)
+    Key playerKey{};     // the player key it proved when joining; zeros: none
 };
 
 struct LobbyState {
@@ -169,7 +170,14 @@ struct HelloMsg {
     std::uint16_t version = kProtocolVersion;
     std::string name;
     Key proof{};  // passwordProof() for this connection; zeros when no password was given
+    // The player's lasting key (Ed25519) and its signature over playerProofMessage(): shows
+    // that the key's owner is at this end of this connection. Zeros: no key.
+    Key playerKey{};
+    std::array<std::uint8_t, 64> playerSignature{};
 };
+
+// What a player signs to prove a key: bound to the connection, so it proves nothing anywhere else.
+std::vector<std::uint8_t> playerProofMessage(const Key& connectionMaster);
 
 struct WelcomeMsg {
     std::uint8_t id = 0;

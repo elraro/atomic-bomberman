@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 
 #include "app/names.hpp"
 #include "rendering/glyphs.hpp"
@@ -56,7 +57,52 @@ std::string optionText(const net::MatchSettings& s, int option) {
 }  // namespace
 
 NetUi::NetUi(Settings& settings, std::string gameDir, std::string userSchemesDir, Hooks hooks)
-    : cfg_(settings), gameDir_(std::move(gameDir)), userSchemesDir_(std::move(userSchemesDir)), hooks_(std::move(hooks)) {}
+    : cfg_(settings), gameDir_(std::move(gameDir)), userSchemesDir_(std::move(userSchemesDir)), hooks_(std::move(hooks)) {
+#ifdef AB_ONLINE
+    // The player's lasting key: made on first use and kept beside the settings. Every server
+    // joined is shown it; a tournament goes by it.
+    if (!userSchemesDir_.empty()) havePlayerKey_ = online::loadOrCreateSeed(userSchemesDir_ + "/../player.key", playerSeed_);
+    if (havePlayerKey_) {
+        net::Key key{};
+        const online::PublicKey pub = online::publicKeyOf(playerSeed_);
+        std::copy(pub.begin(), pub.end(), key.begin());
+        client_.setPlayerKey(key, [seed = playerSeed_](const std::vector<std::uint8_t>& message) {
+            return online::sign(seed, std::string(message.begin(), message.end()));
+        });
+    }
+#endif
+}
+
+std::string NetUi::playerKeyHex() const {
+#ifdef AB_ONLINE
+    if (havePlayerKey_) return online::toHex(online::publicKeyOf(playerSeed_));
+#endif
+    return {};
+}
+
+// Is the certificate the server showed one that holds? Worked out again when the certificate
+// or the configuration it is judged by changes.
+void NetUi::judgeCertificate() {
+#ifdef AB_ONLINE
+    const std::string& shown = client_.certificate();
+    const long long serial = online_.haveConfig() ? online_.config().serial : 0;
+    if (shown == judgedCertificate_ && serial == judgedSerial_) return;
+    judgedCertificate_ = shown;
+    judgedSerial_ = serial;
+    verifiedOperator_.clear();
+    certificateProblem_.clear();
+    if (shown.empty()) return;
+    if (!online_.haveConfig()) {
+        certificateProblem_ = online_.configured() ? "not checked yet" : "cannot be checked (online play is not set up)";
+        return;
+    }
+    online::ServerCertificate cert;
+    std::string why;
+    if (online::readCertificate(shown, online_.config().roots, online_.config().revoked, static_cast<long long>(std::time(nullptr)), client_.serverIdentityKey(), cert, why))
+        verifiedOperator_ = net::cleanText(cert.operatorName, 40);
+    else certificateProblem_ = why;
+#endif
+}
 
 NetUi::~NetUi() { close(); }
 
@@ -268,6 +314,20 @@ void NetUi::connectTo(const std::string& address, bool remember) {
     connectingTo_ = address;
     connectingSince_ = clock();
     client_.expectIdentity(expectIdentity_);  // set for a game the master server named; empty otherwise
+#ifdef AB_ONLINE
+    // The keys that may vouch for a server are in the configuration: fetched now, if this
+    // copy of the game knows where, so that a certificate can be checked whichever way the server was found.
+    if (!online_.configured() && !localOnly_) {
+        online::Bootstrap bootstrap;
+        std::string why;
+        const bool given = !onlineUrls_.empty() || !onlineKey_.empty();
+        if (online::chooseBootstrap(given ? onlineUrls_ : cfg_.onlineConfigUrl, given ? onlineKey_ : cfg_.onlineConfigKey, bootstrap, why)) {
+            online_.configure(bootstrap, userSchemesDir_.empty() ? std::string() : userSchemesDir_ + "/../online-serial.txt", playerName(), net::kProtocolVersion);
+            onlineName_ = playerName();
+        }
+    }
+    online_.loadConfig();
+#endif
     client_.setPrediction(cfg_.netPrediction);
     if (!userSchemesDir_.empty()) client_.setKnownServersFile(userSchemesDir_ + "/../known_servers.txt");
     client_.connect(address, playerName(), password_, clock());
@@ -428,6 +488,13 @@ void NetUi::startHost() {
     config.settings.computers = 1;
     config.upnp = !localOnly_;
     config.discoverable = !localOnly_;
+#ifdef AB_ONLINE
+    config.verifySignature = [](const net::Key& key, const std::vector<std::uint8_t>& message, const std::array<std::uint8_t, 64>& signature) {
+        online::PublicKey k{};
+        std::copy(key.begin(), key.end(), k.begin());
+        return online::verify(k, std::string(message.begin(), message.end()), signature);
+    };
+#endif
     config.relay = net::cleanText(cfg_.netRelay, 64);
     if (!userSchemesDir_.empty()) config.banFile = userSchemesDir_ + "/../bans.txt";  // beside the settings file
     if (!userSchemesDir_.empty()) config.identityFile = userSchemesDir_ + "/../server.key";  // a hosted game tries to open the router's port; the lobby says how it went
@@ -763,6 +830,7 @@ void NetUi::update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxL
     if (hosting_) server_.update(nowMs);
     updateOnline(nowMs);
     if (mode_ != Mode::Connecting && mode_ != Mode::Session) return;
+    judgeCertificate();
 
     client_.update(nowMs);
     if (client_.state() == State::Round) {
@@ -1043,7 +1111,12 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
         if (c.seat < 0) watching += (watching.empty() ? "Watching: " : ", ") + c.name;
     if (!watching.empty()) label(r, bank, wrap(r, bank, watching, 280).front(), 24, 260, 0.7f, 0.7f, 0.7f);
     label(r, bank, "* administrator   green mark: ready", 24, 278, 0.6f, 0.6f, 0.6f);
-    if (!client_.serverIdentity().empty()) {
+    if (!verifiedOperator_.empty()) {
+        // A certificate that holds: who answers for this server.
+        label(r, bank, wrap(r, bank, "verified server of " + verifiedOperator_, 284).front(), 24, 296, 0.3f, 0.95f, 0.4f);
+    } else if (!certificateProblem_.empty()) {
+        label(r, bank, wrap(r, bank, "certificate: " + certificateProblem_, 284).front(), 24, 296, 1.0f, 0.6f, 0.2f);
+    } else if (!client_.serverIdentity().empty()) {
         // On a line of its own: beside the note above the two ran into each other.
         label(r, bank, "server id " + client_.serverIdentity(), 24, 296, 0.6f, 0.6f, 0.6f);
     }

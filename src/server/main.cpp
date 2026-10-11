@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <mutex>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <vector>
@@ -19,6 +20,8 @@
 #ifdef AB_ONLINE
 #include "online/announcer.hpp"
 #include "online/bootstrap.hpp"
+#include "online/certificate.hpp"
+#include "online/json.hpp"
 #endif
 #include "net/server.hpp"
 #include "resources/settings.hpp"
@@ -86,6 +89,9 @@ const char* const kUsage =
     "  --relay ADDRESS        register with a relay, for players who cannot reach this machine (they join with CODE@ADDRESS)\n"
     "  --relay-server         be a relay instead of a game server (port 27408 unless --port is given)\n"
     "  --identity-file FILE   the server's lasting key (default: server.key in the per-user folder)\n"
+    "  --certificate FILE     this server's certificate (who answers for it), shown to every player\n"
+    "  --signing-key-file FILE  the key match records are signed with (default: server.sign.key in the per-user folder)\n"
+    "  --show-keys            print the two keys a certificate is made out to, and exit\n"
     "  --online listed|code   announce the game on the master server: in its list, or to be found by its code only\n"
     "  --online-config URL    where the signed configuration of online play is (several: commas)\n"
     "  --online-key HEX       the key that must have signed it\n"
@@ -101,6 +107,8 @@ int main(int argc, char** argv) {
     bool schemesDirGiven = false;
     bool relayServer = false, portGiven = false;
     std::string onlineMode, onlineConfig, onlineKey;
+    std::string certificateFile, signingKeyFile;
+    bool showKeys = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
@@ -138,6 +146,9 @@ int main(int argc, char** argv) {
         else if (a == "--identity-file") config.identityFile = next();
         else if (a == "--relay") config.relay = next();
         else if (a == "--relay-server") relayServer = true;
+        else if (a == "--certificate") certificateFile = next();
+        else if (a == "--signing-key-file") signingKeyFile = next();
+        else if (a == "--show-keys") showKeys = true;
         else if (a == "--online") onlineMode = next();
         else if (a == "--online-config") onlineConfig = next();
         else if (a == "--online-key") onlineKey = next();
@@ -181,11 +192,67 @@ int main(int argc, char** argv) {
     else
         logLine("INFO  Game data: " + config.gameDir + (ab::isFreeAssetDir(config.gameDir) ? " (free asset set)" : ""));
 
+#ifdef AB_ONLINE
+    // The signing key (for match records) and the way to check players' keys.
+    if (signingKeyFile.empty() && !userDataDir().empty()) signingKeyFile = userDataDir() + "server.sign.key";
+    ab::online::Seed signingSeed{};
+    const bool haveSigningKey = !signingKeyFile.empty() && ab::online::loadOrCreateSeed(signingKeyFile, signingSeed);
+    if (!haveSigningKey) logLine("WARN  No signing key (cannot read or write " + (signingKeyFile.empty() ? std::string("a key file") : signingKeyFile) + ")");
+    config.verifySignature = [](const ab::net::Key& key, const std::vector<std::uint8_t>& message, const std::array<std::uint8_t, 64>& signature) {
+        ab::online::PublicKey k{};
+        std::copy(key.begin(), key.end(), k.begin());
+        return ab::online::verify(k, std::string(message.begin(), message.end()), signature);
+    };
+    if (!certificateFile.empty()) {
+        std::ifstream in(certificateFile, std::ios::binary);
+        config.certificate.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        if (config.certificate.empty() || config.certificate.size() > 8000) {
+            logLine("ERROR cannot read a certificate from " + certificateFile);
+            return 2;
+        }
+    }
+#else
+    if (!certificateFile.empty() || showKeys) {
+        logLine("ERROR this server was built without online play: no certificates");
+        return 2;
+    }
+#endif
+    if (showKeys) {
+        config.port = 0;
+        config.discoverable = false;
+        config.upnp = false;
+        config.relay.clear();
+        config.log = {};
+    }
     ab::net::Server server;
     if (!server.start(config)) {
         logLine("ERROR " + server.error());
         return 1;
     }
+#ifdef AB_ONLINE
+    if (showKeys) {
+        // What the owner of the root key needs to make out a certificate (abconfig cert).
+        std::printf("identity key: %s\nsigning key:  %s\n", server.identityKeyHex().c_str(),
+                    haveSigningKey ? ab::online::toHex(ab::online::publicKeyOf(signingSeed)).c_str() : "(none)");
+        server.stop();
+        return haveSigningKey ? 0 : 1;
+    }
+    if (!config.certificate.empty()) {
+        // Is it this server's? (Whether it holds is for the players' games to judge: they have the root keys.)
+        ab::online::Json envelope, document;
+        std::string text;
+        const bool readable = ab::online::Json::parse(config.certificate, envelope) && ab::online::fromBase64(envelope["document"].str(), text) &&
+                              ab::online::Json::parse(text, document) && document["kind"].str() == "server-certificate";
+        if (!readable || document["identity_key"].str() != server.identityKeyHex() ||
+            !haveSigningKey || document["signing_key"].str() != ab::online::toHex(ab::online::publicKeyOf(signingSeed))) {
+            logLine("ERROR " + certificateFile + " is not a certificate for this server's keys (see --show-keys)");
+            return 2;
+        }
+        const long long left = (document["expires"].integer() - static_cast<long long>(std::time(nullptr))) / 86400;
+        logLine(std::string(left < 14 ? "WARN  " : "INFO  ") + "Certificate " + std::to_string(document["serial"].integer()) + " of \"" +
+                ab::net::cleanText(document["operator"]["name"].str(), 60) + "\": " + (left < 0 ? "EXPIRED" : std::to_string(left) + " days left"));
+    }
+#endif
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);
 

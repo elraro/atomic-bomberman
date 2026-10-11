@@ -1726,6 +1726,89 @@ void testBansAndLimits() {
     std::filesystem::remove(banFile);
 }
 
+// Player keys and the certificate: the network library only carries them (the signature code
+// belongs to the program around it), so a stand-in signature is used here: the SHA-256 of
+// key and message, twice over.
+std::array<std::uint8_t, 64> standInSign(const Key& key, const Bytes& message) {
+    Bytes all(key.begin(), key.end());
+    all.insert(all.end(), message.begin(), message.end());
+    const Key h = sha256(all);
+    std::array<std::uint8_t, 64> s{};
+    std::copy(h.begin(), h.end(), s.begin());
+    std::copy(h.begin(), h.end(), s.begin() + 32);
+    return s;
+}
+
+void testPlayerKeysAndCertificate() {
+    Harness h;
+    ServerConfig config;
+    config.port = 0;
+    config.discoverable = false;
+    config.certificate = "{\"this\":\"is passed on as it is\"}";
+    config.verifySignature = [](const Key& key, const Bytes& message, const std::array<std::uint8_t, 64>& signature) { return standInSign(key, message) == signature; };
+    config.log = [&h](const std::string& line) { h.log.push_back(line); };
+    CHECK(h.server.start(config));
+    auto withKey = [&](const std::string& name, std::uint8_t fill, bool honest = true) -> Client& {
+        for (int waited = 0; waited < 1000 && h.connecting(); waited += 5) h.turn();
+        h.clients.push_back(std::make_unique<Client>());
+        Client& c = *h.clients.back();
+        Key key{};
+        key.fill(fill);
+        c.setPlayerKey(key, [key, honest](const Bytes& message) {
+            std::array<std::uint8_t, 64> s = standInSign(key, message);
+            if (!honest) s[5] ^= 1;
+            return s;
+        });
+        c.connect("127.0.0.1:" + std::to_string(h.server.port()), name, "", h.now);
+        return c;
+    };
+    Client& ann = withKey("Ann", 0x11);
+    Client& bob = withKey("Bob", 0x22);
+    Client& cat = h.join("Cat");  // no key: just as welcome
+    CHECK(h.until([&] { return ann.lobby().clients.size() == 3 && cat.state() == Client::State::Lobby && bob.state() == Client::State::Lobby; }));
+    // Everybody sees who showed which key.
+    Key annKey{}, bobKey{};
+    annKey.fill(0x11);
+    bobKey.fill(0x22);
+    CHECK(cat.lobby().client(ann.id())->playerKey == annKey && cat.lobby().client(bob.id())->playerKey == bobKey && cat.lobby().client(cat.id())->playerKey == Key{});
+    // The certificate reaches every client as the server holds it, with the identity it proved.
+    CHECK(cat.certificate() == config.certificate && ann.certificate() == config.certificate);
+    CHECK(cat.serverIdentityKey() == h.server.identityKeyHex() && cat.serverIdentityKey().size() == 64);
+    // A key that is not proved (a signature that does not fit): not let in at all.
+    Client& eve = withKey("Eve", 0x11, false);
+    CHECK(h.until([&] { return eve.state() == Client::State::Failed; }));
+    CHECK(eve.error() == "The player key was not proved (bad signature)");
+    CHECK_EQ(h.server.players(), 3);
+    // A proof made for one connection is worth nothing on another: the message signed
+    // differs with every connection.
+    CHECK(playerProofMessage(Key{}) != playerProofMessage(annKey));
+
+    // A ban names the key too: with the address let in again, the key still keeps its owner out.
+    ann.sendBan(bob.id());
+    CHECK(h.until([&] { return bob.state() == Client::State::Failed; }));
+    CHECK_EQ(h.server.bans().size(), 2u);
+    CHECK(h.server.unban("127.0.0.1"));
+    Client& again = withKey("Bob again", 0x22);
+    CHECK(h.until([&] { return again.state() == Client::State::Failed; }));
+    CHECK(again.error() == "Banned");
+    Client& other = withKey("Somebody else", 0x33);
+    CHECK(h.until([&] { return other.state() == Client::State::Lobby; }));
+    CHECK(h.server.unban("key:" + toHex(bobKey)));
+    Client& back = withKey("Bob back", 0x22);
+    CHECK(h.until([&] { return back.state() == Client::State::Lobby; }));
+
+    // A server that is given no way to check signatures takes no notice of keys.
+    Harness plain;
+    CHECK(plain.start());
+    plain.clients.push_back(std::make_unique<Client>());
+    Client& dan = *plain.clients.back();
+    dan.setPlayerKey(annKey, [](const Bytes&) { return std::array<std::uint8_t, 64>{}; });
+    dan.connect("127.0.0.1:" + std::to_string(plain.server.port()), "Dan", "", plain.now);
+    CHECK(plain.until([&] { return dan.state() == Client::State::Lobby && !dan.lobby().clients.empty(); }));
+    CHECK(dan.lobby().clients.front().playerKey == Key{});
+    CHECK(dan.certificate().empty());
+}
+
 // A server keeps its identity from one start to the next, and a client notices when the
 // server at an address is not the one it knows.
 void testServerIdentity() {
@@ -1933,6 +2016,7 @@ int main() {
         {"encryption on the wire", testEncryptionOnTheWire},
         {"bans and limits", testBansAndLimits},
         {"server identity", testServerIdentity},
+        {"player keys and certificate", testPlayerKeysAndCertificate},
         {"relay", testRelay},
         {"ready", testReady},
         {"round over udp", [] { testRound(true); }},

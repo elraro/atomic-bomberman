@@ -48,7 +48,17 @@ public:
     void setKnownServersFile(const std::string& path) { knownFile_ = path; }
     void forgetServer(const std::string& address);
     bool identityChanged() const { return identityChanged_; }  // why the last connection failed
-    bool answered() const { return answered_; }  // a server did answer at the address (whatever it said)
+    bool answered() const { return answered_; }
+    // The player's lasting key and a way to sign with it (the network library has no
+    // signature code of its own). Shown to every server joined from now on.
+    void setPlayerKey(const Key& publicKey, std::function<std::array<std::uint8_t, 64>(const std::vector<std::uint8_t>&)> sign) {
+        playerKey_ = publicKey;
+        signWithPlayerKey_ = std::move(sign);
+    }
+    // What the server sent as its certificate (a signed document, unjudged; empty: none), and
+    // the identity key it proved in the key exchange (hex).
+    const std::string& certificate() const { return certificate_; }
+    const std::string& serverIdentityKey() const { return identityKeyHex_; }  // a server did answer at the address (whatever it said)
     // The identity key (hex) the server must show: set when somebody trustworthy has named it
     // (the master server, for a game found there). Any other server is refused, and the
     // memory of servers visited is not consulted. Cleared by an empty string.
@@ -183,6 +193,9 @@ private:
     std::string relayCode_;
     std::string knownFile_;
     std::string expectedIdentity_;
+    Key playerKey_{};
+    std::function<std::array<std::uint8_t, 64>(const std::vector<std::uint8_t>&)> signWithPlayerKey_;
+    std::string certificate_, identityKeyHex_;
     std::string identity_;
     bool identityKnown_ = false;
     bool identityChanged_ = false;

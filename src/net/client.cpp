@@ -75,6 +75,8 @@ void Client::connect(const std::string& address, const std::string& name, const 
     clock_ = nowMs;
     address_ = address;
     identity_.clear();
+    identityKeyHex_.clear();
+    certificate_.clear();
     identityKnown_ = false;
     identityChanged_ = false;
     name_ = name;
@@ -283,6 +285,11 @@ void Client::handleFrame(std::uint8_t type, const std::vector<std::uint8_t>& pay
             break;
         }
         case ServerMsg::Reject: fail(r.text(256)); break;
+        case ServerMsg::Certificate: {
+            const Bytes text = r.bytes(8192);
+            if (r.ok()) certificate_.assign(text.begin(), text.end());
+            break;
+        }
         case ServerMsg::Lobby: {
             LobbyState m;
             if (!decode(r, m)) break;
@@ -418,6 +425,7 @@ void Client::handlePacket(const Bytes& packet, std::uint64_t nowMs) {
     // machine is not asked.) Whoever answers must also own the identity it shows:
     // without that key it cannot arrive at the connection's keys.
     identity_ = fingerprint(identity);
+    identityKeyHex_ = toHex(identity);
     if (!expectedIdentity_.empty()) {
         Key expected{};
         if (!fromHex(expectedIdentity_, expected) || expected != identity) return fail("This is not the game server the master server named (another identity)");
@@ -446,6 +454,10 @@ void Client::handlePacket(const Bytes& packet, std::uint64_t nowMs) {
     hello.name = name_;
     // Not the password itself: a value that shows we know it, good for this connection only.
     if (!password_.empty()) hello.proof = passwordProof(password_, keys_.master);
+    if (signWithPlayerKey_) {
+        hello.playerKey = playerKey_;
+        hello.playerSignature = signWithPlayerKey_(playerProofMessage(keys_.master));
+    }
     send(ClientMsg::Hello, encoded(hello));
 }
 

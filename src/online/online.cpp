@@ -193,6 +193,16 @@ void Online::connect() {
     openSession();
 }
 
+void Online::loadConfig() {
+    if (!bootstrap_.valid()) return;
+    const long long now = clock_ ? clock_() : static_cast<long long>(std::time(nullptr));
+    if (haveConfig_ && now < config_.expires) return;
+    for (const Op& op : queue_)
+        if (!op.needsSession) return;  // on its way
+    haveConfig_ = false;
+    fetchConfig(0);
+}
+
 // The master has forgotten the session (it was restarted, or a day has passed): a new one next time.
 void Online::sessionLost() {
     token_.clear();

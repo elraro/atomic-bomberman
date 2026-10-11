@@ -41,6 +41,11 @@ bool readConfig(const std::string& envelope, const PublicKey& key, long long now
         error = "the configuration is not readable";
         return false;
     }
+    // A document signed for another purpose (a server certificate, say) is not a configuration.
+    if (doc.has("kind") && doc["kind"].str() != "configuration") {
+        error = "that document is not a configuration";
+        return false;
+    }
     OnlineConfig c;
     c.serial = doc["serial"].integer();
     c.issued = doc["issued"].integer();

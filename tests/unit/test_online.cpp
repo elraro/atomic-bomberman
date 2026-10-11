@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "fake_http.hpp"
+#include "online/certificate.hpp"
 #include "online/config.hpp"
 #include "online/http.hpp"
 #include "online/json.hpp"
@@ -213,6 +214,74 @@ void testConfigRules() {
     CHECK(!makeBootstrap("", toHex(key), b, why));
     CHECK(!makeBootstrap("a.example/config.json", toHex(key), b, why));
     CHECK(!makeBootstrap("https://a.example/config.json", "abcd", b, why));
+}
+
+// A server certificate counts only if a trusted root signed it, it is of that kind, within
+// its dates, not revoked, and made out to the identity the server has proved.
+void testCertificates() {
+    const Seed root = testSeed();
+    const PublicKey rootKey = publicKeyOf(root);
+    Seed otherRoot{};
+    otherRoot.fill(5);
+    const long long now = 1800000000;
+    const std::string identity(64, 'a');
+    Seed signing{};
+    signing.fill(11);
+    auto document = [&](long long serial, long long issued, long long expires, const std::string& kind = "server-certificate", const std::string& id = std::string(64, 'a')) {
+        return "{\"kind\":\"" + kind + "\",\"serial\":" + std::to_string(serial) + ",\"issued\":" + std::to_string(issued) + ",\"expires\":" + std::to_string(expires) +
+               ",\"operator\":{\"name\":\"Tuesday League\",\"contact\":\"admin@example.org\"},\"identity_key\":\"" + id + "\",\"signing_key\":\"" +
+               toHex(publicKeyOf(signing)) + "\"}";
+    };
+    ServerCertificate cert;
+    std::string why;
+    const std::string good = signDocument(root, document(77, now - 86400, now + 89 * 86400));
+    CHECK(readCertificate(good, {rootKey}, {5, 9}, now, identity, cert, why));
+    CHECK(cert.serial == 77 && cert.operatorName == "Tuesday League" && cert.contact == "admin@example.org" && cert.identityKey == identity && cert.signingKey == publicKeyOf(signing));
+    CHECK(readCertificate(good, {rootKey}, {}, now, std::string(64, 'A'), cert, why));  // hex in either case
+    auto refused = [&](const std::string& envelope, const std::vector<PublicKey>& roots, const std::vector<long long>& revoked, long long at, const std::string& proven, const std::string& reason) {
+        ServerCertificate none;
+        std::string said;
+        const bool ok = readCertificate(envelope, roots, revoked, at, proven, none, said);
+        CHECK(!ok);
+        if (said.find(reason) == std::string::npos) {
+            ++g_failures;
+            std::printf("  FAIL expected a reason with \"%s\", got \"%s\"\n", reason.c_str(), said.c_str());
+        }
+    };
+    refused(good, {rootKey}, {}, now + 89 * 86400, identity, "expired");
+    refused(good, {rootKey}, {12, 77}, now, identity, "revoked");
+    refused(good, {publicKeyOf(otherRoot)}, {}, now, identity, "not trusted");
+    refused(good, {}, {}, now, identity, "not trusted");                          // no roots: nothing can be verified
+    refused(good, {rootKey}, {}, now, std::string(64, 'b'), "another server");     // shown by a server that is not its owner
+    refused(signDocument(otherRoot, document(77, now - 1, now + 1)), {rootKey}, {}, now, identity, "not trusted");
+    refused(signDocument(root, document(77, now + 3 * 86400, now + 9 * 86400)), {rootKey}, {}, now, identity, "future");
+    refused(signDocument(root, document(77, now - 1, now + 1, "configuration")), {rootKey}, {}, now, identity, "not a server certificate");
+    refused(signDocument(root, "{\"kind\":\"server-certificate\",\"serial\":1}"), {rootKey}, {}, now, identity, "incomplete");
+    refused(signDocument(root, document(77, now - 1, now + 1, "server-certificate", "abc")), {rootKey}, {}, now, identity, "incomplete");
+    refused("{}", {rootKey}, {}, now, identity, "not a signed document");
+    // The other way round: a certificate is not taken for a configuration either.
+    OnlineConfig config;
+    CHECK(!readConfig(good, rootKey, now, 0, config, why));
+    CHECK_TEXT(why, "that document is not a configuration");
+
+    // A key file: made once, the same when read again; rubbish is not taken for a key.
+    const std::string file = "ab-online-test-key.txt";
+    std::remove(file.c_str());
+    Seed a{}, b{};
+    bool created = false;
+    CHECK(loadOrCreateSeed(file, a, &created) && created && a != Seed{});
+    CHECK(loadOrCreateSeed(file, b, &created) && !created && a == b);
+    {
+        FILE* f = std::fopen(file.c_str(), "w");
+        std::fputs("not a key\n", f);
+        std::fclose(f);
+    }
+    CHECK(!loadOrCreateSeed(file, b, &created));
+    std::remove(file.c_str());
+    Seed c{};
+    CHECK(loadOrCreateSeed(file, c) && c != a);  // a new one each time one is made
+    std::remove(file.c_str());
+    CHECK(!loadOrCreateSeed("no-such-folder/x/key.txt", c));
 }
 
 void testHttp() {
@@ -458,6 +527,7 @@ int main() {
         {"json", testJson},
         {"signatures and signed documents", testSignatures},
         {"configuration rules", testConfigRules},
+        {"server certificates and key files", testCertificates},
         {"http client", testHttp},
         {"master client", testMasterClient},
     };

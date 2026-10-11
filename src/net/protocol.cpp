@@ -159,6 +159,15 @@ void encode(ByteWriter& w, const HelloMsg& m) {
     w.u16(m.version);
     w.text(m.name);
     for (std::uint8_t b : m.proof) w.u8(b);
+    for (std::uint8_t b : m.playerKey) w.u8(b);
+    for (std::uint8_t b : m.playerSignature) w.u8(b);
+}
+
+std::vector<std::uint8_t> playerProofMessage(const Key& connectionMaster) {
+    static const char kWhat[] = "atomic bomberman player key v1";
+    std::vector<std::uint8_t> message(kWhat, kWhat + sizeof kWhat - 1);
+    message.insert(message.end(), connectionMaster.begin(), connectionMaster.end());
+    return message;
 }
 
 bool decode(ByteReader& r, HelloMsg& m) {
@@ -166,6 +175,8 @@ bool decode(ByteReader& r, HelloMsg& m) {
     m.version = r.u16();
     m.name = r.text(64);
     for (std::uint8_t& b : m.proof) b = r.u8();
+    for (std::uint8_t& b : m.playerKey) b = r.u8();
+    for (std::uint8_t& b : m.playerSignature) b = r.u8();
     return r.ok();
 }
 
@@ -246,6 +257,7 @@ void encode(ByteWriter& w, const LobbyState& m) {
         w.u8(static_cast<std::uint8_t>(c.players));
         w.u16(static_cast<std::uint16_t>(std::clamp(c.pingMs, 0, 65535)));
         w.flag(c.ready);
+        for (std::uint8_t b : c.playerKey) w.u8(b);
     }
 }
 
@@ -288,6 +300,7 @@ bool decode(ByteReader& r, LobbyState& m) {
         c.players = r.u8();
         c.pingMs = r.u16();
         c.ready = r.flag();
+        for (std::uint8_t& b : c.playerKey) b = r.u8();
         if (c.seat < -1 || c.seat >= kMaxPlayers) return false;
         m.clients.push_back(std::move(c));
     }

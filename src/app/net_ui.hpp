@@ -20,6 +20,7 @@
 #ifdef AB_ONLINE
 #include "online/announcer.hpp"
 #include "online/bootstrap.hpp"
+#include "online/certificate.hpp"
 #endif
 #include "rendering/renderer.hpp"
 #include "rendering/sprites.hpp"
@@ -76,6 +77,11 @@ public:
     int hostPort() const { return hosting_ ? server_.port() : 0; }
     std::string hostIdentityKey() const { return hosting_ ? server_.identityKeyHex() : std::string(); }
     const std::string& onlineNote() const { return onlineNote_; }  // a hosted game's standing with the master server
+    // The server in use showed a certificate that holds: who answers for it. Empty otherwise;
+    // certificateProblem() then says why a certificate shown was not accepted (empty: none shown).
+    const std::string& verifiedOperator() const { return verifiedOperator_; }
+    const std::string& certificateProblem() const { return certificateProblem_; }
+    std::string playerKeyHex() const;  // this player's lasting key, as others see it
 
     // The SDL keycode a gamepad's key is passed to key() as. (Start has a key of its own,
     // the "menu" key of a keyboard.)
@@ -101,6 +107,7 @@ private:
     void openCode(bool pad);
     void askJoin(const std::string& lobbyId, const std::string& code);
     void updateOnline(std::uint64_t nowMs);
+    void judgeCertificate();
     void showError(const std::string& why);
     void drawBrowse(Renderer& r, SpriteBank& bank, int frame);
     void drawCode(Renderer& r, SpriteBank& bank, int frame);
@@ -175,7 +182,12 @@ private:
     std::string expectIdentity_;          // the identity that server must show
     bool hostOnline_ = false;             // the hosted game is announced to the master
     std::string onlineNote_;
+    std::string verifiedOperator_, certificateProblem_;
+    std::string judgedCertificate_;       // the certificate those two were worked out for...
+    long long judgedSerial_ = -1;         // ...and the configuration it was judged by
 #ifdef AB_ONLINE
+    online::Seed playerSeed_{};
+    bool havePlayerKey_ = false;
     online::Online online_;
     online::HostAnnouncer announcer_;
 #endif

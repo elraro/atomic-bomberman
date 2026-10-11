@@ -69,6 +69,7 @@ struct Server::Peer {
     std::uint32_t inputStep = 0;   // the step that input was meant for
     std::map<std::uint32_t, std::array<std::uint8_t, kMaxLocalPlayers>> inputs;  // for steps not yet run
     bool wantsContinue = false;
+    Key playerKey{};               // the player key proved when joining; zeros: none
     bool ready = false;            // said so in the lobby; asked again after every match
 };
 
@@ -299,6 +300,8 @@ bool Server::unban(const std::string& address) {
 void Server::remove(Peer& p, bool ban, const std::string& by) {
     const std::string host = p.host;
     block(host, ban ? kForever : now_ + kKickBlockMs);
+    // A ban also names the player's key, if they showed one: a new address does not bring them back under it.
+    if (ban && p.playerKey != Key{}) block("key:" + toHex(p.playerKey), kForever);
     if (ban) saveBans();
     log(std::string("INFO  ") + (ban ? "Banned" : "Kicked") + " name=\"" + p.name + "\" address=" + host + " by " + by);
     say(p.name + (ban ? " was banned by " : " was removed by ") + by);
@@ -414,6 +417,7 @@ void Server::refreshLobby() {
             info.players = p->wanted;
             info.pingMs = p->pingMs;
             info.ready = p->ready;
+            info.playerKey = p->playerKey;
             lobby_.clients.push_back(info);
         }
 }
@@ -489,6 +493,19 @@ void Server::handleHello(Peer& p, const std::vector<std::uint8_t>& payload) {
             passwordFailed(p);
             return;
         }
+    }
+    // A player key: its owner must be at the other end of this very connection, and must not be banned.
+    if (hello.playerKey != Key{} && config_.verifySignature) {
+        if (!config_.verifySignature(hello.playerKey, playerProofMessage(p.keys.master), hello.playerSignature)) {
+            reject(p, "The player key was not proved (bad signature)");
+            log("WARN  Refused (player key not proved) from " + p.address.text());
+            return;
+        }
+        if (blocked("key:" + toHex(hello.playerKey))) {
+            reject(p, "Banned");
+            return;
+        }
+        p.playerKey = hello.playerKey;
     }
     // A free id and a name nobody else has.
     for (int id = 0; id < 255; ++id)
@@ -623,6 +640,7 @@ void Server::handleFrame(Peer& p, std::uint8_t type, const std::vector<std::uint
             Peer* target = r.ok() ? peerById(id) : nullptr;
             if (&p != admin() || target == nullptr || target == &p) break;
             tell(p, target->name + "'s address is " + target->host + " (to lift the ban: /unban " + target->host + ")");
+            if (target->playerKey != Key{}) tell(p, "Their player key is banned too (/unban key:" + toHex(target->playerKey) + ")");
             remove(*target, true, "the administrator");
             break;
         }
@@ -797,6 +815,12 @@ void Server::handleKey(Peer* viaTcp, const Address& from, const std::vector<std:
     p->link.start(p->keys.udpToClient, p->keys.udpToServer, p->token, now_);
     p->keyed = true;
     answer(p->keyAnswer);
+    // Who answers for this server, for the client to check against the keys it trusts.
+    if (!config_.certificate.empty()) {
+        ByteWriter cert;
+        cert.bytes(Bytes(config_.certificate.begin(), config_.certificate.end()));
+        send(*p, ServerMsg::Certificate, cert.data());
+    }
 }
 
 void Server::handleDatagram(const Address& from, const std::vector<std::uint8_t>& data, bool viaDiscovery) {

@@ -1,6 +1,6 @@
 # Online play over the internet (target design)
 
-Status: **phases 1 to 4 are implemented** (1: the screens worked with a gamepad, the on-screen keyboard, the ready state; 2: the link; 3: snapshots, all three described in `networking.md`; 4: the master server, the signed configuration, games found by list or by code: `master/README.md`, `../operations/online.md`). The rest of this document is not implemented yet. Where what was built differs from what this document first said, the difference is noted in place. It describes where the network mode is going. What the game does today is in `networking.md` (snapshots over the link, to an address, a TCP relay), which stays valid until the phases below replace its parts.
+Status: **phases 1 to 4 and 6 are implemented** (1: the screens worked with a gamepad, the on-screen keyboard, the ready state; 2: the link; 3: snapshots, all three described in `networking.md`; 4: the master server, the signed configuration, games found by list or by code: `master/README.md`, `../operations/online.md`; 6: server certificates and player keys, section 7 below). Phase 5 (reaching players behind routers) and phases 7 and 8 are not implemented yet. Where what was built differs from what this document first said, the difference is noted in place. It describes where the network mode is going. What the game does today is in `networking.md` (snapshots over the link, to an address, a TCP relay), which stays valid until the phases below replace its parts.
 
 Like `networking.md`, this is the project's own design. Nothing here is a claim about the original game, whose IPX/serial network mode is not reproduced.
 
@@ -282,6 +282,18 @@ issuer: the root key that signed it
 - A community may use a root of its own: the bootstrap option of section 2 already allows another configuration and key.
 - A certificate says who answers for a server. It does not say the server is honest; the record does the checking.
 
+As built (protocol version 9):
+
+- The document carries `"kind": "server-certificate"`, and a configuration `"kind": "configuration"`: one is never taken for the other, even when the same key signed both.
+- `abconfig cert` issues one (90 days unless told otherwise, 366 at most). The operator gets the two keys to name from `atomic_server --show-keys`; the server is given the certificate with `--certificate FILE` and refuses to start with one made out to other keys. A game hosted from the menu has none.
+- The network library only carries the certificate (it has no signature code); the game judges it with the root keys and the revoked serials of the configuration, which it fetches for this purpose whichever way the server was found. The lobby shows "verified server of NAME", or why a certificate shown was not accepted. Without a configuration nothing can be verified, and the server is an ordinary one.
+
+### Player keys (as built)
+
+- A player's game makes an Ed25519 key on first use (`player.key` beside the settings).
+- When joining, it sends the public half and a signature over a message bound to that very connection (a fixed label and the connection's master value), so the proof is good nowhere else. A server that can check signatures refuses a key that is not proved; one that cannot takes no notice of keys.
+- The lobby state names each client's key. A ban names the key as well as the address (`key:...` in the ban list), so a new address does not bring a banned player back under the same key. (A new key does: a key is free to make. What a key is good for is being *listed*, in a tournament.)
+
 ### Signed match records
 
 Every match on a server that has a signing key leaves a record that the server signs and hands to every player at the end (and that organisers publish):
@@ -361,7 +373,7 @@ Each phase is usable on its own and ends with tests.
 | 3 | Snapshot model replacing lockstep, with measurements of size and behaviour under loss. **Done** (sizes in `networking.md`; no buffer of two steps yet, see there). | 2 |
 | 4 | Master server (guest sessions, lobbies, status), signed configuration, browse / create / join by code in the game. **Done**; a player reaches a host at the address the master saw, so the host must be reachable until phase 5. | 1 |
 | 5 | pjnath + coturn: discovery, hole punching, TURN over UDP, TCP and TLS, the ladder, volume check, always-relay setting, connection display; the old relay removed | 2, 4 |
-| 6 | Server certificates and player keys: the tool that issues certificates, the certificate in the handshake, "verified" in the lobby, revocation through the configuration | 2 (revocation: 4) |
+| 6 | Server certificates and player keys: the tool that issues certificates, the certificate in the handshake, "verified" in the lobby, revocation through the configuration. **Done.** | 2 (revocation: 4) |
 | 7 | Signed match records: seed by commit and reveal, signed input statements, the record, `atomic_verify`, a tool that sums statistics from records | 3, 6 |
 | 8 | Tournaments as signed files: the format, the organiser's tool, the screen, servers admitting only listed players | 6, 7 |
 | - | Accounts on the master: optional, undecided | 4 |

@@ -31,6 +31,9 @@ abconfig sign -key NAME.key -in DOC.json -out SIGNED.json [-stamp] [-days 7] [-s
 abconfig verify -pub HEX -in SIGNED.json     check a signed document and print it
 abconfig pin -cert CERT.pem                  the pin of a TLS certificate's key, for "master.tls_pins"
 abconfig example                             an example configuration document
+abconfig cert -key ROOT.key -identity HEX -signing HEX -operator NAME [-contact TEXT] [-days 90] [-serial N] -out FILE
+                                             a certificate for a game server: who answers for it, and its two keys
+                                             (the server prints them: atomic_server --show-keys)
 abconfig selfsigned -host NAME -out NAME     a TLS certificate signed by itself (NAME.crt, NAME.tls.key), for a master
                                              server without a certificate from an authority: the game goes by the pin
 `
@@ -67,6 +70,10 @@ func main() {
 	days := fs.Int("days", 7, "with -stamp: days until the document expires (7 at most)")
 	serial := fs.Int64("serial", 0, "with -stamp: the serial (default: the present time)")
 	host := fs.String("host", "", "with selfsigned: the name or address the master server is reached by")
+	identity := fs.String("identity", "", "with cert: the server's identity key (hex)")
+	signing := fs.String("signing", "", "with cert: the server's signing key (hex)")
+	operator := fs.String("operator", "", "with cert: who runs the server")
+	contact := fs.String("contact", "", "with cert: how to reach them")
 	_ = fs.Parse(os.Args[2:])
 
 	switch os.Args[1] {
@@ -158,6 +165,46 @@ func main() {
 		fmt.Println(hex.EncodeToString(sum[:]))
 	case "example":
 		fmt.Print(exampleConfig)
+	case "cert":
+		if *keyFile == "" || *out == "" || *operator == "" {
+			die("cert needs -key, -identity, -signing, -operator and -out")
+		}
+		for name, value := range map[string]string{"-identity": *identity, "-signing": *signing} {
+			if raw, err := hex.DecodeString(value); err != nil || len(raw) != 32 {
+				die("%s must be a key of 64 hexadecimal digits", name)
+			}
+		}
+		lifetime := *days
+		if !flagGiven(fs, "days") {
+			lifetime = 90
+		}
+		if lifetime < 1 || lifetime > 366 {
+			die("a certificate is issued for 366 days at most")
+		}
+		now := time.Now().UTC().Truncate(time.Second)
+		if *serial == 0 {
+			*serial = now.Unix()
+		}
+		document, err := json.MarshalIndent(map[string]any{
+			"kind":         "server-certificate",
+			"serial":       *serial,
+			"issued":       now.Unix(),
+			"expires":      now.Add(time.Duration(lifetime) * 24 * time.Hour).Unix(),
+			"operator":     map[string]string{"name": *operator, "contact": *contact},
+			"identity_key": strings.ToLower(*identity),
+			"signing_key":  strings.ToLower(*signing),
+		}, "", "  ")
+		if err != nil {
+			die("%v", err)
+		}
+		envelope, err := signed.Sign(readKey(*keyFile), document)
+		if err != nil {
+			die("%v", err)
+		}
+		if err := os.WriteFile(*out, append(envelope, '\n'), 0o644); err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("certificate %d for %q, good for %d days: %s\n", *serial, *operator, lifetime, *out)
 	case "selfsigned":
 		if *host == "" || *out == "" {
 			die("selfsigned needs -host and -out")
@@ -177,6 +224,12 @@ func main() {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
+}
+
+func flagGiven(fs *flag.FlagSet, name string) bool {
+	given := false
+	fs.Visit(func(f *flag.Flag) { given = given || f.Name == name })
+	return given
 }
 
 // selfSigned makes an ECDSA P-256 key and a certificate for it, valid for ten years.
@@ -215,6 +268,7 @@ func selfSigned(host string) (certPEM, keyPEM []byte, err error) {
 }
 
 const exampleConfig = `{
+  "kind": "configuration",
   "master": {
     "url": "https://master.example.org:8443",
     "tls_pins": ["<output of: abconfig pin -cert fullchain.pem>"]
