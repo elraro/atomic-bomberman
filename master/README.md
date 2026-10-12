@@ -25,6 +25,8 @@ Every flag can also be given by environment variable (`MASTER_LISTEN`, `MASTER_T
 - Without a certificate it speaks plain HTTP: only for a TLS-terminating proxy in front of it on the same machine (then also `-trust-proxy`, so that limits go by the players' addresses and not the proxy's), or for trying things out.
 - The tables are made on first start. Nothing in them is personal data: a display name, a game version, addresses of game servers that asked to be found. All of it expires (lobbies after 30 s of silence, sessions after a day).
 
+A container image: `docker build -t atomic-bomberman-master .` here (`Dockerfile`); with the database and the relay in `../deploy/docker-compose.yml`.
+
 How to set up the whole of online play (keys, the configuration document, coturn, this server): `../docs/operations/online.md`.
 
 ## API

@@ -852,3 +852,13 @@ The entry before this one named the wrong cause, with a confidence it had not ea
 - Cause (MEDIUM: fits what was seen, not reproduced here): the test asked for order. Off Linux its relay sits at the players' own address (only Linux gives the machine a second loopback address by default), so the relay lets the players' own packets through and ICE can move from the relayed way to a direct one while the packets are under way; those sent directly overtake the ones still in the stream. Datagrams promise no order, and the game's link does not rely on one.
 - Fix: the test knows each packet by its first byte and checks size and content, in any order, and counts duplicates and strangers.
 - The change of the entry before (waiting on both sockets, the larger buffer) stays: it takes a delay of a millisecond or more off every packet a player sends through the bridge. It was not the cure for this failure, and nothing shows that the bridge ever lost a packet.
+
+## 2026-10-12
+
+### Modern: container images and a compose file for the online service
+
+Not a discovery about the original; a record of what was added for whoever runs the service.
+
+- Added: `master/Dockerfile` (the master and `abconfig`), `deploy/gameserver/Dockerfile` (`atomic_server`, `atomic_verify`, `net_bot`; no SDL, no original files), `deploy/docker-compose.yml` (master, PostgreSQL, coturn's own image unchanged; optionally a game server and a daily signer), `deploy/setup.sh` and `sign.sh` (keys, certificate, configuration, the relay's settings; signing). Described in `deploy/README.md`.
+- Choices: the master, the relay and the game server use the machine's network directly, because the relay hands out a range of thousands of UDP ports and the master has to see the players' real addresses; the root key is left on the machine by the script so that things work at once, and the README says how to take it away and what the daily signer costs in safety.
+- Validation: the scripts were run here against a stand-in for `docker` (this machine has none). The images and the compose file themselves are tried only in CI (job `docker`): built, started, and a test client in a container plays a match straight, through the relay, and through it over TCP and TLS. Nothing was run on a public machine.

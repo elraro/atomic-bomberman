@@ -24,3 +24,7 @@ __pycache__/
 # Master server: built programs, keys made while trying things out.
 /master/bin/
 *.key
+
+# The online service (deploy/): its settings, keys and data.
+/deploy/.env
+/deploy/data/

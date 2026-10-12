@@ -1,0 +1,124 @@
+# The online service of Atomic Bomberman on one machine: the master server, its
+# database, and the relay (coturn). Optional: a dedicated game server, and a service
+# that signs the configuration anew every day.
+#
+#   ./setup.sh DOMAIN PUBLIC_IP        keys, certificate, signed configuration, .env
+#   docker compose up -d
+#
+# See README.md here, and ../docs/operations/online.md for what each part is.
+#
+# The master, the relay and the game server use the machine's own network (Linux): the
+# relay hands out thousands of UDP ports, and the master has to see the addresses players
+# and game servers really come from.
+name: atomic-online
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: master
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: master
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "master"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  master:
+    build: ../master
+    image: atomic-bomberman-master
+    restart: unless-stopped
+    network_mode: host
+    user: "${HOST_UID}:${HOST_GID}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MASTER_LISTEN: ":${MASTER_PORT:-8443}"
+      MASTER_TLS_CERT: /data/master.crt
+      MASTER_TLS_KEY: /data/master.tls.key
+      MASTER_CONFIG_FILE: /data/config.signed.json
+      MASTER_DATABASE_URL: postgres://master:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT:-5432}/master
+      MASTER_TURN_SECRET: ${TURN_SECRET}
+      MASTER_TURN_URLS: "turn:${DOMAIN}:${TURN_PORT:-3478}?transport=udp,turn:${DOMAIN}:${TURN_PORT:-3478}?transport=tcp,turns:${DOMAIN}:${TURN_TLS_PORT:-443}?transport=tcp"
+    volumes:
+      - ./data/master:/data:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "--no-check-certificate", "https://127.0.0.1:${MASTER_PORT:-8443}/v1/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  coturn:
+    image: coturn/coturn:4.7
+    restart: unless-stopped
+    network_mode: host
+    user: "${HOST_UID}:${HOST_GID}"
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    volumes:
+      - ./data/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ./data/master:/tls:ro
+    tmpfs:
+      - /tmp
+
+  # A dedicated game server announced on this master.
+  gameserver:
+    profiles: [gameserver]
+    build:
+      context: ..
+      dockerfile: deploy/gameserver/Dockerfile
+    image: atomic-bomberman-server
+    restart: unless-stopped
+    network_mode: host
+    init: true
+    user: "${HOST_UID}:${HOST_GID}"
+    depends_on:
+      master:
+        condition: service_healthy
+    command: >-
+      --port ${GAME_PORT:-27410} --name "${GAME_NAME:-Atomic Bomberman}" --online ${GAME_ONLINE:-listed}
+      --online-config https://${DOMAIN}:${MASTER_PORT:-8443}/config.json --online-key ${ONLINE_KEY}
+      ${GAME_OPTIONS:-}
+    volumes:
+      - ./data/gameserver:/data
+
+  # Signs the configuration anew once a day, so that it never runs out (it is good for
+  # seven days). This keeps the root key on this machine: see README.md before using it.
+  autosign:
+    profiles: [autosign]
+    image: atomic-bomberman-master
+    restart: unless-stopped
+    network_mode: none
+    init: true
+    user: "${HOST_UID}:${HOST_GID}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while :; do
+          abconfig sign -key /data/root/root.key -in /data/config.json -out /data/master/config.signed.json.new -stamp \
+            && mv /data/master/config.signed.json.new /data/master/config.signed.json
+          sleep 86400
+        done
+    volumes:
+      - ./data:/data
+
+  # The key tool, for ./setup.sh and ./sign.sh and by hand:
+  #   docker compose run --rm abconfig verify -pub KEY -in master/config.signed.json
+  abconfig:
+    profiles: [tools]
+    image: atomic-bomberman-master
+    network_mode: none
+    user: "${HOST_UID}:${HOST_GID}"
+    entrypoint: ["abconfig"]
+    working_dir: /data
+    volumes:
+      - ./data:/data
+
+volumes:
+  postgres:

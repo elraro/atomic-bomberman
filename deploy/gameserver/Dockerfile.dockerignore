@@ -1,0 +1,6 @@
+# The game server's image is built from the repository's root; only this much goes in.
+*
+!CMakeLists.txt
+!src
+!tools
+!tests

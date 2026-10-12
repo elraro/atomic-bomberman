@@ -71,6 +71,56 @@ jobs:
           grep -q "online: all passed" online.log
           ! grep -q "^skip the relay" online.log
 
+  # The images of the online service (deploy/): built, started with docker compose, and
+  # played through: a test client in a container finds the game server in the master's
+  # list and plays a match, straight, through the relay, and through it over TCP and TLS.
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Keys, certificate, signed configuration
+        working-directory: deploy
+        run: |
+          IP=$(hostname -I | awk '{print $1}')
+          ./setup.sh "$IP" "$IP"
+          sed -i 's/^GAME_NAME=.*/GAME_NAME=Container game/; s/^GAME_OPTIONS=.*/GAME_OPTIONS=--wins 1/' .env
+      - name: Build the images and start the services
+        working-directory: deploy
+        run: |
+          docker compose --profile gameserver up -d --build --wait || {
+            docker compose --profile gameserver ps -a
+            docker compose --profile gameserver logs --tail 40
+            docker compose --profile gameserver logs --tail 5 | sed 's/^/::error::/'
+            exit 1
+          }
+      - name: Play a match each way
+        working-directory: deploy
+        run: |
+          IP=$(sed -n 's/^DOMAIN=//p' .env)
+          KEY=$(sed -n 's/^ONLINE_KEY=//p' .env)
+          failed() { echo "::error::$*"; docker compose --profile gameserver logs --tail 60; exit 1; }
+          curl -fsk "https://$IP:8443/v1/status" || failed "the master does not answer"
+          docker compose run --rm -T abconfig verify -pub "$KEY" -in master/config.signed.json >/dev/null || failed "the signed configuration does not verify"
+          for _ in $(seq 60); do docker compose logs gameserver 2>&1 | grep -q "Online: listed, code" && break; sleep 1; done
+          docker compose logs gameserver 2>&1 | grep -q "Online: listed, code" || failed "the game server was not announced"
+          bot() {
+            local log=$1; shift
+            timeout 200 docker compose --profile gameserver run --rm -T --no-deps --entrypoint net_bot gameserver \
+              "listed:Container game" "$@" --start-after 2000 --matches 1 \
+              --online-config "https://$IP:8443/config.json" --online-key "$KEY" >"$log" 2>&1 || { tail -n 30 "$log"; failed "$log: no match played ($(grep 'ice:' "$log" | tail -n 1))"; }
+            grep -q "done: matches=1" "$log" || { tail -n 30 "$log"; failed "$log: the match was not played to its end"; }
+            echo "ok   $log: $(grep 'ice: a way' "$log" | head -n 1)"
+          }
+          bot straight.log Ann
+          bot relay.log Rex --hide-address
+          grep -q "ice: a way to the host (Relay)" relay.log || failed "the hidden player should have come through the relay: $(grep 'ice:' relay.log | head -n 1)"
+          bot tcp.log Tess --relay-tcp
+          bot tls.log Tina --relay-tls
+          for way in tcp tls; do
+            grep -q "ice: a way to the host (Relay (TCP))" $way.log || failed "over $way the way should be the relayed one: $(grep 'ice:' $way.log | head -n 1)"
+          done
+          docker compose logs coturn 2>&1 | grep -qi "allocate" || failed "the relay made no allocation"
+
   linux:
     name: linux (${{ matrix.arch }})
     strategy:

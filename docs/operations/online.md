@@ -2,6 +2,8 @@
 
 What the owner of an online service for the game has to set up, and what a group that wants its own has to do. The design is in [`../specifications/online-play.md`](../specifications/online-play.md); the master server's own notes are in [`../../master/README.md`](../../master/README.md).
 
+**The short way:** [`../../deploy/`](../../deploy/README.md) holds container images and a `docker-compose.yml` for the master, PostgreSQL and coturn (and optionally a game server), with a script that does sections 1 to 3 and the relay's settings of section 6. The sections below say what those steps are, for doing them by hand or differently.
+
 State of things: this covers what exists (the master server, the signed configuration, games found by list or by code, server certificates, player keys, match records, tournaments).
 
 ## The parts
