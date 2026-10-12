@@ -84,6 +84,8 @@ jobs:
           IP=$(hostname -I | awk '{print $1}')
           ./setup.sh "$IP" "$IP"
           sed -i 's/^GAME_NAME=.*/GAME_NAME=Container game/; s/^GAME_OPTIONS=.*/GAME_OPTIONS=--wins 1/' .env
+          # So that the relay's log names each allocation (checked at the end).
+          echo verbose >> data/coturn/turnserver.conf
       - name: Build the images and start the services
         working-directory: deploy
         run: |
@@ -119,7 +121,7 @@ jobs:
           for way in tcp tls; do
             grep -q "ice: a way to the host (Relay (TCP))" $way.log || failed "over $way the way should be the relayed one: $(grep 'ice:' $way.log | head -n 1)"
           done
-          docker compose logs coturn 2>&1 | grep -qi "allocate" || failed "the relay made no allocation"
+          docker compose logs coturn 2>&1 | grep -qi "allocate" || failed "the relay's log names no allocation ($(docker compose logs coturn 2>&1 | wc -l) lines; last: $(docker compose logs coturn 2>&1 | tail -n 1 | cut -c1-200))"
 
   linux:
     name: linux (${{ matrix.arch }})
