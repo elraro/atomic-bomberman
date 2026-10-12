@@ -843,3 +843,12 @@ A fault of the modern code, found by CI.
 - Cause (HIGH; not reproduced on this machine): the bridge slept until the stream had something to read, for a millisecond at a time, and only then looked at its UDP socket. Where a millisecond's sleep is really fifteen, a burst larger than the socket's buffer was partly lost before it was read. The test's own relay has the same habit.
 - Fix: the bridge waits for either socket (poll, or select on Windows) and wakes at once for both directions, which also takes up to a millisecond or more of delay off every packet a player sends; its UDP socket has a buffer of 1 MB. The test sends its 200 packets five at a time, since datagrams sent faster than they are read are lost by design, and says how many arrived if it fails.
 - Validation: the unit tests and the end-to-end test against coturn pass here; whether the Windows ARM64 runner is content is seen in CI.
+
+### Correction: why the bridge test failed on Windows ARM64
+
+The entry before this one named the wrong cause, with a confidence it had not earned.
+
+- Seen: after that change the same check failed again on the same runner. It did not print how many packets had arrived, which it does only when some are missing: so all 200 arrived, and the check failed on its other condition, that they come in the order sent.
+- Cause (MEDIUM: fits what was seen, not reproduced here): the test asked for order. Off Linux its relay sits at the players' own address (only Linux gives the machine a second loopback address by default), so the relay lets the players' own packets through and ICE can move from the relayed way to a direct one while the packets are under way; those sent directly overtake the ones still in the stream. Datagrams promise no order, and the game's link does not rely on one.
+- Fix: the test knows each packet by its first byte and checks size and content, in any order, and counts duplicates and strangers.
+- The change of the entry before (waiting on both sockets, the larger buffer) stays: it takes a delay of a millisecond or more off every packet a player sends through the bridge. It was not the cure for this failure, and nothing shows that the bridge ever lost a packet.

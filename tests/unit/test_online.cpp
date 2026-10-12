@@ -630,16 +630,28 @@ void testTurnStream() {
                 b.send(std::vector<std::uint8_t>(900, static_cast<std::uint8_t>(i + 100)));
                 if (i % 5 == 4) std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
-            int gotA = 0, gotB = 0;
-            bool intact = true;
+            // Each packet is known by its first byte, in whatever order they come: off Linux
+            // the relay has the players' own address, a direct way can form while the packets
+            // are under way, and those sent over it overtake the ones still in the stream.
+            std::vector<bool> seenA(100, false), seenB(100, false);
+            int gotA = 0, gotB = 0, wrong = 0;
             wait([&] {
                 std::vector<std::uint8_t> p;
-                while (b.receive(p)) intact = intact && p.size() == static_cast<std::size_t>(601 + gotB % 4) && p[0] == static_cast<std::uint8_t>(gotB) && p.back() == p[0], ++gotB;
-                while (a.receive(p)) intact = intact && p.size() == 900 && p[0] == static_cast<std::uint8_t>(gotA + 100), ++gotA;
+                while (b.receive(p)) {
+                    const std::size_t n = p.empty() ? 100 : p[0];
+                    if (n >= 100 || seenB[n] || p.size() != 601 + n % 4 || p.back() != p[0]) ++wrong;
+                    else seenB[n] = true, ++gotB;
+                }
+                while (a.receive(p)) {
+                    const std::size_t n = p.empty() || p[0] < 100 ? 100 : p[0] - 100u;
+                    if (n >= 100 || seenA[n] || p.size() != 900 || p.back() != p[0]) ++wrong;
+                    else seenA[n] = true, ++gotA;
+                }
                 return gotA == 100 && gotB == 100;
             }, 10000);
-            CHECK(intact && gotA == 100 && gotB == 100);
-            if (gotA != 100 || gotB != 100) std::printf("  FAIL (details) %d of 100 came back to the player on the stream, %d of 100 reached the other\n", gotA, gotB);
+            CHECK(wrong == 0 && gotA == 100 && gotB == 100);
+            if (wrong != 0 || gotA != 100 || gotB != 100)
+                std::printf("  FAIL (details) %d of 100 came back to the player on the stream, %d of 100 reached the other, %d were not as sent\n", gotA, gotB, wrong);
 #ifdef __linux__
             CHECK_TEXT(a.kind(), "Relay (TCP)");
             CHECK(overTcp.channelData() >= 100);
