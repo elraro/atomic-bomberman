@@ -70,6 +70,6 @@ Its commands on standard input (`status`, `kick`...) are not reachable in a cont
 
 ## What is checked, and what is not
 
-The CI job `docker` builds both images, starts all of this on one machine and has a test client in a container play a match on the game server four ways: straight, through the relay, and through the relay over TCP and over TLS.
+The CI job `docker` builds both images, starts all of this on one machine and has test clients in containers of their own find the game server in the master's list and play a match on it through the relay: over UDP, over TCP and over TLS. (The way straight between two ends is not tried there: everything is on one machine.)
 
 Not tried: on a real public machine, behind a cloud's address mapping (`PRIVATE_IP`), with Docker on anything but Linux, with a rootless Docker, or `autosign` over more than a moment.

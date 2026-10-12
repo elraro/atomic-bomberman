@@ -72,8 +72,8 @@ jobs:
           ! grep -q "^skip the relay" online.log
 
   # The images of the online service (deploy/): built, started with docker compose, and
-  # played through: a test client in a container finds the game server in the master's
-  # list and plays a match, straight, through the relay, and through it over TCP and TLS.
+  # played through: test clients in containers find the game server in the master's list
+  # and play a match each through the relay: over UDP, over TCP and over TLS.
   docker:
     runs-on: ubuntu-24.04
     steps:
@@ -83,7 +83,7 @@ jobs:
         run: |
           IP=$(hostname -I | awk '{print $1}')
           ./setup.sh "$IP" "$IP"
-          sed -i 's/^GAME_NAME=.*/GAME_NAME=Container game/; s/^GAME_OPTIONS=.*/GAME_OPTIONS=--wins 1/' .env
+          sed -i 's/^GAME_NAME=.*/GAME_NAME=Container game/; s/^GAME_OPTIONS=.*/GAME_OPTIONS=--wins 1 --hide-address/' .env
           # So that the relay's log names each allocation (checked at the end).
           echo verbose >> data/coturn/turnserver.conf
       - name: Build the images and start the services
@@ -105,17 +105,25 @@ jobs:
           docker compose run --rm -T abconfig verify -pub "$KEY" -in master/config.signed.json >/dev/null || failed "the signed configuration does not verify"
           for _ in $(seq 60); do docker compose logs gameserver 2>&1 | grep -q "Online: listed, code" && break; sleep 1; done
           docker compose logs gameserver 2>&1 | grep -q "Online: listed, code" || failed "the game server was not announced"
+          # The players are in containers of their own, on Docker's bridge network: the relay
+          # then sees them come from another address than its own, as it would players
+          # elsewhere. (From the relay's own address a player's packets are let through to
+          # another's relayed address, and a way around the relay forms: seen here as
+          # "Direct" for a player who had asked for TCP.) The game server hides its address,
+          # so every way to it is a relayed one.
           bot() {
             local log=$1; shift
-            timeout 200 docker compose --profile gameserver run --rm -T --no-deps --entrypoint net_bot gameserver \
+            timeout 200 docker run --rm --network bridge -e XDG_DATA_HOME=/tmp --entrypoint net_bot atomic-bomberman-server \
               "listed:Container game" "$@" --start-after 2000 --matches 1 \
               --online-config "https://$IP:8443/config.json" --online-key "$KEY" >"$log" 2>&1 || { tail -n 30 "$log"; failed "$log: no match played ($(grep 'ice:' "$log" | tail -n 1))"; }
             grep -q "done: matches=1" "$log" || { tail -n 30 "$log"; failed "$log: the match was not played to its end"; }
             echo "ok   $log: $(grep 'ice: a way' "$log" | head -n 1)"
           }
-          bot straight.log Ann
-          bot relay.log Rex --hide-address
-          grep -q "ice: a way to the host (Relay)" relay.log || failed "the hidden player should have come through the relay: $(grep 'ice:' relay.log | head -n 1)"
+          bot udp.log Ann
+          bot hidden.log Rex --hide-address
+          for way in udp hidden; do
+            grep -q "ice: a way to the host (Relay)" $way.log || failed "$way: the way should be through the relay: $(grep 'ice:' $way.log | head -n 1)"
+          done
           bot tcp.log Tess --relay-tcp
           bot tls.log Tina --relay-tls
           for way in tcp tls; do
