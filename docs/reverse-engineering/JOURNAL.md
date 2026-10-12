@@ -834,3 +834,12 @@ Not a discovery about the original; a record of a decision carried out (the deci
 - Gone: `src/net/relay.*`, `atomic_server --relay-server` and `--relay`, addresses of the form `CODE@relay`, the "Relay" field of the host screen, the setting `net_relay` (an old settings file that has it is read as before; the line is ignored), the path name `Relay (TCP)` in the lobby state, the test "relay".
 - What a player without UDP now has: for a game found on a master, the relay over TCP or TLS; for a game joined by its address, the same packets inside TCP to the host's port, if that port is open. A host whose router lets nothing in needs a master server with a relay; before, a relay program of the project's own on any reachable machine was enough. That is the price of the decision, and the only thing lost.
 - Validation: the unit tests and the end-to-end test pass without it (`ab_ui_tests` adjusted for a host screen with one row fewer).
+
+### Modern: the bridge to the relay waits on both of its sockets
+
+A fault of the modern code, found by CI.
+
+- Seen: `ab_online_tests` "turn stream" failed on the Windows ARM64 runner in two runs of three (and on no other target): of 200 packets sent at once through the bridge, not all arrived. The first failure showed nothing (the Windows test step gave no annotations; it does now), the second named the check.
+- Cause (HIGH; not reproduced on this machine): the bridge slept until the stream had something to read, for a millisecond at a time, and only then looked at its UDP socket. Where a millisecond's sleep is really fifteen, a burst larger than the socket's buffer was partly lost before it was read. The test's own relay has the same habit.
+- Fix: the bridge waits for either socket (poll, or select on Windows) and wakes at once for both directions, which also takes up to a millisecond or more of delay off every packet a player sends; its UDP socket has a buffer of 1 MB. The test sends its 200 packets five at a time, since datagrams sent faster than they are read are lost by design, and says how many arrived if it fails.
+- Validation: the unit tests and the end-to-end test against coturn pass here; whether the Windows ARM64 runner is content is seen in CI.

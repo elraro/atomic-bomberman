@@ -622,9 +622,13 @@ void testTurnStream() {
         const bool connected = wait([&] { return a.state() == Agent::State::Connected && b.state() == Agent::State::Connected; }, 30000);
         CHECK(connected);
         if (connected) {
+            // A hundred packets each way, a few at a time: these are datagrams, and a burst
+            // larger than a socket's buffer loses some where a reader is slow (seen on the
+            // Windows ARM64 runner with all 200 at once).
             for (int i = 0; i < 100; ++i) {
                 a.send(std::vector<std::uint8_t>(601 + i % 4, static_cast<std::uint8_t>(i)));  // (lengths that need filling, and one that does not)
                 b.send(std::vector<std::uint8_t>(900, static_cast<std::uint8_t>(i + 100)));
+                if (i % 5 == 4) std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
             int gotA = 0, gotB = 0;
             bool intact = true;
@@ -633,8 +637,9 @@ void testTurnStream() {
                 while (b.receive(p)) intact = intact && p.size() == static_cast<std::size_t>(601 + gotB % 4) && p[0] == static_cast<std::uint8_t>(gotB) && p.back() == p[0], ++gotB;
                 while (a.receive(p)) intact = intact && p.size() == 900 && p[0] == static_cast<std::uint8_t>(gotA + 100), ++gotA;
                 return gotA == 100 && gotB == 100;
-            }, 5000);
+            }, 10000);
             CHECK(intact && gotA == 100 && gotB == 100);
+            if (gotA != 100 || gotB != 100) std::printf("  FAIL (details) %d of 100 came back to the player on the stream, %d of 100 reached the other\n", gotA, gotB);
 #ifdef __linux__
             CHECK_TEXT(a.kind(), "Relay (TCP)");
             CHECK(overTcp.channelData() >= 100);

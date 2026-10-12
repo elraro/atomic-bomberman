@@ -7,6 +7,7 @@
 #include <ws2tcpip.h>
 #else
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #endif
 
@@ -32,6 +33,21 @@ using Fd = int;
 #endif
 
 std::size_t be16(const std::uint8_t* p) { return (static_cast<std::size_t>(p[0]) << 8) | p[1]; }
+
+// Until one of the two sockets has something to read, or the time is up.
+void waitForEither(Fd a, Fd b, int ms) {
+#ifdef _WIN32
+    fd_set readable;
+    FD_ZERO(&readable);
+    FD_SET(a, &readable);
+    FD_SET(b, &readable);
+    timeval limit{0, ms * 1000};
+    select(0, &readable, nullptr, nullptr, &limit);
+#else
+    pollfd both[2] = {{a, POLLIN, 0}, {b, POLLIN, 0}};
+    poll(both, 2, ms);
+#endif
+}
 
 }  // namespace
 
@@ -140,6 +156,7 @@ struct TurnStream::Shared {
         }
         connected.store(true);
         const Fd fd = static_cast<Fd>(udp.fd);
+        const Fd stream = static_cast<Fd>(tcp.fd);
         sockaddr_storage local{};  // where libjuice speaks from: the answers go there
         SockLen localLen = 0;
         std::vector<std::uint8_t> in, out, datagram;
@@ -175,7 +192,8 @@ struct TurnStream::Shared {
             ) {
                 break;  // closed by the relay, or an error
             }
-            if (!busy) mbedtls_net_poll(&tcp, MBEDTLS_NET_POLL_READ, 1);
+            // Nothing either way: until there is (looking now and then whether this is to end).
+            if (!busy && !(tls && mbedtls_ssl_get_bytes_avail(&ssl) > 0)) waitForEither(fd, stream, 20);
         }
         if (!stop.load()) failed.store(true);
         connected.store(false);
@@ -195,6 +213,9 @@ bool TurnStream::start(const std::string& host, int port, bool tls) {
     shared->port = port;
     shared->tls = tls;
     if (mbedtls_net_bind(&shared->udp, "127.0.0.1", "0", MBEDTLS_NET_PROTO_UDP) != 0 || mbedtls_net_set_nonblock(&shared->udp) != 0) return false;
+    // Room for a burst: what does not fit while the stream is being written to is lost.
+    const int room = 1 << 20;
+    setsockopt(static_cast<Fd>(shared->udp.fd), SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&room), sizeof room);
     sockaddr_storage bound{};
     SockLen len = sizeof bound;
     if (getsockname(static_cast<Fd>(shared->udp.fd), reinterpret_cast<sockaddr*>(&bound), &len) != 0 || bound.ss_family != AF_INET) return false;
