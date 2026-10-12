@@ -881,3 +881,9 @@ Modern (not original behaviour): the option "Unused voice clips" (`unused_voices
 Validation: unit tests for the table, the setting and the import; run off-screen against the user's copy, the option found 844 clips. Not validated by ear.
 
 Next: somebody listening to the LOW-confidence clips and to the lines for single diseases (`dis`, `zad`), which could then be placed.
+
+### Modern: the container job, run 3
+
+- Seen: with the players on the bridge network, a player who hid its address was still reported `Direct`.
+- Cause (HIGH, by reasoning; the same rule as before from the other side): the game server still had the relay's address. Its packets sent straight to the player's relayed address were let through, the player so learned the server's real address, and could reach it without the relay.
+- Fix: in the job, the game server is on the bridge network too (a compose override written by the job), so relay, server and players have three addresses. The compose file itself keeps the server on the machine's network, which is right for a real machine and is not what this job tries.

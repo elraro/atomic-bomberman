@@ -76,11 +76,19 @@ jobs:
   # and play a match each through the relay: over UDP, over TCP and over TLS.
   docker:
     runs-on: ubuntu-24.04
+    env:
+      COMPOSE_FILE: docker-compose.yml:ci.yml
     steps:
       - uses: actions/checkout@v7
       - name: Keys, certificate, signed configuration
         working-directory: deploy
         run: |
+          # Here everything is on one machine, and an end at the relay's own address gets
+          # around the relay (its packets are let through to the other end's relayed
+          # address, which gives its real address away). So that the ways found are the
+          # ones players elsewhere would get, the game server and the players each have an
+          # address of their own, on Docker's bridge network; the relay has the machine's.
+          printf 'services:\n  gameserver:\n    network_mode: bridge\n' > ci.yml
           IP=$(hostname -I | awk '{print $1}')
           ./setup.sh "$IP" "$IP"
           sed -i 's/^GAME_NAME=.*/GAME_NAME=Container game/; s/^GAME_OPTIONS=.*/GAME_OPTIONS=--wins 1 --hide-address/' .env
@@ -105,12 +113,8 @@ jobs:
           docker compose run --rm -T abconfig verify -pub "$KEY" -in master/config.signed.json >/dev/null || failed "the signed configuration does not verify"
           for _ in $(seq 60); do docker compose logs gameserver 2>&1 | grep -q "Online: listed, code" && break; sleep 1; done
           docker compose logs gameserver 2>&1 | grep -q "Online: listed, code" || failed "the game server was not announced"
-          # The players are in containers of their own, on Docker's bridge network: the relay
-          # then sees them come from another address than its own, as it would players
-          # elsewhere. (From the relay's own address a player's packets are let through to
-          # another's relayed address, and a way around the relay forms: seen here as
-          # "Direct" for a player who had asked for TCP.) The game server hides its address,
-          # so every way to it is a relayed one.
+          # The game server hides its address and the players have none it could learn, so
+          # every way is a relayed one.
           bot() {
             local log=$1; shift
             timeout 200 docker run --rm --network bridge -e XDG_DATA_HOME=/tmp --entrypoint net_bot atomic-bomberman-server \
