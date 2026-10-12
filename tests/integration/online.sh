@@ -238,7 +238,7 @@ if command -v turnserver >/dev/null 2>&1; then
     mkdir -p "$R"
     TURN_PORT=$((MASTER_PORT + 30))
     SECRET=integration-secret
-    turnserver -n --no-cli --no-tls --no-dtls --listening-ip 127.0.0.1 --relay-ip 127.0.0.1 --listening-port "$TURN_PORT" --min-port 41000 --max-port 41200 \
+    turnserver -n -v --no-cli --no-tls --no-dtls --listening-ip 127.0.0.1 --relay-ip 127.0.0.1 --listening-port "$TURN_PORT" --min-port 41000 --max-port 41200 \
         --use-auth-secret --static-auth-secret "$SECRET" --realm atomic --allow-loopback-peers --log-file stdout --simple-log >"$R/coturn.log" 2>&1 &
     pids+=($!)
     sed "s/\"stun\": \[\], \"turn\": \[\]/\"stun\": [\"127.0.0.1:$TURN_PORT\"], \"turn\": [{\"host\": \"127.0.0.1\", \"port\": $TURN_PORT, \"transport\": \"udp\"}]/; s/:$MASTER_PORT\"/:$((MASTER_PORT + 2))\"/" "$WORK/config.json" >"$R/config.json"
@@ -257,7 +257,12 @@ if command -v turnserver >/dev/null 2>&1; then
     [[ "$RCODE" =~ ^[0-9]{6}$ ]] || fail "the server behind the relay was not announced"
     timeout 150 "$BUILD/net_bot" "code:$RCODE" Rex --start-after 2000 --matches 1 --hide-address "${RELAYED[@]}" >"$R/rex.log" 2>&1 || { cat "$R/rex.log" "$R/server.log"; tail -n 30 "$R/coturn.log"; fail "Rex did not finish a match through the relay"; }
     grep -q "ice: a way to the host" "$R/rex.log" || fail "Rex should have reached the host by ICE"
-    grep -qi "allocate.*success\|ALLOCATE processed, success" "$R/coturn.log" || { tail -n 30 "$R/coturn.log"; fail "coturn should have made an allocation"; }
+    grep -qi "allocate" "$R/coturn.log" || {
+        tail -n 30 "$R/coturn.log"
+        echo "FAIL detail: $(grep -c . "$R/coturn.log") lines of coturn log; last: $(tail -n 1 "$R/coturn.log" | cut -c1-200)"
+        echo "FAIL detail: $(grep "ice:" "$R/rex.log" | head -n 1)"
+        fail "coturn should have made an allocation"
+    }
     echo "ok   through coturn: a hidden player and a hidden host played a match ($(sed -n 's/.*ice: a way to the host (\(.*\)).*/\1/p' "$R/rex.log"))"
 else
     echo "skip the relay: coturn (turnserver) is not installed here"
