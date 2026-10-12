@@ -208,6 +208,7 @@ void testCodec() {
     }
     InputMsg input;
     input.roundId = 4;
+    input.number = 77;
     input.haveState = true;
     input.haveStep = 55;
     input.step = 60;
@@ -218,7 +219,7 @@ void testCodec() {
         ByteReader r(sb);
         CHECK(decode(r, input2) && r.atEnd());
     }
-    CHECK(input2.haveState && input2.haveStep == 55 && input2.step == 60 && input2.inputs.size() == 2);
+    CHECK(input2.number == 77 && input2.haveState && input2.haveStep == 55 && input2.step == 60 && input2.inputs.size() == 2);
     CHECK(input2.inputs[0][3] == 4 && input2.inputs[1][0] == 0x3f);  // only the six keys get through
 
     CHECK(cleanText("  hi\x01 there\n ", 100) == "hi there");
@@ -1861,6 +1862,86 @@ void testPlayerKeysAndCertificate() {
 
 // Recorded rounds: the seed is nobody's choice, every player's inputs are in their own signed
 // log, and the record plays again to the same result. Whatever is changed in it shows.
+// Recorded rounds in which the keys keep changing to the very end, some of them on a
+// connection that loses packets and with a computer that stalls again and again. Whatever the server
+// applies for the player must still follow their own log in order: nothing held earlier may
+// come back later. (It once did: at the end of a round a client stops guessing ahead and
+// names an earlier step for its keys than before, while the server still held what had
+// been guessed, with older keys, for the steps after that one.)
+void testRecordInputOrder() {
+    for (int run = 0; run < 6; ++run) {
+        Harness h;
+        ServerConfig config;
+        config.port = 0;
+        config.discoverable = false;
+        config.seed = 7 + static_cast<std::uint32_t>(run);
+        config.settings.computers = 1;
+        config.settings.winsNeeded = 1;
+        config.settings.enclosementDepth = 3;
+        config.settings.playTime = 60;
+        config.gameVersion = "test-version";
+        const VerifyFn verify = [](const Key& key, const Bytes& message, const SignatureBytes& signature) { return standInSign(key, message) == signature; };
+        config.verifySignature = verify;
+        std::vector<MatchRecord> records;
+        config.signRecord = [](const Bytes& bytes) { return "signed:" + std::string(bytes.begin(), bytes.end()); };
+        config.recordSink = [&](const std::string&, const MatchRecord& record) { records.push_back(record); };
+        CHECK(h.server.start(config));
+        h.clients.push_back(std::make_unique<Client>());
+        Client& ann = *h.clients.back();
+        ann.setAlwaysReady(true);
+        Key key{};
+        key.fill(0x33);
+        ann.setPlayerKey(key, [key](const Bytes& message) { return standInSign(key, message); });
+        ann.setPredictionSteps(2 + run);  // as on a connection with that much delay: the server holds inputs for that many steps to come
+        ann.connect("127.0.0.1:" + std::to_string(h.server.port()), "Ann", "", h.now);
+        CHECK(h.until([&] { return ann.state() == Client::State::Lobby; }));
+        ann.sendStart();
+        CHECK(h.until([&] { return ann.state() == Client::State::Round; }));
+        CHECK(ann.recorded());
+        const bool bad = run % 2 == 1;  // every other run on a bad connection
+        if (bad) setTestUdpLoss(20);
+        // The keys change every 150 ms or so, going round twelve different combinations: one
+        // that came back out of turn would not be found in the log again for a long while.
+        std::uint32_t chance = 12345u + static_cast<std::uint32_t>(run) * 977u;
+        int held = 0, until = 0;
+        for (int i = 0; i < 20000 && ann.state() == Client::State::Round; ++i) {
+            chance = chance * 1664525u + 1013904223u;
+            if (i >= until) {
+                ++held;
+                until = i + 20 + static_cast<int>((chance >> 16) % 20);
+            }
+            PlayerInput a;
+            a.dir[static_cast<std::size_t>(held % 4)] = true;
+            a.button1 = (held / 4) % 3 == 1;  // bombs: the round is decided before long
+            a.button2 = (held / 4) % 3 == 2;
+            ann.setInput(a);
+            if (bad && (chance >> 24) % 40 == 0) {
+                // The player's computer stalls for up to 300 ms while the server goes on.
+                const int stalled = 10 + static_cast<int>((chance >> 8) % 50);
+                for (int k = 0; k < stalled; ++k) {
+                    h.server.update(h.now);
+                    h.now += 5;
+                    Harness::pause();
+                }
+            }
+            h.turn();
+        }
+        setTestUdpLoss(0);
+        CHECK(ann.state() != Client::State::Round);
+        CHECK(h.until([&] { return records.size() == 1; }, 5000));
+        if (records.empty()) continue;
+        const MatchRecord& record = records[0];
+        CHECK_EQ(record.players.size(), 1u);
+        for (const PlayerLog& p : record.players) {
+            CHECK(p.haveStatement && p.values.size() > 5);
+            CHECK(inputsFollowLog(record, p));
+        }
+        const RecordVerdict verdict = checkRecord(record, "test-version", verify);
+        for (const std::string& p : verdict.problems) std::printf("     problem (run %d): %s\n", run, p.c_str());
+        CHECK(verdict.ok);
+    }
+}
+
 void testRecords() {
     // The pieces by themselves.
     {
@@ -2441,6 +2522,7 @@ int main() {
         {"server identity", testServerIdentity},
         {"player keys and certificate", testPlayerKeysAndCertificate},
         {"records", testRecords},
+        {"records: the inputs applied follow the log", testRecordInputOrder},
         {"carrier", testCarrier},
         {"relay", testRelay},
         {"ready", testReady},

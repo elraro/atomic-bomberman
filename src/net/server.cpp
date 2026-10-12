@@ -75,6 +75,7 @@ struct Server::Peer {
     std::uint32_t ackStep = 0;     // ...the one after this step (from its input messages)
     std::array<std::uint8_t, kMaxLocalPlayers> input{};  // what its players hold down, as last applied
     std::uint32_t inputStep = 0;   // the step that input was meant for
+    std::uint32_t inputNumber = 0; // the newest input message of this round heeded
     std::map<std::uint32_t, std::array<std::uint8_t, kMaxLocalPlayers>> inputs;  // for steps not yet run
     bool wantsContinue = false;
     Key playerKey{};               // the player key proved when joining; zeros: none
@@ -593,19 +594,31 @@ void Server::applyInput(Peer& p, const InputMsg& m) {
         p.haveState = false;
         p.ackStep = 0;
     }
+    // Datagrams may overtake one another: only a message newer than every one before it
+    // says anything about the keys.
+    const bool newest = m.number > p.inputNumber;
     const auto done = static_cast<std::uint32_t>(history_.size());
     if (m.haveState && m.haveStep <= done && (!p.haveState || m.haveStep > p.ackStep)) {
         p.haveState = true;
         p.ackStep = m.haveStep;
     }
-    // Inputs for steps still to come wait for their step. Of those that come too late the
-    // newest counts from now on (it is what the player is holding down).
+    if (!newest) return;
+    p.inputNumber = m.number;
+    // Inputs for steps still to come wait for their step. When the message's own step has
+    // come too late, what it says is held down now counts from here on. The older values in
+    // it never do: each is what was held when its step was first guessed, older than what
+    // has been applied since. And what an earlier message said about steps beyond this
+    // one's is forgotten: those were guesses made before these keys (a client that stops
+    // guessing ahead, at the end of a round, names an earlier step than it did before).
+    // So the inputs applied step after step never go back to something held earlier, which
+    // is what a recorded round is held against (record.hpp, inputsFollowLog).
+    p.inputs.erase(p.inputs.upper_bound(m.step), p.inputs.end());
     for (std::size_t i = 0; i < m.inputs.size() && i <= m.step; ++i) {
         const std::uint32_t step = m.step - static_cast<std::uint32_t>(i);
         if (step > done) {
             if (step <= done + 40) p.inputs[step] = m.inputs[i];
         } else {
-            if (step >= p.inputStep) p.input = m.inputs[i], p.inputStep = step;
+            if (i == 0 && step >= p.inputStep) p.input = m.inputs[i], p.inputStep = step;
             break;
         }
     }
@@ -1290,6 +1303,7 @@ void Server::beginRound(std::uint32_t roundSeed, const std::vector<SeedShare>& s
         p->ackStep = 0;
         p->input = {};
         p->inputStep = 0;
+        p->inputNumber = 0;
         p->inputs.clear();
         p->wantsContinue = false;
     }

@@ -17,7 +17,7 @@ namespace ab::net {
 
 inline constexpr std::uint32_t kTcpMagic = 0x4E4D4241u;  // "ABMN"
 inline constexpr std::uint32_t kUdpMagic = 0x554D4241u;  // "ABMU"
-inline constexpr std::uint16_t kProtocolVersion = 11;
+inline constexpr std::uint16_t kProtocolVersion = 12;
 inline constexpr std::uint16_t kDefaultPort = 27410;
 // Every server also listens here for searches on the local network, whatever its own port.
 inline constexpr std::uint16_t kDiscoveryPort = 27409;
@@ -261,6 +261,7 @@ inline constexpr int kInputsPerMessage = 8;
 // (so that a lost datagram loses no key press), and the newest state held.
 struct InputMsg {
     std::uint32_t roundId = 0;
+    std::uint32_t number = 0;         // counted up with every message of the round: an older one that arrives later is not heeded
     bool haveState = false;           // false: nothing of this round has arrived yet
     std::uint32_t haveStep = 0;       // the newest state held
     std::uint32_t step = 0;           // inputs[0] is meant for this step, inputs[1] for the one before...

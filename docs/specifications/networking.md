@@ -24,7 +24,7 @@ The server is the only place where the round is played. Clients send what their 
 
 **The public state** is everything in the `World` except what a player may not know yet: which powerup lies under which brick (hidden powerups are simply absent) and the random generator. So a changed client can see nothing more than its screen shows, and nothing decided by chance before it happens. One timer in it says when the next dud bomb may occur.
 
-**Inputs.** A client names the step each input is meant for: the step its picture is showing (the newest state plus its delay, see prediction). Each input datagram carries the input for that step and for up to seven steps before it, so a lost datagram loses no key press. The server gives each step the input sent for it; if none has come, the player goes on holding what they held last. An input that arrives after its step counts from then on. An input is six keys (four directions, two buttons) for each of the up to four players at that computer; a client can say nothing else.
+**Inputs.** A client names the step each input is meant for: the step its picture is showing (the newest state plus its delay, see prediction). Each input datagram carries the input for that step and for up to seven steps before it, so a lost datagram loses no key press. The server gives each step the input sent for it; if none has come, the player goes on holding what they held last. An input that arrives after its step counts from then on. Input datagrams are numbered within a round and only one newer than all before it is heeded (datagrams may overtake one another). The newest one replaces what earlier ones said about later steps (a client that stops guessing ahead, when the round is decided, names an earlier step than it did before), and of a datagram that comes too late only the newest input counts, not the older ones it repeats. So the inputs the server applies, step after step, never go back to something the player held earlier: they follow the order in which the player pressed the keys, which is what a recorded round is checked against. An input is six keys (four directions, two buttons) for each of the up to four players at that computer; a client can say nothing else.
 
 **Snapshots as differences.** The public state is written as a row of about 5000 numbers, always in the same places (`World::snapshotFields`). Ages that only grow with the clock (a flame's, a fuse's, a disease's) are written as the moment they began, so they do not change from step to step.
 
@@ -81,7 +81,7 @@ Every server, whatever its own port, also listens on UDP **27409** (a port sever
 
 IPv4 and IPv6: a server listens for both on one port where the system allows it (IPv4 alone otherwise); a client uses whichever the address it was given resolves to. An IPv6 literal with a port is written `[address]:port`. A link-local IPv6 address is given with its interface, `[fe80::1%eth0]:port`.
 
-Protocol version 11 (1: one player per client; 2: several players, prizes, campaign stages; 3: encryption; 4: secrets kept on the server; 5: server identity; 6: ready state; 7: the link, everything over UDP; 8: snapshots instead of lockstep; 9: player keys, the certificate message; 10: recorded rounds; 11: the path in the lobby state, the volume check).
+Protocol version 12 (1: one player per client; 2: several players, prizes, campaign stages; 3: encryption; 4: secrets kept on the server; 5: server identity; 6: ready state; 7: the link, everything over UDP; 8: snapshots instead of lockstep; 9: player keys, the certificate message; 10: recorded rounds; 11: the path in the lobby state, the volume check; 12: input messages are numbered).
 
 ## Encryption and the password
 
@@ -159,7 +159,7 @@ Carried by the link, sealed like everything else.
 
 | Type | Direction | Payload |
 |---|---|---|
-| Input | C to S | round id, the newest state held (if any), the step the first input is meant for, up to eight inputs of four bytes (one per player at that computer), newest first |
+| Input | C to S | round id, the number of this message in the round, the newest state held (if any), the step the first input is meant for, up to eight inputs of four bytes (one per player at that computer), newest first |
 | Delta | S to C | round id, step, the step of the state it is made from, events (steps back, kind, player, value), the difference |
 
 In the clear on the discovery port (`u32` magic `ABMU`, `u8` type, payload):

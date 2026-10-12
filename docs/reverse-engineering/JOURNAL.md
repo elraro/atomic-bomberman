@@ -791,3 +791,15 @@ Not a discovery about the original; a record of what was built and seen.
 - **Not built: TURN over TCP and TLS** (a decision of 2026-10-11). The project's own TCP relay therefore stays.
 - Validation: see `docs/testing/validation-status.md`. Found by the carrier test: a server did not answer a repeated key over a lossy carrier (fixed).
 - Not done: anything through a real router.
+
+### Modern: the inputs a server applies never go back to an earlier one (protocol 12)
+
+Not a discovery about the original; a fault of the modern network code, found and fixed.
+
+- Seen: `tests/integration/online.sh`, run by hand, failed once with "the inputs applied for Ann are not the ones in their own log" (a recorded round that does not hold, with honest players). Then 1 of 48 short matches of two test clients against a dedicated server, in a loop written for it.
+- Evidence: the record of that match, printed step by step: applied `164:21 167:00 168:21 169:00`, the player's log `... 21 00 01 ...`. An earlier key state came back for one step.
+- Cause (CONFIRMED by a test that fails without the fix): when a round is decided the client stops guessing ahead and sends its keys for the step after the last confirmed one. The server still held, for the steps after that, the inputs the client had guessed earlier with older keys, and applied them when those steps came.
+- Fix, in the server: input messages are numbered within a round (protocol 12) and one older than the newest heeded is ignored; the newest message makes the server forget what it holds for steps beyond that message's own; of a message that comes too late only its newest input counts. In the client: what it remembers for steps beyond a target it has pulled back is forgotten.
+- Besides the record: a player's old key state could be applied for a step or two in any round, recorded or not. Not noticed in play.
+- Validation (Level 4): `ab_net_tests` "records: the inputs applied follow the log" (six recorded rounds with keys changing to the end, three of them with packet loss and stalls; fails without the server's forgetting). 48 matches in the loop afterwards: all records hold.
+- Why the first version of that test did not fail: it changed keys every 5 ms at random, so that any old key state was found again a little later in the log. The check is strict only when a key state does not soon return.

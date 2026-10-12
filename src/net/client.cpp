@@ -306,6 +306,7 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     nextStepAt_ = nowMs;
     lastStepAt_ = nowMs;
     inputSentAt_ = 0;
+    inputNumber_ = 0;
     predicted_.reset();
     predictedValid_ = false;
     target_ = 0;
@@ -490,6 +491,7 @@ void Client::sendInput(std::uint64_t nowMs) {
     if (input_ == inputSent_ && newest_ == ackSent_ && nowMs - inputSentAt_ < static_cast<std::uint64_t>(kStepMs) && inputSentAt_ != 0) return;
     InputMsg m;
     m.roundId = start_.roundId;
+    m.number = ++inputNumber_;
     m.haveState = haveState_;
     m.haveStep = newest_;
     if (!mine_.empty() && predictedValid_) {
@@ -743,6 +745,9 @@ void Client::predict(const EventSink& events) {
     ++target_;
     if (target_ + 2 < wanted || target_ > wanted + 2 || target_ <= applied_) target_ = wanted;
     logInput();  // whatever is sent for a step is in the log first
+    // (When the target has been pulled back, what was remembered for the steps beyond it is
+    // forgotten: it would be sent again as those steps' inputs, though the keys have changed since.)
+    mine_.erase(mine_.lower_bound(target_), mine_.end());
     mine_[target_] = input_;
     mine_.erase(mine_.begin(), mine_.upper_bound(applied_));
     if (!predicted_) predicted_ = std::make_unique<World>(*world_);

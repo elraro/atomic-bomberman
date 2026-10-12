@@ -305,6 +305,7 @@ private:
     std::vector<Heard> heard_;                        // own actions already reported from a prediction
     std::array<std::uint8_t, kMaxLocalPlayers> inputSent_{};
     std::uint64_t inputSentAt_ = 0;
+    std::uint32_t inputNumber_ = 0;  // input messages sent in this round
 };
 
 // Finds servers on the local network, whatever port they play on (UDP broadcast to the discovery port).

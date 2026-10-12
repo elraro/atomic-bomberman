@@ -548,6 +548,7 @@ bool decode(ByteReader& r, DeltaMsg& m) {
 
 void encode(ByteWriter& w, const InputMsg& m) {
     w.u32(m.roundId);
+    w.u32(m.number);
     w.flag(m.haveState);
     w.u32(m.haveStep);
     w.u32(m.step);
@@ -558,6 +559,7 @@ void encode(ByteWriter& w, const InputMsg& m) {
 
 bool decode(ByteReader& r, InputMsg& m) {
     m.roundId = r.u32();
+    m.number = r.u32();
     m.haveState = r.flag();
     m.haveStep = r.u32();
     m.step = r.u32();
