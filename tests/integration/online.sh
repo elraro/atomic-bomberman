@@ -11,6 +11,9 @@ set -u
 BUILD=${1:?build directory}
 BIN=${2:?directory of the master programs}
 WORK=$(mktemp -d)
+# The programs keep what they remember (keys, the highest configuration serial seen) in
+# the user's data folder: for this test, one of its own.
+export XDG_DATA_HOME="$WORK/data" APPDATA="$WORK/data"
 MASTER_PORT=${MASTER_PORT:-38443}
 GAME_PORT=${GAME_PORT:-37410}
 pids=()
@@ -232,20 +235,28 @@ grep -q "not among the files given" "$T/verify4.log" || fail "missing records sh
 # The next round: the winner's name stands where "the winner of R1-1" stood, and that match can now be served.
 grep -q "\"$WINNER\"" <(python3 -c "import json,sys; f=json.load(open('$T/cup.json')); print(json.dumps([m['players'] for m in f['matches'] if m['id']=='R2-1']))") || fail "the winner should be in the next round"
 echo "ok   tournament: the result is borne out by the records; a false one is not"
-# --- The relay (TURN), where coturn is installed: a player who hides their address ---
+# --- The relay (TURN), where coturn is installed: players who hide their address, and
+# players whose network lets no UDP out ---
+# The relay sits at a second address of this machine (127.0.0.2; Linux answers to all of
+# 127.x.x.x). So it sees the players come from another address than its own and refuses
+# what one of them sends straight to the other's relayed address, as a relay elsewhere
+# would: the ways found here are the relayed ones, not ways around the relay.
 if command -v turnserver >/dev/null 2>&1; then
     R=$WORK/relay
     mkdir -p "$R"
     TURN_PORT=$((MASTER_PORT + 30))
+    TURN_AT=127.0.0.2
     SECRET=integration-secret
-    turnserver -n -v --no-cli --no-tls --no-dtls --listening-ip 127.0.0.1 --relay-ip 127.0.0.1 --listening-port "$TURN_PORT" --min-port 41000 --max-port 41200 \
+    turnserver -n -v --no-cli --no-dtls --cert "$WORK/master.crt" --pkey "$WORK/master.tls.key" --tls-listening-port $((TURN_PORT + 1)) --listening-ip $TURN_AT --relay-ip $TURN_AT \
+        --listening-port "$TURN_PORT" --min-port 41000 --max-port 41200 \
         --use-auth-secret --static-auth-secret "$SECRET" --realm atomic --allow-loopback-peers --log-file stdout --simple-log >"$R/coturn.log" 2>&1 &
     pids+=($!)
-    sed "s/\"stun\": \[\], \"turn\": \[\]/\"stun\": [\"127.0.0.1:$TURN_PORT\"], \"turn\": [{\"host\": \"127.0.0.1\", \"port\": $TURN_PORT, \"transport\": \"udp\"}]/; s/:$MASTER_PORT\"/:$((MASTER_PORT + 2))\"/" "$WORK/config.json" >"$R/config.json"
-    grep -q "\"transport\": \"udp\"" "$R/config.json" || fail "the relay was not written into the configuration"
+    TURNS="{\"host\": \"$TURN_AT\", \"port\": $TURN_PORT, \"transport\": \"udp\"}, {\"host\": \"$TURN_AT\", \"port\": $TURN_PORT, \"transport\": \"tcp\"}, {\"host\": \"$TURN_AT\", \"port\": $((TURN_PORT + 1)), \"transport\": \"tls\"}"
+    sed "s/\"stun\": \[\], \"turn\": \[\]/\"stun\": [\"$TURN_AT:$TURN_PORT\"], \"turn\": [$TURNS]/; s/:$MASTER_PORT\"/:$((MASTER_PORT + 2))\"/" "$WORK/config.json" >"$R/config.json"
+    grep -q "\"transport\": \"tls\"" "$R/config.json" || fail "the relay was not written into the configuration"
     "$BIN/abconfig" sign -key "$WORK/root.key" -in "$R/config.json" -out "$R/signed.json" -stamp -serial 999999999999 >/dev/null || fail "sign (relay)"
     "$BIN/master" -listen "127.0.0.1:$((MASTER_PORT + 2))" -tls-cert "$WORK/master.crt" -tls-key "$WORK/master.tls.key" -config-file "$R/signed.json" \
-        -turn-secret "$SECRET" -turn-urls "turn:127.0.0.1:$TURN_PORT?transport=udp" >"$R/master.log" 2>&1 &
+        -turn-secret "$SECRET" -turn-urls "turn:$TURN_AT:$TURN_PORT?transport=udp" >"$R/master.log" 2>&1 &
     pids+=($!)
     RELAYED=(--online-config "https://127.0.0.1:$((MASTER_PORT + 2))/config.json" --online-key "$KEY")
     for _ in $(seq 50); do grep -q "master listening" "$R/master.log" && break; sleep 0.1; done
@@ -256,14 +267,22 @@ if command -v turnserver >/dev/null 2>&1; then
     RCODE=$(sed -n 's/.*Online: code, code \([0-9]*\).*/\1/p' "$R/server.log" | head -n 1)
     [[ "$RCODE" =~ ^[0-9]{6}$ ]] || fail "the server behind the relay was not announced"
     timeout 150 "$BUILD/net_bot" "code:$RCODE" Rex --start-after 2000 --matches 1 --hide-address "${RELAYED[@]}" >"$R/rex.log" 2>&1 || { cat "$R/rex.log" "$R/server.log"; tail -n 30 "$R/coturn.log"; fail "Rex did not finish a match through the relay"; }
-    grep -q "ice: a way to the host" "$R/rex.log" || fail "Rex should have reached the host by ICE"
+    grep -q "ice: a way to the host (Relay)" "$R/rex.log" || { echo "FAIL detail: $(grep "ice:" "$R/rex.log" | head -n 1)"; fail "Rex should have reached the host through the relay"; }
     grep -qi "allocate" "$R/coturn.log" || {
         tail -n 30 "$R/coturn.log"
         echo "FAIL detail: $(grep -c . "$R/coturn.log") lines of coturn log; last: $(tail -n 1 "$R/coturn.log" | cut -c1-200)"
         echo "FAIL detail: $(grep "ice:" "$R/rex.log" | head -n 1)"
         fail "coturn should have made an allocation"
     }
-    echo "ok   through coturn: a hidden player and a hidden host played a match ($(sed -n 's/.*ice: a way to the host (\(.*\)).*/\1/p' "$R/rex.log"))"
+    echo "ok   through coturn: a hidden player and a hidden host played a match"
+
+    # A player whose network lets no UDP out reaches the relay over TCP, another over TLS:
+    # the same TURN, in a stream (and from the relay on to the host's relayed address, over UDP).
+    for way in tcp tls; do
+        timeout 150 "$BUILD/net_bot" "code:$RCODE" "Tess-$way" --start-after 2000 --matches 1 "--relay-$way" "${RELAYED[@]}" >"$R/$way.log" 2>&1 || { cat "$R/$way.log"; tail -n 30 "$R/coturn.log"; fail "a player did not finish a match through the relay over $way"; }
+        grep -q "ice: a way to the host (Relay (TCP))" "$R/$way.log" || { echo "FAIL detail: $(grep "ice:" "$R/$way.log" | head -n 1)"; fail "the way over $way should have been the relayed one"; }
+    done
+    echo "ok   through coturn over TCP and over TLS: a player without UDP played a match each way"
 else
     echo "skip the relay: coturn (turnserver) is not installed here"
 fi

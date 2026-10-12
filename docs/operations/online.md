@@ -2,7 +2,7 @@
 
 What the owner of an online service for the game has to set up, and what a group that wants its own has to do. The design is in [`../specifications/online-play.md`](../specifications/online-play.md); the master server's own notes are in [`../../master/README.md`](../../master/README.md).
 
-State of things: this covers what exists (the master server, the signed configuration, games found by list or by code, server certificates, player keys, match records, tournaments). The relay over TCP / TLS, for networks without UDP, is not built yet; where a step below prepares for them it says so.
+State of things: this covers what exists (the master server, the signed configuration, games found by list or by code, server certificates, player keys, match records, tournaments).
 
 ## The parts
 
@@ -120,14 +120,20 @@ use-auth-secret
 static-auth-secret=A-LONG-RANDOM-SECRET
 realm=turn.example.org
 no-cli
-no-tls
 no-dtls
+# For players whose network lets no UDP out: the same port over TCP (on by default), and
+# TLS on 443, which passes where only HTTPS does. Any certificate will do (the game does
+# not judge it; see below), but a proper one looks less odd to a network that inspects.
+tls-listening-port=443
+cert=/etc/letsencrypt/live/turn.example.org/fullchain.pem
+pkey=/etc/letsencrypt/live/turn.example.org/privkey.pem
 ```
 
 - The secret is shared with the master and nobody else: `master -turn-secret A-LONG-RANDOM-SECRET -turn-urls "turn:turn.example.org:3478?transport=udp"`. The master hands each player a user name and password good for an hour; coturn checks them with the secret. A leaked pair is useless an hour later.
-- Open UDP 3478 and UDP 5000-9999 on the machine. (Low ports because some mobile carriers are said to drop UDP to high ones; not verified by us.)
-- In the configuration: `"stun": ["turn.example.org:3478"], "turn": [{"host": "turn.example.org", "port": 3478, "transport": "udp"}]`, then sign it again.
-- Only `"transport": "udp"` entries are used: the game cannot reach a relay over TCP or TLS yet. A player on a network that lets no UDP out reaches only hosts with an open port (the game then goes inside TCP), or a host that registered with the project's own relay (`atomic_server --relay-server`, `--relay ADDRESS`).
+- Open UDP 3478, TCP 3478, TCP 443 and UDP 5000-9999 on the machine. (coturn needs the right to listen on 443; if a web server has that port on this machine, give the relay an address or a machine of its own.) (Low ports because some mobile carriers are said to drop UDP to high ones; not verified by us.)
+- In the configuration: `"stun": ["turn.example.org:3478"], "turn": [{"host": "turn.example.org", "port": 3478, "transport": "udp"}, {"host": "turn.example.org", "port": 443, "transport": "tls"}, {"host": "turn.example.org", "port": 3478, "transport": "tcp"}]`, then sign it again.
+- The `udp` entries are what a game uses first. The `tcp` and `tls` entries (the first two of them, in the order listed, both at once) are used by a player for whom no way over UDP was found, whose network lets no UDP out, or whose way over UDP stopped carrying in the trial; the player's packets then go in a stream to the relay and from there on to the host's relayed address. Every such player costs the relay twice the traffic (in by the stream, out by UDP), and the host a relayed address.
+- With TLS the game does not judge the relay's certificate. What that leaves open: someone in the path could read the relay user name (good for an hour, useless without the password, which is never sent) and see that it is TURN. They cannot read or change the game's packets (sealed from end to end with the host's identity), nor use the relay.
 - Relayed play costs the relay's owner traffic: a few kilobytes a second for each relayed player (a snapshot is a few hundred bytes, twenty times a second).
 
 A host is reachable this way when it is announced online (the game and `atomic_server --online ...` both do it; `--no-ice` switches it off, `--hide-address` makes it reachable through the relay only).
@@ -180,4 +186,4 @@ Every issue has a higher serial than the one before (the time of signing, unless
 - Nobody runs a public master for this project yet, so nothing is built into the released game.
 - The master has only been run on one machine beside its clients, never across the internet, never under load.
 - Hole punching through real routers and carrier-grade NAT: everything was tried on one machine and in CI, where both ends have the same address.
-- No relay over TCP or TLS.
+- The relay over TCP and TLS has been tried against coturn on one machine only (in the end-to-end test), never from a network that really blocks UDP, and never through a middlebox that inspects TLS.

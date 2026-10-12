@@ -5,7 +5,9 @@
 // With --online-config URL --online-key HEX the address may be "code:123456" (a game found
 // on the master server by its code) or "listed:NAME" (the game of that name on its list).
 // A game found on the master is reached through routers (ICE) when its host offers that;
-// --no-ice goes by its address only, --hide-address through the relay only.
+// --no-ice goes by its address only, --hide-address through the relay only, --relay-tcp
+// through the relay reached over TCP or TLS only (as on a network that lets no UDP out),
+// --relay-tls over TLS only.
 // "tournament:FILE#KEY" (with --player-key-file) joins the match of that tournament the
 // key's owner is to play next. --show-player-key prints the public half of the key and exits.
 #include <algorithm>
@@ -52,11 +54,13 @@ int main(int argc, char** argv) {
     }
     using State = ab::net::Client::State;
     const std::string name = argv[2];
-    bool showPlayerKey = false, noIce = false, hideAddress = false;
+    bool showPlayerKey = false, noIce = false, hideAddress = false, relayTcp = false, relayTls = false;
     for (int i = 3; i < argc; ++i) {
         showPlayerKey = showPlayerKey || std::string(argv[i]) == "--show-player-key";
         noIce = noIce || std::string(argv[i]) == "--no-ice";
         hideAddress = hideAddress || std::string(argv[i]) == "--hide-address";
+        relayTcp = relayTcp || std::string(argv[i]) == "--relay-tcp";
+        relayTls = relayTls || std::string(argv[i]) == "--relay-tls";
     }
     bool viaCarrier = false;
 #ifdef AB_ONLINE
@@ -133,7 +137,7 @@ int main(int argc, char** argv) {
         if (offersIce && !noIce) {
             // A way through the routers: descriptions exchanged by way of the master, then the addresses tried.
             ab::online::IceJoin join;
-            join.start(master, info, hideAddress, ab::net::clockMs());
+            join.start(master, info, hideAddress, ab::net::clockMs(), relayTls ? ab::online::Ways::Tls : relayTcp ? ab::online::Ways::Stream : ab::online::Ways::Udp);
             while (join.state() == ab::online::IceJoin::State::Working) {
                 master.update();
                 join.update(ab::net::clockMs(), master);

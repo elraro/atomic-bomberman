@@ -813,3 +813,16 @@ A fault of the modern code, found while running the end-to-end test by hand with
 - Fix: the file is named after the key (`serialFileFor`). The end-to-end test gives its programs a data folder of their own (with the next change to that script).
 - The file the test had left behind was removed by hand (its content was the test's serial; no master of the user's exists yet).
 - Validation (Level 4): `ab_online_tests` "master client" (the number is kept under the key's name; the plain name stays untouched).
+
+### Modern: the relay over TCP and TLS (online play, the rest of phase 5)
+
+Not a discovery about the original; a record of what was built and seen.
+
+- The obstacle was that no ICE library that builds for all seven targets speaks TURN over TCP. libre (baresip/re 4.12.0) was tried: it builds here against the fetched mbedTLS after two changes to how it is linked, but it is a large library with its own event loop, its TLS needs OpenSSL, and Android and the Windows ARM64 build would have been blind.
+- What was built instead: libjuice goes on doing all of TURN, over UDP to a port on the player's own machine; `src/online/turn_stream.*` passes its datagrams on into a TCP or TLS stream (mbedTLS) to the relay and back. The only knowledge in it is RFC 8656 section 12.5: a STUN message says its own length, channel data is padded to four bytes. About 200 lines.
+- The joining player's game falls back to it when no way over UDP is found, when nothing outside answered at all, or when the way found fails the volume check. Then only relayed addresses are used on both sides, so that nothing goes around the stream.
+- Seen: coturn 4.6.1 (unpacked from the distribution's package into a scratch folder, since nothing can be installed on this machine), listening on UDP, TCP and TLS at 127.0.0.2. A test client with `--relay-tcp` and one with `--relay-tls` each reached a hidden dedicated server and played a match; the way reported was `Relay (TCP)`. Four runs of the whole end-to-end test in a row passed.
+- Found on the way: with relay and players all at 127.0.0.1 the relay lets a player's own packets through as if they came from the relay, a direct way forms, and the test proves nothing about the relayed path (one run in three reported `Direct`). With the relay at 127.0.0.2 it refuses them, as a relay elsewhere would. The earlier "hidden player" check had this weakness; it now requires `Relay`.
+- TLS: the relay's certificate is not judged (stated in the specification and the operations guide, with what that leaves open).
+- Validation: see `docs/testing/validation-status.md`.
+- Not done: anything from a network that really blocks UDP; the game's own retry after a failed volume check has no automated test.

@@ -17,7 +17,10 @@
 #include <string>
 #include <vector>
 
+#include <memory>
+
 #include "net/carrier.hpp"
+#include "online/turn_stream.hpp"
 
 struct juice_agent;
 struct juice_server;
@@ -28,12 +31,13 @@ struct TurnServer {
     std::string host;
     int port = 3478;
     std::string username, password;
+    std::string transport = "udp";  // udp; tcp or tls: by way of a bridge on this machine (turn_stream.hpp)
 };
 
 struct Config {
     std::string stunHost;  // empty: none (only the computer's own addresses and the relays are offered)
     int stunPort = 3478;
-    std::vector<TurnServer> turn;  // reached over UDP
+    std::vector<TurnServer> turn;  // two at most (libjuice's limit)
     // "Hide my address": only relayed ways are offered to the other side, and only its relayed
     // ways are tried, so that neither end learns the other's address. Needs a relay on both sides.
     bool relayOnly = false;
@@ -56,13 +60,16 @@ public:
     // The other side's. The checks begin once both sides have each other's.
     bool setRemoteDescription(const std::string& description);
     State state() const;
+    // Once gathered: something outside this computer's own network answered (the STUN server
+    // or a relay). False where the network lets no UDP out.
+    bool reachedOutside() const;
 
     // The carrier, once Connected.
     void send(const std::vector<std::uint8_t>& packet) override;
     bool receive(std::vector<std::uint8_t>& packet) override;
     bool alive() const override;
     std::string remote() const override;
-    std::string kind() const override;  // "Direct" or "Relay"
+    std::string kind() const override;  // "Direct", "Relay" or "Relay (TCP)"
 
     // Called by libjuice, on its own thread.
     void onState(int state);
@@ -72,6 +79,7 @@ public:
 private:
     juice_agent* agent_ = nullptr;
     Config config_;
+    std::vector<std::unique_ptr<TurnStream>> streams_;  // the relays reached over TCP or TLS
     std::atomic<int> state_{0};
     std::atomic<bool> gathered_{false};
     std::atomic<bool> wasConnected_{false};
@@ -85,7 +93,7 @@ std::string relayOnly(const std::string& description);
 // A STUN and TURN server in this process, for tests (libjuice's own).
 class TestServer {
 public:
-    TestServer(const std::string& username, const std::string& password);
+    TestServer(const std::string& username, const std::string& password, const std::string& address = "127.0.0.1");
     ~TestServer();
     TestServer(const TestServer&) = delete;
     TestServer& operator=(const TestServer&) = delete;

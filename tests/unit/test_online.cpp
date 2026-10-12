@@ -2,15 +2,19 @@
 // and signed documents, the rules a configuration must meet, the HTTP client, and
 // the master client against a stand-in server in this process. The real master
 // server (Go) and TLS are tried by tests/integration/online.sh.
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include <mbedtls/net_sockets.h>
 
 #include "fake_http.hpp"
 #include "online/certificate.hpp"
@@ -473,6 +477,181 @@ void testIce() {
     }
 }
 
+// A relay that is reached over TCP, for the test: libjuice's own (UDP) behind a listener
+// that does the bridge's work the other way round. It cuts the stream with the same two
+// functions, so what this shows is that the bridge carries a whole session; that a real
+// relay reads the stream the same way is shown against coturn (tests/integration/online.sh).
+class StreamRelay {
+public:
+    StreamRelay(const std::string& address, int udpPort) : address_(address) {
+        // (A port of our choosing: the library does not say which one the system would give.)
+        for (int port = 47000 + static_cast<int>(std::chrono::steady_clock::now().time_since_epoch().count() % 1000); port_ == 0 && port < 49000; ++port) {
+            mbedtls_net_init(&listen_);
+            if (mbedtls_net_bind(&listen_, "127.0.0.1", std::to_string(port).c_str(), MBEDTLS_NET_PROTO_TCP) == 0) port_ = port;
+        }
+        if (port_ == 0) return;
+        mbedtls_net_set_nonblock(&listen_);
+        thread_ = std::thread([this, udpPort] { run(udpPort); });
+    }
+    ~StreamRelay() {
+        stop_.store(true);
+        if (thread_.joinable()) thread_.join();
+        mbedtls_net_free(&listen_);
+    }
+    int port() const { return port_; }
+    int connections() const { return connections_.load(); }
+    int channelData() const { return channelData_.load(); }  // packets of the players' own that came in by the stream
+
+private:
+    struct Pair {
+        mbedtls_net_context tcp, udp;
+        std::vector<std::uint8_t> in;
+    };
+    void run(int udpPort) {
+        std::vector<std::unique_ptr<Pair>> pairs;
+        unsigned char buf[4096];
+        std::vector<std::uint8_t> datagram, out;
+        while (!stop_.load()) {
+            auto pair = std::make_unique<Pair>();
+            mbedtls_net_init(&pair->tcp);
+            mbedtls_net_init(&pair->udp);
+            if (mbedtls_net_accept(&listen_, &pair->tcp, nullptr, 0, nullptr) == 0 &&
+                mbedtls_net_connect(&pair->udp, address_.c_str(), std::to_string(udpPort).c_str(), MBEDTLS_NET_PROTO_UDP) == 0) {
+                mbedtls_net_set_nonblock(&pair->tcp);
+                mbedtls_net_set_nonblock(&pair->udp);
+                pairs.push_back(std::move(pair));
+                connections_.fetch_add(1);
+            }
+            for (auto& p : pairs) {
+                int n = 0;
+                while ((n = mbedtls_net_recv(&p->tcp, buf, sizeof buf)) > 0) {
+                    p->in.insert(p->in.end(), buf, buf + n);
+                    while (ab::ice::turnFromStream(p->in, datagram) == 1) {
+                        mbedtls_net_send(&p->udp, datagram.data(), datagram.size());
+                        if ((datagram[0] & 0xC0) == 0x40) channelData_.fetch_add(1);
+                    }
+                }
+                while ((n = mbedtls_net_recv(&p->udp, buf, sizeof buf)) > 0) {
+                    out.clear();
+                    ab::ice::turnToStream(buf, static_cast<std::size_t>(n), out);
+                    for (std::size_t at = 0; at < out.size() && !stop_.load();) {
+                        const int sent = mbedtls_net_send(&p->tcp, out.data() + at, out.size() - at);
+                        if (sent > 0) at += static_cast<std::size_t>(sent);
+                        else if (sent != MBEDTLS_ERR_SSL_WANT_WRITE) break;
+                    }
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        for (auto& p : pairs) {
+            mbedtls_net_free(&p->tcp);
+            mbedtls_net_free(&p->udp);
+        }
+    }
+    mbedtls_net_context listen_;
+    std::thread thread_;
+    std::atomic<bool> stop_{false};
+    std::atomic<int> connections_{0}, channelData_{0};
+    std::string address_;
+    int port_ = 0;
+};
+
+// The relay over TCP: how TURN's messages lie in a stream, and a whole session through the bridge.
+void testTurnStream() {
+    using ab::ice::Agent;
+    using ab::ice::turnFromStream;
+    using ab::ice::turnToStream;
+    std::vector<std::uint8_t> stream, datagram;
+    // A STUN message says its own length (here 8 bytes after the header of 20) and goes in as it is.
+    std::vector<std::uint8_t> stun(28, 0);
+    stun[0] = 0x00, stun[1] = 0x03, stun[3] = 8;
+    CHECK(turnToStream(stun.data(), stun.size(), stream) && stream == stun);
+    // Channel data of 5 bytes: 9 bytes as a datagram, filled up to 12 in the stream.
+    const std::vector<std::uint8_t> channel = {0x40, 0x01, 0x00, 0x05, 'h', 'e', 'l', 'l', 'o'};
+    CHECK(turnToStream(channel.data(), channel.size(), stream) && stream.size() == 28 + 12 && stream[37] == 0 && stream[39] == 0);
+    // One of 4 bytes needs no filling.
+    const std::vector<std::uint8_t> even = {0x7F, 0xFE, 0x00, 0x04, 1, 2, 3, 4};
+    CHECK(turnToStream(even.data(), even.size(), stream) && stream.size() == 28 + 12 + 8);
+    // Neither of the two, too short, or a length that is not the datagram's: not passed on.
+    const std::vector<std::uint8_t> other = {0x80, 0x00, 0x00, 0x00}, cut = {0x40, 0x01, 0x00, 0x09, 1, 2};
+    const std::size_t before = stream.size();
+    CHECK(!turnToStream(other.data(), other.size(), stream) && !turnToStream(cut.data(), cut.size(), stream) && !turnToStream(stun.data(), 27, stream) &&
+          !turnToStream(stun.data(), 3, stream) && stream.size() == before);
+    // Out again, whatever pieces the stream arrives in.
+    std::vector<std::uint8_t> arriving;
+    std::vector<std::vector<std::uint8_t>> got;
+    for (const std::uint8_t byte : stream) {
+        arriving.push_back(byte);
+        int r = 0;
+        while ((r = turnFromStream(arriving, datagram)) == 1) got.push_back(datagram);
+        CHECK(r == 0);
+    }
+    CHECK(got.size() == 3 && arriving.empty());
+    if (got.size() == 3) CHECK(got[0] == stun && got[1] == channel && got[2] == even);
+    std::vector<std::uint8_t> nonsense = {0xC0, 0, 0, 0};
+    CHECK(turnFromStream(nonsense, datagram) == -1);
+
+    auto wait = [](const std::function<bool()>& done, int maxMs) {
+        for (int waited = 0; waited < maxMs && !done(); waited += 5) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        return done();
+    };
+    {
+        // One player reaches the relay over TCP alone, the other over UDP; both hide their
+        // addresses, so the way between them is the relayed one, and the packets cross the bridge.
+        // (Where the machine answers to a second address of its own, the relay sits there:
+        // it then refuses what a player sends it directly, as a relay elsewhere would, and
+        // the way through the bridge is the only one. Elsewhere a direct way can form.)
+#ifdef __linux__
+        const std::string where = "127.0.0.2";
+#else
+        const std::string where = "127.0.0.1";
+#endif
+        ab::ice::TestServer relay("player", "secret", where);
+        StreamRelay overTcp(where, relay.port());
+        CHECK(overTcp.port() > 0);
+        ab::ice::Config udp, tcp;
+        udp.turn.push_back({where, relay.port(), "player", "secret"});
+        tcp.turn.push_back({"127.0.0.1", overTcp.port(), "player", "secret", "tcp"});
+        udp.relayOnly = tcp.relayOnly = true;
+        Agent a, b;
+        CHECK(a.start(tcp) && b.start(udp));
+        CHECK(wait([&] { return a.gathered() && b.gathered(); }, 30000));
+        CHECK(overTcp.connections() == 1);
+        CHECK(a.reachedOutside() && a.localDescription().find(" typ relay") != std::string::npos);
+        CHECK(b.setRemoteDescription(a.localDescription()) && a.setRemoteDescription(b.localDescription()));
+        const bool connected = wait([&] { return a.state() == Agent::State::Connected && b.state() == Agent::State::Connected; }, 30000);
+        CHECK(connected);
+        if (connected) {
+            for (int i = 0; i < 100; ++i) {
+                a.send(std::vector<std::uint8_t>(601 + i % 4, static_cast<std::uint8_t>(i)));  // (lengths that need filling, and one that does not)
+                b.send(std::vector<std::uint8_t>(900, static_cast<std::uint8_t>(i + 100)));
+            }
+            int gotA = 0, gotB = 0;
+            bool intact = true;
+            wait([&] {
+                std::vector<std::uint8_t> p;
+                while (b.receive(p)) intact = intact && p.size() == static_cast<std::size_t>(601 + gotB % 4) && p[0] == static_cast<std::uint8_t>(gotB) && p.back() == p[0], ++gotB;
+                while (a.receive(p)) intact = intact && p.size() == 900 && p[0] == static_cast<std::uint8_t>(gotA + 100), ++gotA;
+                return gotA == 100 && gotB == 100;
+            }, 5000);
+            CHECK(intact && gotA == 100 && gotB == 100);
+#ifdef __linux__
+            CHECK_TEXT(a.kind(), "Relay (TCP)");
+            CHECK(overTcp.channelData() >= 100);
+#endif
+        }
+    }
+    {
+        // Nothing listens where the relay should be: no relayed address, and nothing outside was reached.
+        ab::ice::Config config;
+        config.turn.push_back({"127.0.0.1", 9, "player", "secret", "tcp"});
+        Agent a;
+        CHECK(a.start(config));
+        CHECK(wait([&] { return a.gathered(); }, 30000));
+        CHECK(!a.reachedOutside());
+    }
+}
+
 void testHttp() {
     bool tls = false;
     std::string host, port, path;
@@ -725,6 +904,7 @@ int main() {
         {"server certificates and key files", testCertificates},
         {"tournament files", testTournamentFiles},
         {"ice", testIce},
+        {"turn stream", testTurnStream},
         {"http client", testHttp},
         {"master client", testMasterClient},
     };

@@ -1143,6 +1143,16 @@ void NetUi::update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxL
         if (client_.volumeCheck() == net::Client::VolumeCheck::Running) return;
         if (client_.volumeCheck() == net::Client::VolumeCheck::Failed) {
             client_.disconnect();
+#ifdef AB_ONLINE
+            // Once more by the relay over TCP, which such a network lets through.
+            if (iceJoin_.again(online_, nowMs)) {
+                asking_ = Asking::Way;
+                mode_ = Mode::Connecting;
+                connectingText_ = iceJoin_.step();
+                lastState_ = client_.state();
+                return;
+            }
+#endif
             if (!nextCandidate()) showError("The way found to that game stopped carrying data, and there is no other");
             return;
         }

@@ -67,7 +67,7 @@ jobs:
           tests/integration/online.sh build-online master/bin > online.log 2>&1 || true
           cat online.log
           # What failed, where the log is not at hand: as annotations.
-          grep -E "^FAIL|failed:|problem" online.log | head -n 9 | sed 's/^/::error::/' || true
+          grep -E "^FAIL" online.log | head -n 9 | sed 's/^/::error::/' || true
           grep -q "online: all passed" online.log
           ! grep -q "^skip the relay" online.log
 

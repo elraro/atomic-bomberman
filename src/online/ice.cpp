@@ -47,11 +47,29 @@ Agent::~Agent() {
     if (agent_ != nullptr) juice_destroy(agent_);  // waits for its thread to be done with us
 }
 
+bool Agent::reachedOutside() const {
+    if (agent_ == nullptr || !gathered_.load()) return false;
+    char buffer[JUICE_MAX_SDP_STRING_LEN];
+    if (juice_get_local_description(agent_, buffer, sizeof buffer) != JUICE_ERR_SUCCESS) return false;
+    return std::strstr(buffer, " typ srflx") != nullptr || std::strstr(buffer, " typ relay") != nullptr;
+}
+
 bool Agent::start(const Config& config) {
     if (agent_ != nullptr) return false;
     config_ = config;
+    if (config_.turn.size() > 2) config_.turn.resize(2);
+    for (TurnServer& t : config_.turn) {
+        if (t.transport == "udp") continue;
+        // libjuice speaks TURN over UDP alone: to this machine, and a bridge takes it on.
+        auto stream = std::make_unique<TurnStream>();
+        if (!stream->start(t.host, t.port, t.transport == "tls")) continue;
+        t.host = "127.0.0.1";
+        t.port = stream->localPort();
+        streams_.push_back(std::move(stream));
+    }
     std::vector<juice_turn_server_t> turn;
     for (const TurnServer& t : config_.turn) {
+        if (t.transport != "udp" && t.host != "127.0.0.1") continue;  // (its bridge could not be opened)
         juice_turn_server_t s{};
         s.host = t.host.c_str();
         s.port = static_cast<std::uint16_t>(t.port);
@@ -144,10 +162,11 @@ std::string Agent::remote() const {
 std::string Agent::kind() const {
     char local[JUICE_MAX_CANDIDATE_SDP_STRING_LEN], remote[JUICE_MAX_CANDIDATE_SDP_STRING_LEN];
     if (agent_ == nullptr || juice_get_selected_candidates(agent_, local, sizeof local, remote, sizeof remote) != JUICE_ERR_SUCCESS) return "Direct";
+    if (std::strstr(local, " typ relay") != nullptr && !streams_.empty()) return "Relay (TCP)";
     return std::strstr(local, " typ relay") != nullptr || std::strstr(remote, " typ relay") != nullptr ? "Relay" : "Direct";
 }
 
-TestServer::TestServer(const std::string& username, const std::string& password) {
+TestServer::TestServer(const std::string& username, const std::string& password, const std::string& address) {
     quietOnce();
     juice_server_credentials_t credentials{};
     credentials.username = username.c_str();
@@ -156,7 +175,7 @@ TestServer::TestServer(const std::string& username, const std::string& password)
     c.credentials = &credentials;
     c.credentials_count = 1;
     c.max_allocations = 100;
-    c.bind_address = "127.0.0.1";
+    c.bind_address = address.c_str();
     c.realm = "test";
     server_ = juice_server_create(&c);
     if (server_ != nullptr) port_ = juice_server_get_port(server_);
