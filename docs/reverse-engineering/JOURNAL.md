@@ -779,3 +779,15 @@ Not a discovery about the original; a record of what was built and seen.
 - `atomic_verify --tournament`: every stated result held against the records.
 - Validation (Level 4): `ab_online_tests` "tournament files"; Go tests of bracket, results and validation; `ab_net_tests` (listed players only, settings fixed); `ab_ui_tests` "tournament by pad"; `tests/integration/online.sh` (a match played by its two players, a third player and a stranger kept out, a match that is not ready and a server with other keys refused, the result borne out by the records, a false result and foreign records not). The tournament screen looked at once from an unattended run.
 - Not done: a tournament of several matches played through; anything with people.
+
+### Modern: ways through routers by ICE (online play, phase 5, the part over UDP)
+
+Not a discovery about the original; a record of what was built and seen.
+
+- `net::Carrier`: the link runs over anything that carries packets; `Client::connectVia`, `Server::adopt`.
+- `src/online/ice.*`: libjuice 1.7.4 (ICE, STUN, TURN over UDP) as a carrier. `src/online/ice_session.hpp`: the joining player's offer and the host's answer through the master's `/signal`; the way found becomes the connection.
+- The game, `atomic_server` and `net_bot` use it for games found on the master; the host's address is the next thing tried. Volume check of a way found (64 KB each way). "Hide my address": descriptions filtered to the relay's addresses. The lobby shows each player's path. Protocol version 11.
+- Library: pjnath and libnice, which the specification named, do not build for every target (CMake 3.28 and Linux/macOS only; GLib). libjuice does, on all seven CI targets, but has no TURN over TCP.
+- **Not built: TURN over TCP and TLS** (a decision of 2026-10-11). The project's own TCP relay therefore stays.
+- Validation: see `docs/testing/validation-status.md`. Found by the carrier test: a server did not answer a repeated key over a lossy carrier (fixed).
+- Not done: anything through a real router.

@@ -163,6 +163,11 @@ void encode(ByteWriter& w, const HelloMsg& m) {
     for (std::uint8_t b : m.playerSignature) w.u8(b);
 }
 
+const char* pathName(int path) {
+    static const char* const kNames[4] = {"Direct", "Relay", "TCP", "Relay (TCP)"};
+    return kNames[path & 3];
+}
+
 std::vector<std::uint8_t> playerProofMessage(const Key& connectionMaster) {
     static const char kWhat[] = "atomic bomberman player key v1";
     std::vector<std::uint8_t> message(kWhat, kWhat + sizeof kWhat - 1);
@@ -258,6 +263,7 @@ void encode(ByteWriter& w, const LobbyState& m) {
         w.u16(static_cast<std::uint16_t>(std::clamp(c.pingMs, 0, 65535)));
         w.flag(c.ready);
         for (std::uint8_t b : c.playerKey) w.u8(b);
+        w.u8(static_cast<std::uint8_t>(c.path));
     }
 }
 
@@ -301,6 +307,7 @@ bool decode(ByteReader& r, LobbyState& m) {
         c.pingMs = r.u16();
         c.ready = r.flag();
         for (std::uint8_t& b : c.playerKey) b = r.u8();
+        c.path = r.u8() & 3;
         if (c.seat < -1 || c.seat >= kMaxPlayers) return false;
         m.clients.push_back(std::move(c));
     }

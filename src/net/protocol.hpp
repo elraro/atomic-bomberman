@@ -17,7 +17,7 @@ namespace ab::net {
 
 inline constexpr std::uint32_t kTcpMagic = 0x4E4D4241u;  // "ABMN"
 inline constexpr std::uint32_t kUdpMagic = 0x554D4241u;  // "ABMU"
-inline constexpr std::uint16_t kProtocolVersion = 10;
+inline constexpr std::uint16_t kProtocolVersion = 11;
 inline constexpr std::uint16_t kDefaultPort = 27410;
 // Every server also listens here for searches on the local network, whatever its own port.
 inline constexpr std::uint16_t kDiscoveryPort = 27409;
@@ -28,8 +28,8 @@ inline constexpr std::uint8_t kServerSender = 255;
 inline constexpr int kMaxLocalPlayers = 4;  // players at one computer
 
 // Messages and datagrams of a connection, all of them carried by its link.
-enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, Continue, Pong, Locals, Ban, Unban, Admin, Login, LeaveMatch, Ready, SeedCommit, SeedReveal, InputLog };
-enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Delta, RoundEnd, Snapshot, Ping, Roulette, Certificate, SeedAsk, SeedCommits, Record };
+enum class ClientMsg : std::uint8_t { Hello = 1, Chat, Option, Start, Team, Kick, Input, Continue, Pong, Locals, Ban, Unban, Admin, Login, LeaveMatch, Ready, SeedCommit, SeedReveal, InputLog, Probe };
+enum class ServerMsg : std::uint8_t { Welcome = 1, Reject, Lobby, Chat, RoundStart, Delta, RoundEnd, Snapshot, Ping, Roulette, Certificate, SeedAsk, SeedCommits, Record, ProbeEcho };
 // A datagram of a connection: its contents are encrypted. Searches on the LAN stay in the clear.
 inline constexpr std::uint8_t kSealedDatagram = 0x80;
 // In the clear, before a connection has keys: the client's key (with the cookie the server
@@ -152,7 +152,20 @@ struct ClientInfo {
     int pingMs = 0;
     bool ready = false;  // has said so in the lobby (the administrator need not: starting says it)
     Key playerKey{};     // the player key it proved when joining; zeros: none
+    int path = 0;        // how it is connected: kPathDirect...
 };
+
+// The way a client's packets travel, as the lobby shows it.
+inline constexpr int kPathDirect = 0;    // UDP, straight or through routers
+inline constexpr int kPathRelay = 1;     // through a TURN relay
+inline constexpr int kPathTcp = 2;       // inside a TCP connection
+inline constexpr int kPathTcpRelay = 3;  // inside TCP, through the project's own relay
+const char* pathName(int path);          // "Direct", "Relay", "TCP", "Relay (TCP)"
+
+// The volume check of a new path (online-play.md): this many datagrams of this size go to
+// the server and come back, and the path counts as good if enough of the last ones return.
+inline constexpr int kProbeCount = 64;
+inline constexpr std::size_t kProbeBytes = 1000;
 
 struct LobbyState {
     Phase phase = Phase::Lobby;

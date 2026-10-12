@@ -21,6 +21,7 @@
 #include "online/announcer.hpp"
 #include "online/bootstrap.hpp"
 #include "online/certificate.hpp"
+#include "online/ice_session.hpp"
 #include "online/record_check.hpp"
 #include "online/tournament.hpp"
 #endif
@@ -110,6 +111,8 @@ private:
 
     void close();
     void connectTo(const std::string& address, bool remember);
+    void connectOver(std::unique_ptr<net::Carrier> way);
+    bool nextCandidate();  // the next address the master named, if there is one
     void startHost();
     // Online play (the master server): see docs/specifications/online-play.md.
     bool onlineBegin();  // false: not possible, and the error screen says why
@@ -193,7 +196,10 @@ private:
     std::string onlineUrls_, onlineKey_;  // from the command line
     std::string onlineName_;              // the name the session with the master was opened under
     std::string codeText_;                // the join code being typed
-    enum class Asking { Nothing, Find, Join } asking_ = Asking::Nothing;  // what the master is being asked
+    enum class Asking { Nothing, Find, Join, Way } asking_ = Asking::Nothing;  // what the master is being asked; Way: a way through routers is being looked for
+    bool viaIce_ = false;                 // the connection in hand runs over a way ICE found
+    bool pathChecked_ = false;            // ...and has passed its volume check
+    std::string connectingText_;          // what the connecting box says, when it is not "Connecting to ..."
     std::vector<std::string> candidates_; // the ways to the game server the master named
     std::size_t candidate_ = 0;           // the one being tried
     std::string expectIdentity_;          // the identity that server must show
@@ -212,6 +218,8 @@ private:
     bool havePlayerKey_ = false;
     online::Online online_;
     online::HostAnnouncer announcer_;
+    online::IceHost iceHost_;
+    online::IceJoin iceJoin_;
     online::Tournament tournament_;
     online::HttpJob tournamentJob_;
 #endif

@@ -2145,6 +2145,49 @@ void testCarrier() {
     CHECK(h.until([&] { return ann.state() == Client::State::Lobby && !ann.lobby().clients.empty(); }));
     CHECK(ann.encrypted() && !ann.udpActive());
     CHECK(ann.pathKind() == "Pipe");
+    // The volume check: 64 KB there and back; it passes on a line that goes on carrying
+    // (a quarter of the packets lost does not fail it)...
+    CHECK(ann.volumeCheck() == Client::VolumeCheck::NotRun);
+    ann.startVolumeCheck(h.now);
+    CHECK(h.until([&] { return ann.volumeCheck() != Client::VolumeCheck::Running; }, 6000));
+    CHECK(ann.volumeCheck() == Client::VolumeCheck::Passed);
+    {
+        // ...and fails on one that stops carrying after 16 KB, as some networks do to a new flow.
+        auto e = std::make_shared<std::deque<Bytes>>(), f = std::make_shared<std::deque<Bytes>>();
+        auto budget = std::make_shared<std::size_t>(1u << 30);
+        struct Choking : PipeEnd {
+            std::shared_ptr<std::size_t> left;
+            void send(const Bytes& packet) override {
+                if (*left < packet.size()) return;  // swallowed without a word
+                *left -= packet.size();
+                PipeEnd::send(packet);
+            }
+        };
+        auto choking = [&](bool clientSide) {
+            auto c = std::make_unique<Choking>();
+            c->out = clientSide ? e : f;
+            c->in = clientSide ? f : e;
+            c->up = up;
+            c->lossPercent = std::make_shared<int>(0);
+            c->rng = rng;
+            c->name = clientSide ? "the server" : "203.0.113.8:4000";
+            c->left = budget;
+            return c;
+        };
+        CHECK(h.server.adopt(choking(false)));
+        h.clients.push_back(std::make_unique<Client>());
+        Client& cy = *h.clients.back();
+        cy.setAlwaysReady(true);
+        cy.connectVia(choking(true), "the server", "Cy", "pass", h.now);
+        CHECK(h.until([&] { return cy.state() == Client::State::Lobby; }));
+        *budget = 16000;
+        cy.startVolumeCheck(h.now);
+        CHECK(h.until([&] { return cy.volumeCheck() != Client::VolumeCheck::Running; }, 6000));
+        CHECK(cy.volumeCheck() == Client::VolumeCheck::Failed);
+        cy.disconnect();
+        *budget = 1u << 30;
+        CHECK(h.until([&] { return h.server.players() == 1; }));
+    }
     bool logged = false;
     for (const std::string& line : h.log) logged = logged || line.find("from 203.0.113.7:4000 (Pipe)") != std::string::npos;
     CHECK(logged);
@@ -2158,6 +2201,10 @@ void testCarrier() {
     CHECK(played);
     if (!played) return;
     CHECK_EQ(ann.world()->stateHash(true), h.server.world()->stateHash(true));
+    // The lobby says how each is connected.
+    CHECK(h.until([&] { return bob.lobby().clients.size() == 2; }));
+    CHECK_EQ(bob.lobby().client(bob.id())->path, kPathDirect);
+    CHECK(std::string(pathName(kPathRelay)) == "Relay" && std::string(pathName(kPathTcpRelay)) == "Relay (TCP)");
     // A wrong password over a carrier is refused like any other.
     auto c = std::make_shared<std::deque<Bytes>>(), d = std::make_shared<std::deque<Bytes>>();
     auto second = [&](bool clientSide) {

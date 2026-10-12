@@ -1,6 +1,6 @@
 # Online play over the internet (target design)
 
-Status: **every phase but 5 is implemented** (1: the screens worked with a gamepad, the on-screen keyboard, the ready state; 2: the link; 3: snapshots, all three described in `networking.md`; 4: the master server, the signed configuration, games found by list or by code: `master/README.md`, `../operations/online.md`; 6: server certificates and player keys; 7: signed match records; 8: tournaments as signed files, all three in section 7 below). **Phase 5 (reaching players behind routers: STUN, TURN, the relay over TCP) is not implemented**: a host must still be reachable from outside, and the project's own TCP relay is still in place. Where what was built differs from what this document first said, the difference is noted in place. It describes where the network mode is going. What the game does today is in `networking.md` (snapshots over the link, to an address, a TCP relay), which stays valid until the phases below replace its parts.
+Status: **every phase is implemented except one part of phase 5** (1: the screens worked with a gamepad, the on-screen keyboard, the ready state; 2: the link; 3: snapshots, all three described in `networking.md`; 4: the master server, the signed configuration, games found by list or by code: `master/README.md`, `../operations/online.md`; 6: server certificates and player keys; 7: signed match records; 8: tournaments as signed files, all three in section 7 below). 5: a way through routers by ICE, with STUN and a TURN relay over UDP, in "Connectivity" below). **Not implemented: the relay over TCP / TLS** for networks without UDP (the library in use does not do it); the project's own TCP relay is therefore still in place. Where what was built differs from what this document first said, the difference is noted in place. It describes where the network mode is going. What the game does today is in `networking.md` (snapshots over the link, to an address, a TCP relay), which stays valid until the phases below replace its parts.
 
 Like `networking.md`, this is the project's own design. Nothing here is a claim about the original game, whose IPX/serial network mode is not reproduced.
 
@@ -131,7 +131,7 @@ flags: free-form switches
 
 ### Library and server
 
-- In the game: **pjnath** (the NAT library of PJSIP; C; GPL-2.0-or-later, which this project's GPL-3.0 allows), which implements STUN, ICE connectivity checks and a TURN client over UDP, TCP and TLS. To be confirmed in phase 5 by building it for every target (Linux and Windows on x86-64 and ARM64, macOS universal, Android) and by a relayed connection over TCP against coturn. If it fails, the fallback is `libnice` (needs GLib). libjuice, named in an earlier version, is UDP only and so cannot reach the relay over TCP. Writing STUN or TURN ourselves is not an option.
+- In the game, as built: **libjuice** (C, MPL-2.0, fetched and built with the game), which implements STUN, ICE connectivity checks and a TURN client over UDP. It builds on every target (Linux and Windows on x86-64 and ARM64, macOS universal, Android; all in CI). The two libraries named here before did not: **pjnath**'s CMake build needs CMake 3.28 (Android's tools bring 3.22) and is marked as tried on Linux and macOS only; **libnice** needs GLib. libjuice does not speak TURN over TCP, so that step of the ladder is not built (see there). Writing STUN or TURN ourselves is not an option.
 - On the server side: **coturn**, serving STUN and TURN on the owner's machine. TURN credentials are time-limited ones derived from a secret shared between coturn and the master (coturn's `use-auth-secret` mode), so a credential leaked from one session is useless an hour later.
 - Deployment: coturn listens on **3478 (UDP and TCP) and 443 (TLS)**, and its range of relayed ports is set low (for instance 5000-9999). Reported, not verified by us: some mobile carriers drop UDP to high ports.
 
@@ -156,6 +156,8 @@ Host                                  Master                               Clien
 
 ### The ladder
 
+**As built** (the list after this paragraph is the target): (1) and (2) are one step, ICE: the joining player's game and the host exchange descriptions through the master (`/signal`), their agents try every pair of addresses, and the best that works is used, straight or through the relay over UDP. The way found is then put through the volume check. If no way is found within 25 s, or the way fails the check, the game goes on to (3) **the host's address as the master saw it**, over UDP and, if nothing answers within two seconds, inside TCP (the carrier of `networking.md`). **TURN over TCP and TLS is not built**: the library in use cannot do it. So a player on a network without UDP reaches only a host whose port is open to the outside, and the project's own TCP relay (`--relay-server`) is still there for a host that registers with one. (4) is said as an error on the screen.
+
 Tried in this order; the first that works is used:
 
 1. **Direct UDP** (same LAN, public address, or hole punched through both routers).
@@ -165,11 +167,13 @@ Tried in this order; the first that works is used:
 
 ### What the player sees
 
-The lobby shows, per player, the path and the measured delay: `Direct`, `Relay`, `Relay (TCP), may stutter`. The test runs when joining a lobby, before any match starts, and takes a few seconds at most.
+The lobby shows, per player, the path and the measured delay: `Direct`, `Relay`, `Relay (TCP), may stutter`. (As built: nothing for a direct path, `Relay`, `TCP`, or `Relay (TCP)` for the project's own relay, before the delay.) The test runs when joining a lobby, before any match starts, and takes a few seconds at most.
 
 **Volume check.** A path is declared good only after about 64 KB has gone over it in each direction during the test (padding datagrams over two or three seconds, acknowledged by the other side). The ICE checks and the handshake prove both directions, but they are a few kilobytes, and so is the traffic of a lobby. Reported by a reviewer, not verified by us: some networks let a new UDP flow start and then drop it silently after roughly 16 KB. Without the check such a path would die in the first round instead of in the test. An earlier version of this document left the probe out pending evidence; this report is that evidence.
 
 **Always relay.** A setting, off by default: "Hide my address (always use the relay)". With it the game offers and accepts relayed candidates only, so neither the host nor the other players learn its address; they see the relay's. It costs delay and the owner's traffic, and is said so beside the setting.
+
+As built: the setting (Join Network Game, "Online, hide my address"; `--hide-address` for the dedicated server) strikes every address but the relay's from the description a game sends, and from the one it receives. The game's ICE agent still knows its own addresses and may send a check from one of them to the other side's relay address; the relay drops it, having been told only of the relay address. So the hiding rests on the relay doing what the TURN standard says. A game that hides needs a relay on both sides (the master gives both the credentials); with no relay configured it finds no way at all.
 
 NAT type detection is not done: the old classification by STUN is unreliable, and the ICE checks answer the only question that matters (does a path work) directly.
 
@@ -392,7 +396,7 @@ Each phase is usable on its own and ends with tests.
 | 2 | The link abstraction: reliable messages over UDP; today's protocol moved onto it. **Done.** | nothing |
 | 3 | Snapshot model replacing lockstep, with measurements of size and behaviour under loss. **Done** (sizes in `networking.md`; no buffer of two steps yet, see there). | 2 |
 | 4 | Master server (guest sessions, lobbies, status), signed configuration, browse / create / join by code in the game. **Done**; a player reaches a host at the address the master saw, so the host must be reachable until phase 5. | 1 |
-| 5 | pjnath + coturn: discovery, hole punching, TURN over UDP, TCP and TLS, the ladder, volume check, always-relay setting, connection display; the old relay removed | 2, 4 |
+| 5 | ICE library + coturn: discovery, hole punching, TURN over UDP, TCP and TLS, the ladder, volume check, always-relay setting, connection display; the old relay removed. **Partly done**: everything over UDP (with libjuice), the volume check, the setting, the display. **Not done: TURN over TCP / TLS**, and so the old relay stays. | 2, 4 |
 | 6 | Server certificates and player keys: the tool that issues certificates, the certificate in the handshake, "verified" in the lobby, revocation through the configuration. **Done.** | 2 (revocation: 4) |
 | 7 | Signed match records: seed by commit and reveal, signed input statements, the record, `atomic_verify`, a tool that sums statistics from records. **Done** (per round; `atomic_verify --stats` is the tool that sums). | 3, 6 |
 | 8 | Tournaments as signed files: the format, the organiser's tool, the screen, servers admitting only listed players. **Done.** | 6, 7 |
@@ -405,7 +409,7 @@ Phases 6 to 8 do not depend on the master (4) or on NAT traversal (5): a tournam
 | Where | What | Note |
 |---|---|---|
 | Game | An HTTPS client | As built: **mbedTLS** (3.6, fetched and built with the game) under a small client of this project's own (`src/online/http.*`), the same code on every platform including Android. Chosen over libcurl and the platforms' own clients because it needs nothing installed and no Java side. |
-| Game | pjnath (PJSIP) | Phase 5. |
+| Game | libjuice | ICE, STUN, TURN over UDP. As built (pjnath, named before, does not build for every target). |
 | Game, server, tools | An Ed25519 implementation | As built: **Monocypher** (4.0, two C files fetched and built with the game) instead of libsodium, which has no CMake build and would have needed a different recipe on every platform. The master uses Go's standard library. The game's own X25519 / ChaCha20 code is still in use for connections. |
 | Master | Go toolchain, PostgreSQL | Separate program, own CI job. |
 | Owner's machine | master, PostgreSQL, coturn, a domain with a certificate; the configuration file also on at least one other host | |
@@ -428,7 +432,7 @@ What automated tests cannot show, and must be tried by people: real routers and 
 
 
 - ~~Whether one datagram per snapshot is enough with ten players.~~ Measured in phase 3: yes (283 bytes on average against a state five steps old, 844 at most).
-- Whether pjnath builds on every target and how much of PJSIP has to come with it (phase 5).
+- Which library is to do TURN over TCP and TLS (libre has it and a CMake build; untried), or whether the project's relay stays for that case.
 - Where the mirrors of the configuration file are hosted.
 - Region and delay hints in the lobby list need a way to measure delay to a host before joining.
 - Where the root key is kept and how certificates are renewed every 90 days without it becoming a chore.

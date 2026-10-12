@@ -37,6 +37,13 @@ void Client::send(ClientMsg type, const Bytes& payload) {
     if (keyed_) link_.sendMessage(static_cast<std::uint8_t>(type), payload);
 }
 
+void Client::startVolumeCheck(std::uint64_t nowMs) {
+    if (!welcomed_ || volume_ == VolumeCheck::Running) return;
+    volume_ = VolumeCheck::Running;
+    probesSent_ = probesBack_ = 0;
+    probeAt_ = nowMs;
+}
+
 std::string Client::pathKind() const {
     if (carrier_) return carrier_->kind();
     if (viaRelay_) return "Relay (TCP)";
@@ -98,6 +105,7 @@ void Client::connect(const std::string& address, const std::string& name, const 
     udpHeard_ = false;
     answered_ = false;
     keySentAt_ = 0;
+    volume_ = VolumeCheck::NotRun;
     cookie_.assign(kCookieBytes, 0);
     // "CODE@relay": the game is reached through a relay, by the code its host was given.
     std::string relay;
@@ -140,6 +148,7 @@ void Client::connectVia(std::unique_ptr<Carrier> carrier, const std::string& lab
     udpHeard_ = false;
     answered_ = false;
     keySentAt_ = 0;
+    volume_ = VolumeCheck::NotRun;
     cookie_.assign(kCookieBytes, 0);
     viaRelay_ = false;
     overTcp_ = false;
@@ -643,6 +652,10 @@ void Client::update(std::uint64_t nowMs) {
     Bytes payload;
     while (!over() && link_.nextMessage(type, payload)) handleFrame(type, payload, nowMs);
     while (!over() && link_.nextDatagram(type, payload)) {
+        if (static_cast<ServerMsg>(type) == ServerMsg::ProbeEcho) {
+            if (volume_ == VolumeCheck::Running && payload.size() == kProbeBytes && payload[0] >= kProbeCount * 3 / 4 && payload[0] < kProbeCount) ++probesBack_;
+            continue;
+        }
         if (static_cast<ServerMsg>(type) != ServerMsg::Delta || satOut_) continue;
         ++deltas_;
         largestDelta_ = std::max(largestDelta_, payload.size());
@@ -653,6 +666,18 @@ void Client::update(std::uint64_t nowMs) {
     if (over()) return;
     if (link_.closedByPeer() || link_.broken() || nowMs - link_.lastHeard() > kSilenceMs) return fail("The connection to the server was lost");
 
+    if (volume_ == VolumeCheck::Running) {
+        // One every 30 ms; then a second and a half for the last of them to come back.
+        while (probesSent_ < kProbeCount && nowMs >= probeAt_) {
+            Bytes probe(kProbeBytes, 0xAB);
+            probe[0] = static_cast<std::uint8_t>(probesSent_++);
+            link_.sendDatagram(static_cast<std::uint8_t>(ClientMsg::Probe), probe);
+            probeAt_ += 30;
+        }
+        // Enough of the last quarter back: the path still carries after 48 KB.
+        if (probesBack_ >= kProbeCount / 8) volume_ = VolumeCheck::Passed;
+        else if (probesSent_ >= kProbeCount && nowMs > probeAt_ + 1500) volume_ = VolumeCheck::Failed;
+    }
     if (state_ == State::Round) sendInput(nowMs);
     link_.update(nowMs, [this](const Bytes& p) { transmit(p); });
     if (overTcp_) tcp_.pump();

@@ -48,6 +48,12 @@ public:
     void connectVia(std::unique_ptr<Carrier> carrier, const std::string& label, const std::string& name, const std::string& password, std::uint64_t nowMs);
     // What kind of path the connection runs over: "Direct", "Relay", "TCP".
     std::string pathKind() const;
+    // The volume check of the path (once joined): datagrams of a kilobyte to the server and
+    // back, 64 KB each way over two seconds. Some networks let a new UDP flow start and drop
+    // it after a few kilobytes; such a path fails here and not in the first round.
+    enum class VolumeCheck { NotRun, Running, Passed, Failed };
+    void startVolumeCheck(std::uint64_t nowMs);
+    VolumeCheck volumeCheck() const { return volume_; }
     void disconnect();
     // Where the identities of servers visited are remembered ("address fingerprint" lines).
     // A server whose identity differs from the remembered one is refused; forgetServer()
@@ -205,7 +211,10 @@ private:
     Link link_;
     UdpSocket udp_;
     TcpSocket tcp_;
-    std::unique_ptr<Carrier> carrier_;  // set: the packets go this way, not through the sockets above
+    std::unique_ptr<Carrier> carrier_;
+    VolumeCheck volume_ = VolumeCheck::NotRun;
+    int probesSent_ = 0, probesBack_ = 0;  // back: of the last quarter
+    std::uint64_t probeAt_ = 0;  // set: the packets go this way, not through the sockets above
     bool overTcp_ = false;     // the packets travel as frames of a TCP connection
     bool tcpIntro_ = false;    // that connection is up (and the relay has been told what is wanted)
     bool udpHeard_ = false;    // the server has answered over UDP

@@ -44,6 +44,8 @@ struct Server::Peer {
     TcpSocket socket;
     std::unique_ptr<Carrier> carrier;  // set: the packets travel this way (a path found by ICE), not through a socket of the server's
     std::string label;             // for such a peer: what the other end is called in the log
+    bool viaOwnRelay = false;      // came through the project's TCP relay
+    int probes = 0;                // datagrams of the volume check echoed so far
     Address address{};             // where its packets come from and go to
     Key clientPublic{};            // the key it opened the connection with
     Bytes keyAnswer;               // what was answered, to say again if the answer got lost
@@ -447,6 +449,7 @@ void Server::refreshLobby() {
             info.pingMs = p->pingMs;
             info.ready = p->ready;
             info.playerKey = p->playerKey;
+            info.path = p->carrier ? (p->carrier->kind() == "Relay" ? kPathRelay : kPathDirect) : p->viaOwnRelay ? kPathTcpRelay : p->viaTcp ? kPathTcp : kPathDirect;
             lobby_.clients.push_back(info);
         }
 }
@@ -1018,6 +1021,7 @@ void Server::pumpRelay() {
             auto p = std::make_unique<Peer>();
             p->host = a.host;
             p->viaTcp = true;
+            p->viaOwnRelay = true;
             p->address = relayAddress_;
             p->socket = std::move(a.socket);
             p->connectedAt = now_;
@@ -1528,6 +1532,11 @@ void Server::update(std::uint64_t nowMs) {
         Bytes payload;
         while (!p.gone && p.link.nextMessage(type, payload)) handleFrame(p, type, payload);
         while (!p.gone && p.link.nextDatagram(type, payload)) {
+            // The volume check of a new path: sent back as it came, a hundred at most for a connection.
+            if (static_cast<ClientMsg>(type) == ClientMsg::Probe && p.joined && payload.size() <= kProbeBytes && ++p.probes <= 100) {
+                p.link.sendDatagram(static_cast<std::uint8_t>(ServerMsg::ProbeEcho), payload);
+                continue;
+            }
             if (static_cast<ClientMsg>(type) != ClientMsg::Input || !p.joined) continue;
             ByteReader r(payload);
             InputMsg m;

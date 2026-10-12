@@ -36,6 +36,7 @@ struct Settings {
     std::string tournament;           // tournament: the tournament file last opened (a path or an address)
     std::string tournamentKey;        // tournament_key: the organiser's key the player has chosen to believe for it (hex)
     long long tournamentSerial = 0;   // tournament_serial: the newest issue of it seen
+    bool netHideAddress = false;      // net_hide_address: online, be reached and reach others through the relay only
     int netOnline = 0;                // net_online: a hosted game is 0 not announced, 1 listed, 2 found by its code only
     std::string netRelay;             // net_relay: relay to register a hosted game with ("host[:port]"), or empty
     bool netPrediction = true;        // net_prediction: show own moves at once instead of after the round trip

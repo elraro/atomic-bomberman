@@ -19,7 +19,8 @@ namespace {
 
 using State = net::Client::State;
 
-constexpr int kJoinFields = 7;   // name, address, password, join, browse online, join by code, tournament; then the servers found, then back
+constexpr int kJoinFields = 8;   // name, address, password, join, browse online, join by code, tournament, hide my address; then the servers found, then back
+constexpr int kJoinHideRow = 7;
 constexpr int kTournamentRows = 5;  // the file, open, play my match, trust the organiser, back
 constexpr int kHostRows = 8;     // name, server name, port, password, relay, announce online, start, back
 constexpr int kHostOnlineRow = 5;
@@ -203,6 +204,13 @@ void NetUi::close() {
     hostOnline_ = false;
     onlineNote_.clear();
     asking_ = Asking::Nothing;
+    viaIce_ = false;
+    pathChecked_ = false;
+    connectingText_.clear();
+#ifdef AB_ONLINE
+    iceJoin_.cancel();
+    iceHost_.reset();
+#endif
     mode_ = Mode::Closed;
 }
 
@@ -358,6 +366,8 @@ void NetUi::connectTo(const std::string& address, bool remember) {
         if (hooks_.settingsChanged) hooks_.settingsChanged();
     }
     connectingTo_ = address;
+    connectingText_.clear();
+    viaIce_ = false;
     connectingSince_ = clock();
     client_.expectIdentity(expectIdentity_);  // set for a game the master server named; empty otherwise
 #ifdef AB_ONLINE
@@ -564,7 +574,8 @@ void NetUi::askJoin(const std::string& lobbyId, const std::string& code) {
 void NetUi::updateOnline(std::uint64_t nowMs) {
 #ifdef AB_ONLINE
     if (hosting_ && hostOnline_) {
-        announcer_.update(nowMs, online_, server_, net::cleanText(cfg_.netServerName, 32), cfg_.netOnline == 1);
+        announcer_.update(nowMs, online_, server_, net::cleanText(cfg_.netServerName, 32), cfg_.netOnline == 1, true);
+        iceHost_.update(nowMs, online_, server_, cfg_.netHideAddress);  // players behind routers find a way in
         if (online_.announced()) onlineNote_ = std::string(cfg_.netOnline == 1 ? "Listed, code " : "Code ") + online_.code();
         else onlineNote_ = online_.error().empty() ? "Announcing..." : "Not announced online";
     }
@@ -573,6 +584,22 @@ void NetUi::updateOnline(std::uint64_t nowMs) {
         const online::HttpResponse r = tournamentJob_.take();
         if (r.ok()) readTournamentFile(r.body);
         else tournamentNote_ = "Not fetched: " + (r.status == 0 ? r.error : "the server answered " + std::to_string(r.status));
+    }
+    if (asking_ == Asking::Way) {
+        // A way to the host through the routers is being looked for.
+        iceJoin_.update(nowMs, online_);
+        connectingText_ = iceJoin_.step();
+        if (iceJoin_.state() == online::IceJoin::State::Ready) {
+            asking_ = Asking::Nothing;
+            connectOver(iceJoin_.take());
+        } else if (iceJoin_.state() == online::IceJoin::State::Failed) {
+            // None: the host's address as the master saw it, if it gave one.
+            asking_ = Asking::Nothing;
+            iceJoin_.cancel();
+            viaIce_ = true;  // (so that the first address is the next thing tried)
+            if (!nextCandidate()) showError("No way to that game was found (its host cannot be reached from here)");
+        }
+        return;
     }
     if (asking_ == Asking::Nothing || online_.busy()) return;
     if (!online_.error().empty()) return showError(online_.error());
@@ -588,13 +615,50 @@ void NetUi::updateOnline(std::uint64_t nowMs) {
     asking_ = Asking::Nothing;
     if (info.candidates.empty()) return showError("That game has not said how it can be reached");
     // The ways in are tried one after the other; whoever answers must show the identity the master named.
-    candidates_ = info.candidates;
+    candidates_.clear();
+    bool offersIce = false;
+    for (const std::string& c : info.candidates) {
+        if (c == online::kIceCandidate) offersIce = true;
+        else candidates_.push_back(c);
+    }
     candidate_ = 0;
     expectIdentity_ = info.identityKey;
+    if (offersIce) {
+        // First a way through the routers (straight, or by the relay); the host's address after that.
+        iceJoin_.start(online_, info, cfg_.netHideAddress, nowMs);
+        asking_ = Asking::Way;
+        connectingText_ = iceJoin_.step();
+        return;
+    }
+    if (candidates_.empty()) return showError("That game has not said how it can be reached");
     connectTo(candidates_[0], false);
 #else
     (void)nowMs;
 #endif
+}
+
+// The same over a way through routers that ICE has found.
+void NetUi::connectOver(std::unique_ptr<net::Carrier> way) {
+    connectingTo_ = "the host";
+    connectingText_.clear();
+    connectingSince_ = clock();
+    viaIce_ = true;
+    pathChecked_ = false;
+    client_.expectIdentity(expectIdentity_);
+    client_.setPrediction(cfg_.netPrediction);
+    client_.connectVia(std::move(way), "the host", playerName(), password_, clock());
+    lastState_ = State::Connecting;
+    lastRound_ = 0;
+    mode_ = Mode::Connecting;
+}
+
+bool NetUi::nextCandidate() {
+    const std::size_t next = viaIce_ ? 0 : candidate_ + 1;
+    if (next >= candidates_.size()) return false;
+    viaIce_ = false;
+    candidate_ = next;
+    connectTo(candidates_[candidate_], false);
+    return true;
 }
 
 void NetUi::startHost() {
@@ -795,6 +859,10 @@ void NetUi::key(unsigned key, bool ctrl, bool pad) {
                 else if (row_ == 4) openBrowse();
                 else if (row_ == 5) openCode(pad);
                 else if (row_ == 6) openTournament();
+                else if (row_ == kJoinHideRow) {
+                    cfg_.netHideAddress = !cfg_.netHideAddress;
+                    if (hooks_.settingsChanged) hooks_.settingsChanged();
+                }
                 else if (row_ >= kJoinFields + servers) close();
                 else {
                     candidates_.clear();
@@ -1067,12 +1135,23 @@ void NetUi::update(std::uint64_t nowMs, const std::array<PlayerInput, net::kMaxL
         if (hooks_.roundStarted) hooks_.roundStarted(client_.setup().level);
     }
     if (state == lastState_) return;
-    if (state == State::Failed) {
-        // Nobody at that address: the next way the master named, if there is one.
-        if (!client_.answered() && candidate_ + 1 < candidates_.size()) {
-            connectTo(candidates_[++candidate_], false);
+    // A way through routers is tried out before the lobby is shown: 64 KB each way. A way
+    // that stops carrying is given up for the next one.
+    if (state == State::Lobby && viaIce_ && !pathChecked_) {
+        if (client_.volumeCheck() == net::Client::VolumeCheck::NotRun) client_.startVolumeCheck(nowMs);
+        connectingText_ = "Testing the connection...";
+        if (client_.volumeCheck() == net::Client::VolumeCheck::Running) return;
+        if (client_.volumeCheck() == net::Client::VolumeCheck::Failed) {
+            client_.disconnect();
+            if (!nextCandidate()) showError("The way found to that game stopped carrying data, and there is no other");
             return;
         }
+        pathChecked_ = true;
+        connectingText_.clear();
+    }
+    if (state == State::Failed) {
+        // Nobody at that address (or on that way): the next one the master named, if there is one.
+        if (!client_.answered() && nextCandidate()) return;
         error_ = client_.error();
         identityChanged_ = client_.identityChanged();
         const Mode back = entry_;
@@ -1169,13 +1248,14 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
         item(4, "Browse online games", 86.0f + 24.0f * 4.0f);
         item(5, "Join online by code", 86.0f + 24.0f * 5.0f);
         item(6, "Tournament", 86.0f + 24.0f * 6.0f);
-        label(r, bank, "Games on the local network:", 80, 260, 1, 1, 1);
+        item(kJoinHideRow, std::string("Online, hide my address: ") + (cfg_.netHideAddress ? "Yes (through the relay, slower)" : "No"), 86.0f + 24.0f * 7.0f);
+        label(r, bank, "Games on the local network:", 80, 284, 1, 1, 1);
         const auto& servers = browser_.servers();
-        if (servers.empty()) label(r, bank, "(searching...)", 100, 282, 0.7f, 0.7f, 0.7f);
-        for (std::size_t i = 0; i < servers.size() && i < 5; ++i) {
+        if (servers.empty()) label(r, bank, "(searching...)", 100, 306, 0.7f, 0.7f, 0.7f);
+        for (std::size_t i = 0; i < servers.size() && i < 4; ++i) {
             static const char* const kPhase[4] = {"in the lobby", "playing", "playing", "playing"};
             const net::ServerInfo& info = servers[i].info;
-            const float y = 282.0f + 22.0f * static_cast<float>(i);
+            const float y = 306.0f + 22.0f * static_cast<float>(i);
             const bool on = row_ == kJoinFields + static_cast<int>(i);
             const std::string line = info.name + "   " + std::to_string(info.players) + " player" + (info.players == 1 ? "" : "s") + ", " +
                                      kPhase[static_cast<int>(info.phase)] + (info.password ? "   (password)" : "") +
@@ -1352,7 +1432,8 @@ void NetUi::drawLobby(Renderer& r, SpriteBank& bank, int frame, std::uint64_t no
                 // Ready (the administrator's start says it for them): a green mark before the seat number.
                 const bool ready = info->ready || seat.client == lobby.admin;
                 if (!waiting) r.quad(17, y + 6, 5, 5, ready ? 0.2f : 0.35f, ready ? 0.9f : 0.35f, ready ? 0.3f : 0.35f, 1.0f);
-                const std::string ping = std::to_string(info->pingMs) + "ms";
+                // How it is connected, unless straight: through the relay, or inside TCP.
+                const std::string ping = (info->path != net::kPathDirect ? std::string(net::pathName(info->path)) + "  " : std::string()) + std::to_string(info->pingMs) + "ms";
                 label(r, bank, ping, 304.0f - r.textWidth(bank, ping), y, 0.6f, 0.6f, 0.6f);
             }
     }
@@ -1600,7 +1681,7 @@ void NetUi::draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int fr
             lines = wrap(r, bank, error_, 400);
             lines.insert(lines.begin(), "Network game");
         } else {
-            lines = {"Network game", hosting_ ? "Starting the server..." : "Connecting to " + connectingTo_ + "..."};
+            lines = {"Network game", hosting_ ? "Starting the server..." : !connectingText_.empty() ? connectingText_ : "Connecting to " + connectingTo_ + "..."};
         }
         const float boxH = 70.0f + 24.0f * static_cast<float>(lines.size());
         r.quad(100, 180, 440, boxH, 0.0f, 0.0f, 0.10f, 0.88f);
