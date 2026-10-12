@@ -41,8 +41,9 @@ bool looksLikeOriginalGame(const std::string& folder);
 // copied as a whole often ends up one level down); empty if neither.
 std::string findOriginalGame(const std::string& folder);
 
-// `allSounds`: also the sound files the game's own sound list does not name (about as many
-// again, never played by the game; the sound test screen can play them).
+// The sounds converted are those the game's sound list names and the unused voice clips
+// that the option "Unused voice clips" can play (unused_voices.hpp).
+// `allSounds`: also every other sound file (never played; the sound test screen can play them).
 // `progress`, if given, is called before each file; returning false stops the work
 // (the report then says cancelled, and the destination is incomplete).
 ImportReport importAssets(const std::string& source, const std::string& destination, bool allSounds = false,

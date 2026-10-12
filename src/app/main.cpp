@@ -425,7 +425,7 @@ int runGame(int argc, char** argv, bool& again) {
         }
         std::printf("Done: %d data files, %d sounds converted to .wav (%d listed sounds not found), %.1f MB.\n", r.dataFiles,
                     r.sounds, r.missingSounds, static_cast<double>(r.bytes) / 1.0e6);
-        if (r.extraSounds > 0) std::printf("Also %d sounds that the game never plays (Options, Sound Test).\n", r.extraSounds);
+        if (r.extraSounds > 0) std::printf("Also %d sounds that the original never plays (Options: Adjust Audio, Unused voice clips; Sound Test).\n", r.extraSounds);
         if (!r.missing.empty()) {
             // The original's own list names a few sounds its disc does not have (two are
             // marked there as dummies); nothing is wrong with the copy.
@@ -652,7 +652,7 @@ int runGame(int argc, char** argv, bool& again) {
             if (useSettings && !cfg.save(settingsPath)) std::fprintf(stderr, "WARN  Could not write %s\n", settingsPath.c_str());
         };
         ab::Audio audio;
-        const bool sound = !opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir, cfg.smallMemory);
+        const bool sound = !opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir, cfg.smallMemory, cfg.unusedVoices);
         audio.setVolumes(cfg.musicVolume, cfg.soundVolume);
         // Up to four gamepads, opened once at start.
         std::array<SDL_Gamepad*, 4> pads{};
@@ -703,6 +703,7 @@ int runGame(int argc, char** argv, bool& again) {
         bool choosingFolder = false;  // Android: the folder chooser is open (Options, Original Game Data)
         int keyRow = 0;
         int audioRow = 0;
+        int unusedVoicesFound = -1;  // clips the "unused voice clips" option added when last switched on; -1: not switched here
         // Sound test: the catalogue, which part of it is listed (0 all, 1 only those the game
         // never plays, 2 only those it uses), and the row the pointer is on.
         std::vector<ab::Audio::Entry> soundList;
@@ -1478,14 +1479,23 @@ int runGame(int argc, char** argv, bool& again) {
                     // The original's "Adjust Audio" was never made (message 320 is its placeholder
                     // text); these two volumes are this implementation's.
                     const int d = key == SDLK_RIGHT ? 10 : key == SDLK_LEFT ? -10 : 0;
-                    if (key == SDLK_UP || key == SDLK_DOWN) audioRow = 1 - audioRow;
-                    if (d != 0) {
+                    if (key == SDLK_UP) audioRow = (audioRow + 2) % 3;
+                    if (key == SDLK_DOWN) audioRow = (audioRow + 1) % 3;
+                    if (audioRow == 2) {
+                        // The voice clips of the disc that the original never plays (this
+                        // implementation's; off unless asked for: some of them are coarse).
+                        if (d != 0 || key == SDLK_RETURN) {
+                            cfg.unusedVoices = !cfg.unusedVoices;
+                            unusedVoicesFound = audio.setUnusedVoices(cfg.unusedVoices);
+                            saveSettings();
+                        }
+                    } else if (d != 0) {
                         int& v = audioRow == 0 ? cfg.musicVolume : cfg.soundVolume;
                         v = std::clamp(v + d, 0, 100);
                         audio.setVolumes(cfg.musicVolume, cfg.soundVolume);
                         if (sound && audioRow == 1) audio.playSeries(100);  // hear the new level
                     }
-                    if (key == SDLK_ESCAPE || key == SDLK_RETURN) {
+                    if (key == SDLK_ESCAPE || (key == SDLK_RETURN && audioRow != 2)) {
                         saveSettings();
                         screen = Screen::Options;
                     }
@@ -2081,11 +2091,19 @@ int runGame(int argc, char** argv, bool& again) {
             } else if (screen == Screen::AudioAdjust) {
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
-                renderer.quad(40, 60, 420, 110, 0.0f, 0.0f, 0.10f, 0.82f);
+                renderer.quad(40, 60, 520, 190, 0.0f, 0.0f, 0.10f, 0.82f);
                 renderer.text(*spritesPtr, "Adjust Audio", 55, 68, 1, 1, 1);
-                const std::string rows[2] = {"Music volume: " + std::to_string(cfg.musicVolume) + "%",
-                                             "Sound volume: " + std::to_string(cfg.soundVolume) + "%"};
-                for (int r = 0; r < 2; ++r) {
+                const std::string rows[3] = {"Music volume: " + std::to_string(cfg.musicVolume) + "%",
+                                             "Sound volume: " + std::to_string(cfg.soundVolume) + "%",
+                                             std::string("Unused voice clips: ") + (cfg.unusedVoices ? "Yes" : "No")};
+                // What the third row is, and what switching it on found.
+                renderer.text(*spritesPtr, "The disc holds voice lines the game never plays,", 80, 180, 0.7f, 0.7f, 0.7f);
+                renderer.text(*spritesPtr, "some of them coarse. Yes: they are played too.", 80, 198, 0.7f, 0.7f, 0.7f);
+                if (cfg.unusedVoices && unusedVoicesFound == 0)
+                    renderer.text(*spritesPtr, ab::isFreeAssetDir(opt.gameDir) ? "The free sounds have none." : "None here: import the original game again.", 80, 222, 1.0f, 0.6f, 0.4f);
+                else if (cfg.unusedVoices && unusedVoicesFound > 0)
+                    renderer.text(*spritesPtr, std::to_string(unusedVoicesFound) + " clips added.", 80, 222, 0.6f, 1.0f, 0.6f);
+                for (int r = 0; r < 3; ++r) {
                     const bool on = r == audioRow;
                     renderer.text(*spritesPtr, rows[r], 80, 100.0f + 24.0f * static_cast<float>(r), on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
                 }

@@ -74,7 +74,7 @@ The import reads the original folder and never changes it. It writes about 280 M
 | Intro movie | `INTRO\BMINTRO.EXE` (only the movie at its end, not the program) | `intro.mve` |
 | Sounds and music | the `.RSS` files named in `SOUNDLST.RES` (raw audio) | `data/sound/*.wav` (standard WAV, 22 050 Hz stereo 16-bit) |
 
-File and folder names in the original may be in any letter case. Only the sounds change format; the other files are copied as they are and are read by the game's own loaders. The installer, DirectX files, demos, movies and unused sounds of the original are not copied.
+File and folder names in the original may be in any letter case. Only the sounds change format; the other files are copied as they are and are read by the game's own loaders. The installer, DirectX files, demos, movies and most unused sounds of the original are not copied.
 
 By default the data goes to your per-user data folder:
 
@@ -155,7 +155,7 @@ To play over a network, one player chooses **Start Network Game** in the menu an
 - The import from inside the game was run on Linux with the real data in every case but one: first-start offer, conversion from a remembered folder (260 data files, 971 sounds, 48 s), no conversion at the next start, a new release with the folder gone (note once, old data kept) and with the folder back, the game starting anew after a change under Options. **The folder dialog itself was not operated** (it cannot be driven unattended), and none of this was run on Windows or macOS.
 - The macOS package and the ARM packages for Linux and Windows are built by GitHub Actions, where the unit tests pass on Apple silicon and on ARM Linux and Windows machines and the programs answer `--version` and `--help`. None of them has been started on a real machine by the author. On macOS the build machine also unpacks the zip, checks the app's signature and starts the game from inside the app: a window with OpenGL 4.1 opened and the main menu was drawn (free asset set, Apple silicon). **Not tried:** opening the app with a double click, the refusal and "Open Anyway" after a download, the folder dialog, sound, an Intel Mac (that half is built, its tests are not run), and the game's window on ARM Linux and Windows.
 
-- The disc holds about a thousand more sounds than the game ever plays (alternate takes and unused lines). They are left out unless you add `--all-sounds` to the import (about 180 MB more); **Options → Sound Test** then lists and plays them.
+- The disc holds about a thousand more sounds than the game ever plays (alternate takes and unused lines). 844 of them, voice lines the option **Options → Adjust Audio → Unused voice clips** can play, are imported with the rest (about 140 MB); the others are left out unless you add `--all-sounds` to the import. **Options → Sound Test** lists and plays whatever was imported.
 - Three sounds are always reported as not found: `xxx` and `0`, which the original's own sound list marks as dummies, and `zahpu111`, a voice line the list names but the disc does not contain. Nothing is wrong with your copy.
 - The Linux steps were run as written: import (246 data files, 971 sounds, 281 MB), then starting the game from the imported folder with graphics, level extras, sounds and music loading.
 - The GitHub Actions workflow builds and tests both packages (first run: Linux and Windows both succeeded). The Windows package itself has **not** been started on a Windows machine by the author of these instructions.

@@ -867,3 +867,17 @@ Not a discovery about the original; a record of what was added for whoever runs 
 
 - Run 1: both images built, the services came up, four matches were played through them. The job failed on its last line, which looked for allocations in the relay's log: coturn names them only when verbose. The job's relay is verbose now.
 - Run 2: a player who had asked for the relay over TCP was reported as `Direct`. Cause (HIGH: it is the behaviour already met in the end-to-end test, where the relay was moved to 127.0.0.2 for it): players and relay had one address. A relay lets a packet through to a relayed address when its sender's address has a permission, and permissions go by address alone; a player at the relay's own address is therefore let through to the other end's relayed address without being relayed itself. Not a fault of the images, and not what happens with players elsewhere. The job's players now run in containers on Docker's bridge network (another address than the relay's) and the game server hides its address, so that every way is a relayed one and the report of it means something. The first run's four passes had been luck in that respect.
+
+### Discovery: the sound files the game never plays, and an option to hear them
+
+Evidence (the user's copy):
+- `data/sound/` holds 2027 `.rss` files; `data/res/soundlst.res` names 974 (971 of them present). 1056 files have no number, and the game plays by number only (`0x427961`); `bm95.exe` holds none of their names (searched for `asskill`, `yoassgrs`).
+- By file-name family they are further takes of the families the list does use (`add` 127 unused beside 127 used, `zafp` 130 beside 31, `pupp` 90 beside 48...), nine clips with names of their own (`asskill`, `bustass`, `myass1`, `yoassgrs`, `brakhead`, `kisswook`, `jesus`, `godhere`, `hailgon`), three families the list never names (`jgap`, `jofm`, `zabm`), and some effects.
+
+Confidence: CONFIRMED that the list does not name them; HIGH that the game never plays them. What each clip says: UNKNOWN (not listened to).
+
+Modern (not original behaviour): the option "Unused voice clips" (`unused_voices`, off by default) adds 844 of them to the series the game draws its voice lines from. A family goes where the original's list uses it in at least two thirds of its lines; the three LOW-confidence placements (the nine named clips as taunts, `jgap` with the pickup lines, `jofm` with the "awesome" lines) and the 212 files not placed are listed in `docs/specifications/unused-voices.md`. The importer always converts the 844.
+
+Validation: unit tests for the table, the setting and the import; run off-screen against the user's copy, the option found 844 clips. Not validated by ear.
+
+Next: somebody listening to the LOW-confidence clips and to the lines for single diseases (`dis`, `zad`), which could then be placed.

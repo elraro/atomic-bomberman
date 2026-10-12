@@ -20,6 +20,7 @@
 #include "resources/campaign_file.hpp"
 #include "resources/help_file.hpp"
 #include "resources/mve_file.hpp"
+#include "resources/unused_voices.hpp"
 #include "resources/settings.hpp"
 #include "rendering/glyphs.hpp"
 #include "resources/ani_file.hpp"
@@ -1329,6 +1330,24 @@ void testSettings() {
     CHECK_EQ(s.playTime, 60);          // below a minute becomes a minute
     CHECK(!s.diseasesDestroyable && s.disableGameMusic);
     CHECK(!s.smallMemory);             // "smallmemory=0" in the text above
+    CHECK(!s.unusedVoices);            // off unless asked for
+    s.parse("unused_voices=1\n");
+    CHECK(s.unusedVoices);
+    // Where an unused voice clip is put: the series the original's list uses its family for.
+    CHECK_EQ(unusedVoiceSeries("add36a"), 700);
+    CHECK_EQ(unusedVoiceSeries("zaa13aa"), 700);
+    CHECK_EQ(unusedVoiceSeries("jdd20a"), 700);
+    CHECK_EQ(unusedVoiceSeries("yoassgrs"), 700);
+    CHECK_EQ(unusedVoiceSeries("myass1"), 700);
+    CHECK_EQ(unusedVoiceSeries("zahpu101"), 400);
+    CHECK_EQ(unusedVoiceSeries("zafp1g"), 1400);
+    CHECK_EQ(unusedVoiceSeries("zae04b"), 1200);
+    CHECK_EQ(unusedVoiceSeries("pgad18c1"), 2300);
+    CHECK_EQ(unusedVoiceSeries("jjfm4a"), 2000);
+    // Not placed: lines for one disease (which one is not known), families the list uses
+    // for several events, effects, and anything that only begins like a family.
+    for (const char* none : {"dis10a", "zad04a", "gen13a", "zai03a", "eofm1b", "zacm1b", "zabm1a", "bomb12b", "alarm1", "0428f01", "title", "add", "adder1", "zaab1", ""})
+        CHECK_EQ(unusedVoiceSeries(none), 0);
     s.parse("smallmemory=1\nmusic_volume=250\nsound_volume=40\n");
     CHECK(s.smallMemory);
     CHECK_EQ(s.musicVolume, 100);      // clamped
@@ -2275,6 +2294,12 @@ void testAssetImport() {
     CHECK(seen[5].sounds && seen[5].item == "boom.wav" && !seen[4].sounds);
     r = importAssets(cd.string(), (root / "all").string(), true);
     CHECK(r.ok && r.sounds == 1 && r.extraSounds == 1);
+    // An unused voice clip that has a place comes along without being asked for; others do not.
+    put(cd / "DATA" / "SOUND" / "ADD36A.RSS", std::string(40, '\x03'));
+    r = importAssets(cd.string(), (root / "voices").string());
+    CHECK(r.ok && r.sounds == 1 && r.extraSounds == 1);
+    CHECK(fs::exists(root / "voices" / "data" / "sound" / "add36a.wav") && !fs::exists(root / "voices" / "data" / "sound" / "other.wav"));
+    fs::remove(cd / "DATA" / "SOUND" / "ADD36A.RSS");
     r = importAssets((root / "drop").string(), (root / "bad").string());
     CHECK(!r.ok && !r.error.empty());
 

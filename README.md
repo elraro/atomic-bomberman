@@ -105,7 +105,9 @@ The program opens on the main menu. Choose **Start Game**, set up the player lis
 | KEY 0 | arrow keys | Space | Enter |
 | KEY 1 | R (up) D (left) F (down) G (right) | S | A |
 
-**Options → Sound Test** lists every sound file of the game data and plays the one you choose (Tab switches between all, the ones the game never plays, and the ones it uses). The original's disc holds about a thousand sounds the game never plays; they are imported only if you ask: `atomic --import-assets PATH --all-sounds` (about 180 MB more).
+**Options → Sound Test** lists every sound file of the game data and plays the one you choose (Tab switches between all, the ones the game never plays, and the ones it uses). The original's disc holds about a thousand sounds the game never plays; 844 of them, voice lines of the kinds the game does play, are imported with the rest; the others only if you ask: `atomic --import-assets PATH --all-sounds`.
+
+**Unused voice clips.** *Options → Adjust Audio → Unused voice clips: Yes* lets the game say those 844 lines too, at the moments it says the listed ones of their kind (taunts after a death, powerups, diseases, strings of bombs, a match won). It is **off by default**: the original never plays them, and some are coarse. Which clip goes where, and how sure that is: [docs/specifications/unused-voices.md](docs/specifications/unused-voices.md). An asset folder imported by an earlier release has to be imported once more for it.
 
 These are the original's default keys. Change them under **Options → Define keyboard layouts**.
 

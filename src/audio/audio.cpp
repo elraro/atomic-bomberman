@@ -1,5 +1,7 @@
 #include "audio/audio.hpp"
 
+#include "resources/unused_voices.hpp"
+
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -34,11 +36,50 @@ void Audio::cull(int firstId, int lastId, int keep) {
         kept.push_back(it->second);
         it = names_.erase(it);
     }
+    // With the unused voice clips: those of this series are candidates like the listed ones.
+    if (unusedVoices_)
+        if (const auto extra = unused_.find(firstId); extra != unused_.end())
+            kept.insert(kept.end(), extra->second.begin(), extra->second.end());
     while (static_cast<int>(kept.size()) > keep) {
         rng_ = rng_ * 1664525u + 1013904223u;
         kept.erase(kept.begin() + static_cast<std::ptrdiff_t>((rng_ >> 16) % kept.size()));
     }
     for (std::size_t i = 0; i < kept.size(); ++i) names_[firstId + static_cast<int>(i)] = kept[i];
+}
+
+// The voice clips in the sound folder that the list does not name, by the series each is
+// put into. Looked for once: the folder holds some two thousand files.
+void Audio::findUnusedVoices() {
+    unusedSought_ = true;
+    unused_.clear();
+    std::vector<std::string> listed;
+    for (const auto& [id, name] : names_) listed.push_back(name);
+    std::sort(listed.begin(), listed.end());
+    std::vector<std::string> found;
+    std::error_code ec;
+    for (const auto& file : std::filesystem::directory_iterator(soundDir_, ec)) {
+        std::string ext = file.path().extension().string(), name = file.path().stem().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return std::tolower(ch); });
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) { return std::tolower(ch); });
+        if ((ext == ".wav" || ext == ".rss") && !std::binary_search(listed.begin(), listed.end(), name)) found.push_back(name);
+    }
+    std::sort(found.begin(), found.end());  // the folder's order is not the same everywhere
+    int count = 0;
+    for (const std::string& name : found)
+        if (const int series = unusedVoiceSeries(name); series != 0) {
+            unused_[series].push_back(name);
+            ++count;
+        }
+    std::fprintf(stderr, "INFO  Unused voice clips found count=%d\n", count);
+}
+
+int Audio::setUnusedVoices(bool on) {
+    unusedVoices_ = on;
+    chooseSounds();
+    int count = 0;
+    if (on)
+        for (const auto& [series, clips] : unused_) count += static_cast<int>(clips.size());
+    return count;
 }
 
 void Audio::chooseSounds() {
@@ -60,6 +101,7 @@ void Audio::chooseSounds() {
         std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) { return std::tolower(ch); });
         if (!name.empty()) names_[static_cast<int>(id)] = name;
     }
+    if (unusedVoices_ && !unusedSought_) findUnusedVoices();
     // Series and how many of each are kept: enhanced memory model / normal (small) model 1.
     const bool s = smallMemory_;
     cull(200, 299, s ? 1 : 3);    // explosions
@@ -70,6 +112,17 @@ void Audio::chooseSounds() {
     cull(2300, 2599, s ? 1 : 8);  // diseases in general
     cull(2700, 2799, s ? 1 : 5);  // hurry
     for (int d = 0; d < 9; ++d) cull(3000 + 50 * d, 3049 + 50 * d, s ? 1 : 4);  // each disease
+    // The lines for a match won are all kept (the original culls none of them): the
+    // unused ones of that kind follow the listed ones.
+    if (unusedVoices_)
+        if (const auto extra = unused_.find(2000); extra != unused_.end()) {
+            int id = 2000;
+            for (const std::string& name : extra->second) {
+                while (id <= 2299 && names_.count(id) != 0) ++id;
+                if (id > 2299) break;
+                names_[id] = name;
+            }
+        }
     // The music keeps its data; the effects cache is dropped (the "flush").
     for (auto it = cache_.begin(); it != cache_.end();)
         it = &it->second == musicData_ ? std::next(it) : cache_.erase(it);
@@ -90,9 +143,11 @@ void Audio::setVolumes(int music, int effects) {
     if (music_ != nullptr) SDL_SetAudioStreamGain(music_, musicGain_);
 }
 
-bool Audio::init(const std::string& gameDir, bool smallMemory) {
+bool Audio::init(const std::string& gameDir, bool smallMemory, bool unusedVoices) {
     gameDir_ = gameDir;
     smallMemory_ = smallMemory;
+    unusedVoices_ = unusedVoices;
+    unusedSought_ = false;
     soundDir_ = gameDir + "/data/sound/";
     rng_ ^= static_cast<std::uint32_t>(SDL_GetPerformanceCounter());  // a different pick each run
     if (!std::ifstream(gameDir + "/data/res/soundlst.res", std::ios::binary)) {

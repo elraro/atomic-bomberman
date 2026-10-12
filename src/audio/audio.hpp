@@ -18,7 +18,12 @@ public:
     // Opens the default playback device and reads soundlst.res. Returns false
     // (and stays silent) if either is unavailable.
     // smallMemory: the original's "normal" memory model, which keeps one sound per series.
-    bool init(const std::string& gameDir, bool smallMemory = false);
+    // unusedVoices: see setUnusedVoices.
+    bool init(const std::string& gameDir, bool smallMemory = false, bool unusedVoices = false);
+    // Whether the voice clips of the game data that the sound list never names are put
+    // into the series they belong to (resources/unused_voices.hpp), and so are played
+    // like the others. Chooses a new selection. Returns how many clips that adds.
+    int setUnusedVoices(bool on);
     // Reads soundlst.res again and chooses a new selection of the voice series (the
     // original does this when its sound cache is flushed, every value 7 seconds).
     void chooseSounds();
@@ -69,6 +74,11 @@ private:
     SDL_AudioStream* stream_ = nullptr;
     const std::vector<std::uint8_t>* musicData_ = nullptr;
     void cull(int firstId, int lastId, int keep);
+    void findUnusedVoices();
+
+    bool unusedVoices_ = false;
+    bool unusedSought_ = false;
+    std::map<int, std::vector<std::string>> unused_;  // series -> clips the sound list does not name
 
     std::string gameDir_;
     bool smallMemory_ = false;

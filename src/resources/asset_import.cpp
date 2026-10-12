@@ -1,5 +1,7 @@
 #include "resources/asset_import.hpp"
 
+#include "resources/unused_voices.hpp"
+
 #include "resources/mve_file.hpp"
 
 #include <algorithm>
@@ -153,8 +155,9 @@ ImportReport importAssets(const std::string& source, const std::string& destinat
     collect(findPath(src, {"data", "schemes"}), dst / "data" / "schemes", {".sch"});
     collect(findPath(src, {"data", "ani"}), dst / "data" / "ani", {".ani", ".ali"});
 
-    // Sounds named in soundlst.res ("id,name" lines; ';' starts a comment), and with
-    // `allSounds` the other sound files of the folder too.
+    // Sounds named in soundlst.res ("id,name" lines; ';' starts a comment), the unused
+    // voice clips that have a place (unused_voices.hpp), and with `allSounds` the other
+    // sound files of the folder too.
     struct Sound {
         std::string name;
         fs::path rss;   // empty: listed but not on the disc
@@ -188,9 +191,11 @@ ImportReport importAssets(const std::string& source, const std::string& destinat
             done.push_back(name);
             sounds.push_back({name, find(name), false});
         }
-        if (allSounds)
-            for (const auto& [name, path] : onDisc)
-                if (std::find(done.begin(), done.end(), name) == done.end()) sounds.push_back({name, path, true});
+        // The voice clips the game never plays but this implementation can (the option
+        // "Unused voice clips") always come along.
+        for (const auto& [name, path] : onDisc)
+            if ((allSounds || unusedVoiceSeries(name) != 0) && std::find(done.begin(), done.end(), name) == done.end())
+                sounds.push_back({name, path, true});
     }
 
     ImportProgress state;
