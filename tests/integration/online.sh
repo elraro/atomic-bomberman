@@ -83,7 +83,7 @@ sleep 1
 timeout 150 "$BUILD/net_bot" "code:$CODE" Bob --matches 1 --player-key-file "$WORK/bob.key" "${ONLINE[@]}" >"$WORK/bob.log" 2>&1 &
 BOB=$!
 # In the list: only the listed game, found by its name.
-timeout 150 "$BUILD/net_bot" "listed:Listed game" Cat --start-after 1000 --matches 1 "${ONLINE[@]}" >"$WORK/cat.log" 2>&1 &
+timeout 150 "$BUILD/net_bot" "listed:Listed game" Cat --start-after 1000 --matches 1 --no-ice "${ONLINE[@]}" >"$WORK/cat.log" 2>&1 &
 CAT=$!
 wait $ANN || fail "Ann (by code) did not finish her match"
 wait $BOB || fail "Bob (by code) did not finish his match"
@@ -92,6 +92,13 @@ grep -q "master: code $CODE is \"By code\"" "$WORK/ann.log" || fail "the code di
 grep -q "done: matches=1" "$WORK/ann.log" && grep -q "done: matches=1" "$WORK/bob.log" && grep -q "done: matches=1" "$WORK/cat.log" || fail "a match was not played to its end"
 grep -q "master: 1 game(s) listed" "$WORK/cat.log" || fail "the list should show the listed game and not the one found by code"
 echo "ok   two players by code, one from the list: matches played"
+# How they got there: Ann and Bob by a way found between the two ends (ICE; the descriptions
+# went through the master), Cat at the address the master saw the server at.
+grep -q "ice: a way to the host (Direct)" "$WORK/ann.log" && grep -q "path=Direct" "$WORK/ann.log" || fail "Ann should have reached the host by ICE"
+grep -q "ice: a way to the host" "$WORK/bob.log" || fail "Bob should have reached the host by ICE"
+grep -q "master: reach it at 127.0.0.1:$((GAME_PORT + 1))" "$WORK/cat.log" && ! grep -q "ice:" "$WORK/cat.log" || fail "Cat should have gone by the address"
+grep -q "from .* (Direct)" "$WORK/server-code.log" || fail "the server should have taken in connections that came by ICE"
+echo "ok   reached through ICE (two players) and by address (one)"
 grep -q 'certificate: verified, operator "Integration Test", serial 424242' "$WORK/ann.log" || fail "the certificate should have been verified"
 grep -q "certificate: none" "$WORK/cat.log" || fail "the listed server has no certificate"
 grep -q "Certificate 424242 of \"Integration Test\": [0-9]* days left" "$WORK/server-code.log" || fail "the server should say whose certificate it shows"
@@ -225,4 +232,34 @@ grep -q "not among the files given" "$T/verify4.log" || fail "missing records sh
 # The next round: the winner's name stands where "the winner of R1-1" stood, and that match can now be served.
 grep -q "\"$WINNER\"" <(python3 -c "import json,sys; f=json.load(open('$T/cup.json')); print(json.dumps([m['players'] for m in f['matches'] if m['id']=='R2-1']))") || fail "the winner should be in the next round"
 echo "ok   tournament: the result is borne out by the records; a false one is not"
+# --- The relay (TURN), where coturn is installed: a player who hides their address ---
+if command -v turnserver >/dev/null 2>&1; then
+    R=$WORK/relay
+    mkdir -p "$R"
+    TURN_PORT=$((MASTER_PORT + 30))
+    SECRET=integration-secret
+    turnserver -n --no-cli --no-tls --no-dtls --listening-ip 127.0.0.1 --relay-ip 127.0.0.1 --listening-port "$TURN_PORT" --min-port 41000 --max-port 41200 \
+        --use-auth-secret --static-auth-secret "$SECRET" --realm atomic --allow-loopback-peers --log-file stdout --simple-log >"$R/coturn.log" 2>&1 &
+    pids+=($!)
+    sed "s/\"stun\": \[\], \"turn\": \[\]/\"stun\": [\"127.0.0.1:$TURN_PORT\"], \"turn\": [{\"host\": \"127.0.0.1\", \"port\": $TURN_PORT, \"transport\": \"udp\"}]/; s/:$MASTER_PORT\"/:$((MASTER_PORT + 2))\"/" "$WORK/config.json" >"$R/config.json"
+    grep -q "\"transport\": \"udp\"" "$R/config.json" || fail "the relay was not written into the configuration"
+    "$BIN/abconfig" sign -key "$WORK/root.key" -in "$R/config.json" -out "$R/signed.json" -stamp -serial 999999999999 >/dev/null || fail "sign (relay)"
+    "$BIN/master" -listen "127.0.0.1:$((MASTER_PORT + 2))" -tls-cert "$WORK/master.crt" -tls-key "$WORK/master.tls.key" -config-file "$R/signed.json" \
+        -turn-secret "$SECRET" -turn-urls "turn:127.0.0.1:$TURN_PORT?transport=udp" >"$R/master.log" 2>&1 &
+    pids+=($!)
+    RELAYED=(--online-config "https://127.0.0.1:$((MASTER_PORT + 2))/config.json" --online-key "$KEY")
+    for _ in $(seq 50); do grep -q "master listening" "$R/master.log" && break; sleep 0.1; done
+    "$BUILD/atomic_server" --port $((GAME_PORT + 40)) --name "Hidden" --hidden --computers 1 --wins 1 --online code --hide-address "${RELAYED[@]}" \
+        --identity-file "$R/id.key" --signing-key-file "$R/sign.key" --records-dir "$R/records" >"$R/server.log" 2>&1 </dev/null &
+    pids+=($!)
+    for _ in $(seq 100); do grep -q "Online: code, code" "$R/server.log" && break; sleep 0.1; done
+    RCODE=$(sed -n 's/.*Online: code, code \([0-9]*\).*/\1/p' "$R/server.log" | head -n 1)
+    [[ "$RCODE" =~ ^[0-9]{6}$ ]] || fail "the server behind the relay was not announced"
+    timeout 150 "$BUILD/net_bot" "code:$RCODE" Rex --start-after 2000 --matches 1 --hide-address "${RELAYED[@]}" >"$R/rex.log" 2>&1 || { cat "$R/rex.log" "$R/server.log"; tail -n 30 "$R/coturn.log"; fail "Rex did not finish a match through the relay"; }
+    grep -q "ice: a way to the host" "$R/rex.log" || fail "Rex should have reached the host by ICE"
+    grep -qi "allocate.*success\|ALLOCATE processed, success" "$R/coturn.log" || { tail -n 30 "$R/coturn.log"; fail "coturn should have made an allocation"; }
+    echo "ok   through coturn: a hidden player and a hidden host played a match ($(sed -n 's/.*ice: a way to the host (\(.*\)).*/\1/p' "$R/rex.log"))"
+else
+    echo "skip the relay: coturn (turnserver) is not installed here"
+fi
 echo "online: all passed"

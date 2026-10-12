@@ -64,6 +64,12 @@ void Online::reset() {
     hostToken_.clear();
     code_.clear();
     announcing_ = false;
+    relayUser_.clear();
+    relayPassword_.clear();
+    relayAt_ = 0;
+    signalJob_.abandon();
+    signalRunning_ = false;
+    signals_.clear();
 }
 
 // Before anything is asked of the master: the last error is forgotten and the session is
@@ -335,6 +341,60 @@ void Online::announce(const LobbyDesc& desc) {
         announcedDesc_ = desc;
     };
     queue_.push_back(std::move(op));
+}
+
+void Online::requestRelay() {
+    const long long now = clock_ ? clock_() : static_cast<long long>(std::time(nullptr));
+    if (relayAt_ != 0 && now - relayAt_ < 1800) return;
+    if (!ready()) return;  // with the session that announcing brings
+    relayAt_ = now;
+    Op op;
+    op.make = [this]() { return call("POST", "/relay-credentials", nullptr); };
+    op.done = [this](const HttpResponse& r) {
+        Json body;
+        if (!r.ok() || !Json::parse(r.body, body)) return;  // no relay is set up: then there is none
+        relayUser_ = body["username"].str();
+        relayPassword_ = body["password"].str();
+    };
+    queue_.push_back(std::move(op));
+}
+
+void Online::signal(const std::string& lobbyId, const std::string& to, const std::string& data, bool asHost) {
+    if (!ready()) return;
+    Op op;
+    op.make = [this, lobbyId, to, data, asHost]() {
+        Json body = Json::object();
+        body.set("to", to).set("data", data);
+        return call("POST", "/lobbies/" + pathSafe(lobbyId) + "/signal", &body, asHost);
+    };
+    op.done = [](const HttpResponse&) {};
+    queue_.push_back(std::move(op));
+}
+
+void Online::pollSignals(const std::string& lobbyId, bool asHost) {
+    if (signalRunning_) {
+        if (!signalJob_.finished()) return;
+        signalRunning_ = false;
+        const HttpResponse r = signalJob_.take();
+        Json body;
+        if (r.ok() && Json::parse(r.body, body)) {
+            for (const Json& s : body["signals"].items()) signals_.push_back({s["from"].str(), s["data"].str()});
+        } else {
+            // The master is away or does not know the lobby: asked again in a while, not at once.
+            signalRetryAt_ = (clock_ ? clock_() : static_cast<long long>(std::time(nullptr))) + 2;
+        }
+    }
+    if (!ready() || lobbyId.empty()) return;
+    if (signalRetryAt_ != 0 && (clock_ ? clock_() : static_cast<long long>(std::time(nullptr))) < signalRetryAt_) return;
+    signalRetryAt_ = 0;
+    signalJob_.start(call("GET", "/lobbies/" + pathSafe(lobbyId) + "/signal?wait=20", nullptr, asHost, 30000));
+    signalRunning_ = true;
+}
+
+std::vector<Signal> Online::takeSignals() {
+    std::vector<Signal> out;
+    out.swap(signals_);
+    return out;
 }
 
 void Online::withdraw() {

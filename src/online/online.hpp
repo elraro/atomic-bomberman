@@ -40,6 +40,11 @@ struct LobbyDesc {
 };
 
 // What comes back from joining: how to reach the game server and how to know it.
+struct Signal {
+    std::string from;  // "host", or a player's session id
+    std::string data;
+};
+
 struct JoinInfo {
     LobbyInfo lobby;
     std::vector<std::string> candidates;
@@ -90,6 +95,21 @@ public:
     // when the description changes and at least every ten seconds.
     void announce(const LobbyDesc& desc);
     bool announced() const { return !lobbyId_.empty(); }
+    const std::string& lobbyId() const { return lobbyId_; }
+    // Relay credentials for a host (a joining player gets theirs with the join). Asked for
+    // again when they are older than half an hour.
+    void requestRelay();
+    const std::string& relayUser() const { return relayUser_; }
+    const std::string& relayPassword() const { return relayPassword_; }
+
+    // --- passing connection details between a host and a joining player ---
+    // To "host" (from a player) or to a player's session id (from the host of `lobbyId`).
+    void signal(const std::string& lobbyId, const std::string& to, const std::string& data, bool asHost);
+    // Waits at the master for what is addressed to us (a request of its own, beside the
+    // others: it may take twenty seconds to come back). Call it every frame while listening;
+    // what has come is fetched with takeSignals().
+    void pollSignals(const std::string& lobbyId, bool asHost);
+    std::vector<Signal> takeSignals();
     const std::string& code() const { return code_; }  // the join code, once announced
     void withdraw();
 
@@ -130,6 +150,12 @@ private:
     JoinInfo join_;
 
     std::string lobbyId_, hostToken_, code_;
+    std::string relayUser_, relayPassword_;
+    long long relayAt_ = 0;
+    HttpJob signalJob_;
+    bool signalRunning_ = false;
+    long long signalRetryAt_ = 0;
+    std::vector<Signal> signals_;
     LobbyDesc announcedDesc_;
     bool announcing_ = false;
 };

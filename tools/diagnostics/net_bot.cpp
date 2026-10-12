@@ -4,6 +4,8 @@
 //   net_bot ADDRESS NAME [--start] [--start-after MS] [--tcp] [--password TEXT] [--matches N]
 // With --online-config URL --online-key HEX the address may be "code:123456" (a game found
 // on the master server by its code) or "listed:NAME" (the game of that name on its list).
+// A game found on the master is reached through routers (ICE) when its host offers that;
+// --no-ice goes by its address only, --hide-address through the relay only.
 // "tournament:FILE#KEY" (with --player-key-file) joins the match of that tournament the
 // key's owner is to play next. --show-player-key prints the public half of the key and exits.
 #include <algorithm>
@@ -19,6 +21,7 @@
 #ifdef AB_ONLINE
 #include "online/bootstrap.hpp"
 #include "online/certificate.hpp"
+#include "online/ice_session.hpp"
 #include "online/online.hpp"
 #include "online/record_check.hpp"
 #include "online/tournament.hpp"
@@ -49,8 +52,13 @@ int main(int argc, char** argv) {
     }
     using State = ab::net::Client::State;
     const std::string name = argv[2];
-    bool showPlayerKey = false;
-    for (int i = 3; i < argc; ++i) showPlayerKey = showPlayerKey || std::string(argv[i]) == "--show-player-key";
+    bool showPlayerKey = false, noIce = false, hideAddress = false;
+    for (int i = 3; i < argc; ++i) {
+        showPlayerKey = showPlayerKey || std::string(argv[i]) == "--show-player-key";
+        noIce = noIce || std::string(argv[i]) == "--no-ice";
+        hideAddress = hideAddress || std::string(argv[i]) == "--hide-address";
+    }
+    bool viaCarrier = false;
 #ifdef AB_ONLINE
     // A player key (a lasting one from a file, as the game keeps it): shown to the server,
     // and the inputs of a recorded round are signed with it.
@@ -116,10 +124,38 @@ int main(int argc, char** argv) {
             std::printf("[%s] failed: the master named no way to the game\n", name.c_str());
             return 1;
         }
-        candidates = info.candidates;
         client.expectIdentity(info.identityKey);
-        address = candidates.front();
-        std::printf("[%s] master: reach it at %s (and %zu more)\n", name.c_str(), address.c_str(), candidates.size() - 1);
+        bool offersIce = false;
+        for (const std::string& c : info.candidates) {
+            if (c == ab::online::kIceCandidate) offersIce = true;
+            else candidates.push_back(c);
+        }
+        if (offersIce && !noIce) {
+            // A way through the routers: descriptions exchanged by way of the master, then the addresses tried.
+            ab::online::IceJoin join;
+            join.start(master, info, hideAddress, ab::net::clockMs());
+            while (join.state() == ab::online::IceJoin::State::Working) {
+                master.update();
+                join.update(ab::net::clockMs(), master);
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            if (join.state() == ab::online::IceJoin::State::Ready) {
+                std::unique_ptr<ab::net::Carrier> way = join.take();
+                std::printf("[%s] ice: a way to the host (%s)\n", name.c_str(), way->kind().c_str());
+                client.connectVia(std::move(way), "the host", name, password, ab::net::clockMs());
+                viaCarrier = true;
+            } else {
+                std::printf("[%s] ice: no way found; trying its address\n", name.c_str());
+            }
+        }
+        if (!viaCarrier) {
+            if (candidates.empty()) {
+                std::printf("[%s] failed: the game cannot be reached\n", name.c_str());
+                return 1;
+            }
+            address = candidates.front();
+            std::printf("[%s] master: reach it at %s (and %zu more)\n", name.c_str(), address.c_str(), candidates.size() - 1);
+        }
 #else
         std::printf("[%s] failed: built without online play\n", name.c_str());
         return 1;
@@ -161,8 +197,8 @@ int main(int argc, char** argv) {
         address = at->address;
     }
 #endif
-    std::size_t candidate = 0;
-    client.connect(address, name, password, ab::net::clockMs());
+    int candidate = viaCarrier ? -1 : 0;  // which of the addresses is being tried (-1: the way ICE found, before any of them)
+    if (!viaCarrier) client.connect(address, name, password, ab::net::clockMs());
     ab::Rng rng(static_cast<std::uint32_t>(ab::net::clockMs()) + static_cast<std::uint32_t>(name.size()) * 7919u);
     State last = State::Idle;
     std::uint64_t lobbySince = 0, inputAt = 0;
@@ -211,9 +247,9 @@ int main(int argc, char** argv) {
             std::printf("[%s] chat %s: %s\n", name.c_str(), line.fromServer ? "*" : line.name.c_str(), line.text.c_str());
         }
         if (state != last) {
-            if (state == State::Failed && !client.answered() && candidate + 1 < candidates.size()) {
+            if (state == State::Failed && !client.answered() && candidate + 1 < static_cast<int>(candidates.size())) {
                 // Nobody there: the next way the master named.
-                client.connect(candidates[++candidate], name, password, now);
+                client.connect(candidates[static_cast<std::size_t>(++candidate)], name, password, now);
                 last = State::Idle;
                 continue;
             }
@@ -222,8 +258,8 @@ int main(int argc, char** argv) {
                 return 1;
             }
             if (state == State::Lobby) {
-                std::printf("[%s] lobby: server \"%s\" seat=%d admin=%d udp=%d\n", name.c_str(), client.serverName().c_str(), client.seat(),
-                            client.isAdmin() ? 1 : 0, client.udpActive() ? 1 : 0);
+                std::printf("[%s] lobby: server \"%s\" seat=%d admin=%d udp=%d path=%s\n", name.c_str(), client.serverName().c_str(), client.seat(),
+                            client.isAdmin() ? 1 : 0, client.udpActive() ? 1 : 0, client.pathKind().c_str());
                 lobbySince = now;
                 if (inMatch && ++played >= matches) {
                     std::printf("[%s] done: matches=%d snapshots=%d udp=%d\n", name.c_str(), played, client.snapshotsLoaded(), client.udpActive() ? 1 : 0);

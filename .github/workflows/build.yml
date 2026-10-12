@@ -60,8 +60,16 @@ jobs:
         run: |
           cmake -S . -B build-online -DCMAKE_BUILD_TYPE=Release
           cmake --build build-online --target atomic_server net_bot atomic_verify --parallel
+      - name: Install coturn (the relay the end-to-end test goes through)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends coturn && sudo systemctl stop coturn || true
       - name: Online play end to end
-        run: tests/integration/online.sh build-online master/bin
+        run: |
+          tests/integration/online.sh build-online master/bin > online.log 2>&1 || true
+          cat online.log
+          # What failed, where the log is not at hand: as annotations.
+          grep -E "^FAIL|failed:|problem" online.log | head -n 9 | sed 's/^/::error::/' || true
+          grep -q "online: all passed" online.log
+          ! grep -q "^skip the relay" online.log
 
   linux:
     name: linux (${{ matrix.arch }})

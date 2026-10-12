@@ -15,7 +15,8 @@ namespace ab::online {
 class HostAnnouncer {
 public:
     // `listed`: shown in the list of games; otherwise found by its code only.
-    void update(std::uint64_t nowMs, Online& online, const net::Server& server, const std::string& name, bool listed) {
+    // `viaIce`: the host also answers offers to find a way through routers (ice_session.hpp).
+    void update(std::uint64_t nowMs, Online& online, const net::Server& server, const std::string& name, bool listed, bool viaIce = false) {
         LobbyDesc d;
         d.name = name;
         d.listed = listed;
@@ -30,6 +31,7 @@ public:
         d.level = lobby.settings.schemeTitle;
         d.identityKey = server.identityKeyHex();
         d.port = server.port();
+        if (viaIce) d.candidates.push_back("ice");
         if (sentAt_ != 0 && d == last_ && nowMs - sentAt_ < 10000) return;
         if (nowMs - sentAt_ < 1000 && sentAt_ != 0) return;  // changes in quick succession go out together
         online.announce(d);

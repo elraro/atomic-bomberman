@@ -22,6 +22,7 @@
 #include "online/announcer.hpp"
 #include "online/bootstrap.hpp"
 #include "online/certificate.hpp"
+#include "online/ice_session.hpp"
 #include "online/json.hpp"
 #include "online/tournament.hpp"
 #endif
@@ -98,6 +99,8 @@ const char* const kUsage =
     "  --match ID             which one: only its players are let in, and its rules cannot be changed\n"
     "  --show-keys            print the two keys a certificate is made out to, and exit\n"
     "  --online listed|code   announce the game on the master server: in its list, or to be found by its code only\n"
+    "  --no-ice               announced online, be reached at this machine's address only (no way found through routers)\n"
+    "  --hide-address         announced online, be reached through the relay only\n"
     "  --online-config URL    where the signed configuration of online play is (several: commas)\n"
     "  --online-key HEX       the key that must have signed it\n"
     "  --ban-file FILE    where banned addresses are kept (default: bans.txt in the per-user folder)\n"
@@ -113,7 +116,7 @@ int main(int argc, char** argv) {
     bool relayServer = false, portGiven = false;
     std::string onlineMode, onlineConfig, onlineKey;
     std::string certificateFile, signingKeyFile, recordsDir, tournamentAt, matchId;
-    bool showKeys = false;
+    bool showKeys = false, noIce = false, hideAddress = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
@@ -158,6 +161,8 @@ int main(int argc, char** argv) {
         else if (a == "--match") matchId = next();
         else if (a == "--show-keys") showKeys = true;
         else if (a == "--online") onlineMode = next();
+        else if (a == "--no-ice") noIce = true;
+        else if (a == "--hide-address") hideAddress = true;
         else if (a == "--online-config") onlineConfig = next();
         else if (a == "--online-key") onlineKey = next();
         else {
@@ -349,6 +354,7 @@ int main(int argc, char** argv) {
 #ifdef AB_ONLINE
     ab::online::Online master;
     ab::online::HostAnnouncer announcer;
+    ab::online::IceHost iceHost;
     std::string onlineSaid;
     if (!onlineMode.empty()) {
         ab::online::Bootstrap bootstrap;
@@ -391,7 +397,8 @@ int main(int argc, char** argv) {
 #ifdef AB_ONLINE
         if (online) {
             master.update();
-            announcer.update(ab::net::clockMs(), master, server, config.name, onlineMode == "listed");
+            announcer.update(ab::net::clockMs(), master, server, config.name, onlineMode == "listed", !noIce);
+            if (!noIce) iceHost.update(ab::net::clockMs(), master, server, hideAddress);
             // Said once each time it changes: the code to give out, or why it is not announced.
             const std::string now = master.announced() ? "INFO  Online: " + onlineMode + ", code " + master.code()
                                     : !master.error().empty() ? "WARN  Online: " + master.error() : std::string();
@@ -444,6 +451,8 @@ int main(int argc, char** argv) {
     }
 #endif
     (void)online;
+    (void)noIce;
+    (void)hideAddress;
     server.stop();
     std::fflush(stdout);
     std::_Exit(0);  // the console thread may still be waiting for a line
