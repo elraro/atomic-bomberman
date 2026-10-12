@@ -887,3 +887,10 @@ Next: somebody listening to the LOW-confidence clips and to the lines for single
 - Seen: with the players on the bridge network, a player who hid its address was still reported `Direct`.
 - Cause (HIGH, by reasoning; the same rule as before from the other side): the game server still had the relay's address. Its packets sent straight to the player's relayed address were let through, the player so learned the server's real address, and could reach it without the relay.
 - Fix: in the job, the game server is on the bridge network too (a compose override written by the job), so relay, server and players have three addresses. The compose file itself keeps the server on the machine's network, which is right for a real machine and is not what this job tries.
+
+### Modern: one unexplained failure of the network test "roulette prize" on macOS
+
+- Seen: once, in the CI run of commit `1cbe97a` (which changed sound and import code only), on the macOS runner: at the start of the round after the wheel, the client's world and the server's had the same number of steps applied and different state hashes (`tests/unit/test_net.cpp`, the last check of `testNetRoulette`). The run of the next commit passed; the test had taken 167 s there for all of `net`, several times its usual time.
+- Not reproduced: 400 runs of that test alone here and 480 more with eight at a time, none failed. (`ab_net_tests NAME` now runs one test, for this.)
+- Cause: UNKNOWN. A check that compares the two worlds at an equal step should not depend on the machine's speed, so this may be a real difference between client and server in a rare order of events and not a fault of the test.
+- Next: if it shows again, have the check print both step counts and which part of the state differs.

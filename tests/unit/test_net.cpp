@@ -2440,8 +2440,10 @@ void testLanBrowser() {
 
 }  // namespace
 
-int main() {
+// With an argument: only the test of that name (for running one of them many times).
+int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    const std::string only = argc > 1 ? argv[1] : "";
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"codec", testCodec},
         {"link", testLink},
@@ -2475,6 +2477,7 @@ int main() {
         {"lan answer", testLanBrowser},
     };
     for (const auto& [name, fn] : tests) {
+        if (!only.empty() && name != only) continue;
         const int before = g_failures;
         fn();
         std::printf("%s %s\n", g_failures == before ? "ok  " : "FAIL", name.c_str());
