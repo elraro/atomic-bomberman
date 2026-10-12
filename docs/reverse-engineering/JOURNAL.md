@@ -894,3 +894,8 @@ Next: somebody listening to the LOW-confidence clips and to the lines for single
 - Not reproduced: 400 runs of that test alone here and 480 more with eight at a time, none failed. (`ab_net_tests NAME` now runs one test, for this.)
 - Cause: UNKNOWN. A check that compares the two worlds at an equal step should not depend on the machine's speed, so this may be a real difference between client and server in a rare order of events and not a fault of the test.
 - Next: if it shows again, have the check print both step counts and which part of the state differs.
+
+### Modern: the container images are published
+
+- CI builds and tries the two images on x86-64 and on 64-bit ARM (each on a runner of that type) and, for a push to the main branch or a release tag, publishes them at `ghcr.io/elraro/atomic-bomberman-master` and `-server`: `latest` for the main branch, the tag's name for a release. Only images whose job passed are published, and they are the very images that were tried.
+- The compose file names those images; `docker compose pull` fetches them, and without it they are built from the source as before.

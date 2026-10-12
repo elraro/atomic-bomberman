@@ -4,10 +4,10 @@ Everything a public service for online play needs, on one Linux machine with Doc
 
 | Service | Image | Ports on the machine |
 |---|---|---|
-| `master` | built here from `../master` (`atomic-bomberman-master`; also holds the key tool `abconfig`) | TCP 8443 (HTTPS) |
+| `master` | `ghcr.io/elraro/atomic-bomberman-master` (from `../master`; also holds the key tool `abconfig`) | TCP 8443 (HTTPS) |
 | `postgres` | `postgres:17` | 127.0.0.1:5432 only |
 | `coturn` | `coturn/coturn:4.7`, the project's own image, unchanged | UDP and TCP 3478, TCP 443 (TLS), UDP 5000-9999 |
-| `gameserver` (optional) | built here (`atomic-bomberman-server`: `atomic_server`, `atomic_verify`, `net_bot`) | UDP and TCP 27410 |
+| `gameserver` (optional) | `ghcr.io/elraro/atomic-bomberman-server` (`atomic_server`, `atomic_verify`, `net_bot`) | UDP and TCP 27410 |
 | `autosign` (optional) | the master's image | none |
 
 The master, the relay and the game server use the machine's network directly (`network_mode: host`, so Linux only): the relay hands out thousands of UDP ports, and the master must see the addresses players really come from.
@@ -16,9 +16,12 @@ The master, the relay and the game server use the machine's network directly (`n
 
 ```sh
 cd deploy
+docker compose pull                          # the published images; without this they are built here
 ./setup.sh play.example.org 203.0.113.10     # the machine's name and its public address
 docker compose up -d
 ```
+
+The project's two images are published by CI at `ghcr.io/elraro/` for x86-64 and 64-bit ARM, after the job that tries them has passed: `latest` is the main branch, a release has its tag's name (`IMAGE_TAG` in `.env` chooses). With `--profile gameserver` on the `pull`, the game server's comes too.
 
 `setup.sh` writes `.env` (with a database password and a relay secret it makes up) and, in `data/`:
 
@@ -66,10 +69,10 @@ Its commands on standard input (`status`, `kick`...) are not reachable in a cont
 - **The configuration** (`data/config.json`: maintenance message, lowest protocol version, revoked certificates): edit, `./sign.sh`.
 - **Another TLS certificate** (Let's Encrypt, say): put it at `data/master/master.crt` and `master.tls.key`, readable by the user who ran `setup.sh`; put the new pin (`docker compose run --rm abconfig pin -cert master/master.crt`) into `data/config.json` beside the old one; `./sign.sh`; `docker compose restart master coturn`. A renewal that keeps the key keeps the pin.
 - **The key tool**: `docker compose run --rm abconfig ...`, working in `data/` (certificates for game servers, tournaments: sections 6a and 8 of the operations guide).
-- **A new version**: `git pull`, `docker compose build`, `docker compose up -d` (with `--profile gameserver` where that is used).
+- **A new version**: `git pull`, then `docker compose pull` (or `docker compose build` to build it here), `docker compose up -d` (each with `--profile gameserver` where that is used).
 
 ## What is checked, and what is not
 
-The CI job `docker` builds both images, starts all of this on one machine and has test clients in containers of their own find the game server in the master's list and play a match on it through the relay: over UDP, over TCP and over TLS. (The way straight between two ends is not tried there, and the game server runs on Docker's bridge network instead of the machine's: on one machine, ends that share the relay's address get around it.)
+The CI job `docker` builds both images (on x86-64 and on 64-bit ARM), starts all of this on one machine and has test clients in containers of their own find the game server in the master's list and play a match on it through the relay: over UDP, over TCP and over TLS. (The way straight between two ends is not tried there, and the game server runs on Docker's bridge network instead of the machine's: on one machine, ends that share the relay's address get around it.)
 
 Not tried: on a real public machine, behind a cloud's address mapping (`PRIVATE_IP`), with Docker on anything but Linux, with a rootless Docker, or `autosign` over more than a moment.

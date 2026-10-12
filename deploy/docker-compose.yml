@@ -2,6 +2,7 @@
 # database, and the relay (coturn). Optional: a dedicated game server, and a service
 # that signs the configuration anew every day.
 #
+#   docker compose pull                (or leave it out: the images are then built here)
 #   ./setup.sh DOMAIN PUBLIC_IP        keys, certificate, signed configuration, .env
 #   docker compose up -d
 #
@@ -32,7 +33,7 @@ services:
 
   master:
     build: ../master
-    image: atomic-bomberman-master
+    image: ghcr.io/elraro/atomic-bomberman-master:${IMAGE_TAG:-latest}
     restart: unless-stopped
     network_mode: host
     user: "${HOST_UID}:${HOST_GID}"
@@ -73,7 +74,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/gameserver/Dockerfile
-    image: atomic-bomberman-server
+    image: ghcr.io/elraro/atomic-bomberman-server:${IMAGE_TAG:-latest}
     restart: unless-stopped
     network_mode: host
     init: true
@@ -92,7 +93,7 @@ services:
   # seven days). This keeps the root key on this machine: see README.md before using it.
   autosign:
     profiles: [autosign]
-    image: atomic-bomberman-master
+    image: ghcr.io/elraro/atomic-bomberman-master:${IMAGE_TAG:-latest}
     restart: unless-stopped
     network_mode: none
     init: true
@@ -112,7 +113,7 @@ services:
   #   docker compose run --rm abconfig verify -pub KEY -in master/config.signed.json
   abconfig:
     profiles: [tools]
-    image: atomic-bomberman-master
+    image: ghcr.io/elraro/atomic-bomberman-master:${IMAGE_TAG:-latest}
     network_mode: none
     user: "${HOST_UID}:${HOST_GID}"
     entrypoint: ["abconfig"]

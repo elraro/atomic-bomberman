@@ -9,6 +9,8 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/...
 
 FROM alpine:3.22
+LABEL org.opencontainers.image.source="https://github.com/elraro/atomic-bomberman" \
+      org.opencontainers.image.licenses="GPL-3.0-only"
 COPY --from=build /out/master /out/abconfig /usr/local/bin/
 USER 65534:65534
 EXPOSE 8443

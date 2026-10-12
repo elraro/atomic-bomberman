@@ -58,7 +58,9 @@ PROTOCOL_MIN=${PROTOCOL_MIN:-$PROTOCOL}
 mkdir -p data/root data/master data/coturn data/gameserver
 chmod 700 data/root
 
-docker compose build master
+# The master's image holds the key tool. Pulled before (docker compose pull): used as it is.
+IMAGE_TAG=$(get_env IMAGE_TAG)
+docker image inspect "ghcr.io/elraro/atomic-bomberman-master:${IMAGE_TAG:-latest}" >/dev/null 2>&1 || docker compose build master
 abconfig() { docker compose run --rm -T abconfig "$@"; }
 
 if [ ! -f data/root/root.pub ]; then

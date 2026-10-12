@@ -74,8 +74,22 @@ jobs:
   # The images of the online service (deploy/): built, started with docker compose, and
   # played through: test clients in containers find the game server in the master's list
   # and play a match each through the relay: over UDP, over TCP and over TLS.
+  # Once they have passed, on the main branch and on a release tag, the images are
+  # published at ghcr.io (job docker-publish puts the two processor types under one name).
   docker:
-    runs-on: ubuntu-24.04
+    name: docker (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
     env:
       COMPOSE_FILE: docker-compose.yml:ci.yml
     steps:
@@ -117,7 +131,7 @@ jobs:
           # every way is a relayed one.
           bot() {
             local log=$1; shift
-            timeout 200 docker run --rm --network bridge -e XDG_DATA_HOME=/tmp --entrypoint net_bot atomic-bomberman-server \
+            timeout 200 docker run --rm --network bridge -e XDG_DATA_HOME=/tmp --entrypoint net_bot ghcr.io/elraro/atomic-bomberman-server:latest \
               "listed:Container game" "$@" --start-after 2000 --matches 1 \
               --online-config "https://$IP:8443/config.json" --online-key "$KEY" >"$log" 2>&1 || { tail -n 30 "$log"; failed "$log: no match played ($(grep 'ice:' "$log" | tail -n 1))"; }
             grep -q "done: matches=1" "$log" || { tail -n 30 "$log"; failed "$log: the match was not played to its end"; }
@@ -134,6 +148,35 @@ jobs:
             grep -q "ice: a way to the host (Relay (TCP))" $way.log || failed "over $way the way should be the relayed one: $(grep 'ice:' $way.log | head -n 1)"
           done
           docker compose logs coturn 2>&1 | grep -qi "allocate" || failed "the relay's log names no allocation ($(docker compose logs coturn 2>&1 | wc -l) lines; last: $(docker compose logs coturn 2>&1 | tail -n 1 | cut -c1-200))"
+
+      - name: Publish the images that were just tried (for this processor type)
+        if: github.event_name == 'push'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for image in master server; do
+            docker tag ghcr.io/elraro/atomic-bomberman-$image:latest ghcr.io/elraro/atomic-bomberman-$image:${{ github.sha }}-${{ matrix.arch }}
+            docker push ghcr.io/elraro/atomic-bomberman-$image:${{ github.sha }}-${{ matrix.arch }}
+          done
+
+  # One name for both processor types: "latest" for the main branch, the tag's name for a release.
+  docker-publish:
+    if: github.event_name == 'push'
+    needs: docker
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Join the two under one name
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          TAG=latest
+          [ "${{ github.ref_type }}" = tag ] && TAG="${{ github.ref_name }}"
+          for image in master server; do
+            NAME=ghcr.io/elraro/atomic-bomberman-$image
+            docker buildx imagetools create -t "$NAME:$TAG" "$NAME:${{ github.sha }}-amd64" "$NAME:${{ github.sha }}-arm64"
+            docker buildx imagetools inspect "$NAME:$TAG"
+          done
 
   linux:
     name: linux (${{ matrix.arch }})

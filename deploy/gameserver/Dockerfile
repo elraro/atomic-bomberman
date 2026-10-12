@@ -20,6 +20,8 @@ RUN cmake -S . -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release \
     && cmake --build /build --target atomic_server atomic_verify net_bot
 
 FROM ubuntu:24.04
+LABEL org.opencontainers.image.source="https://github.com/elraro/atomic-bomberman" \
+      org.opencontainers.image.licenses="GPL-3.0-only"
 COPY --from=build /build/atomic_server /build/atomic_verify /build/net_bot /usr/local/bin/
 # The server's keys, its match records and its list of bans are kept here
 # (in /data/atomic-bomberman-modern/atomic/).
