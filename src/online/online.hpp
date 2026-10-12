@@ -54,9 +54,14 @@ struct JoinInfo {
     std::vector<std::string> relayUrls;
 };
 
+// "dir/online-serial.txt" and a key: "dir/online-serial-0123456789abcdef.txt".
+std::string serialFileFor(const std::string& file, const PublicKey& key);
+
 class Online {
 public:
-    // `serialFile`: where the highest configuration serial seen is kept (may be empty).
+    // `serialFile`: where the highest configuration serial seen is kept (may be empty). The
+    // file used is one per configuration key (serialFileFor): whoever plays with two
+    // communities, each with a configuration of its own, keeps a number for each.
     void configure(const Bootstrap& bootstrap, const std::string& serialFile, const std::string& playerName, int protocolVersion);
     bool configured() const { return bootstrap_.valid(); }
 

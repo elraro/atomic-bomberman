@@ -120,7 +120,7 @@ status: ok / maintenance, message
 flags: free-form switches
 ```
 
-- A document is used only if its signature verifies, it has not expired and its serial is not lower than the last one accepted (no replay of an old one).
+- A document is used only if its signature verifies, it has not expired and its serial is not lower than the last one accepted (no replay of an old one). That number is remembered per signing key, so a player who uses two communities' configurations keeps one for each.
 - **Nothing is cached.** If no current document can be fetched and verified, everything that rests on it is refused, with the reason shown: the list of games, joining by code, relayed connections, the "verified" mark of a server, tournaments. Outdated addresses or an outdated list of revoked certificates are worse than no connection. Playing on the local network and joining by address need no configuration and keep working.
 - Because of that the file must be easy to keep reachable: it is a static signed file, the bootstrap may name several URLs for it (mirrors on different hosts), and any one that verifies will do. A mirror cannot forge it; it can only serve an older one, which the expiry (seven days at most) bounds. The highest serial seen is remembered, as a number only, to refuse a step back.
 - A command-line option and a settings key point the game at another bootstrap URL and key, for a self-hosted community.

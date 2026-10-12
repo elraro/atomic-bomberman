@@ -40,10 +40,18 @@ std::string pathSafe(const std::string& s) {
 
 }  // namespace
 
+std::string serialFileFor(const std::string& file, const PublicKey& key) {
+    if (file.empty()) return file;
+    const std::size_t slash = file.find_last_of("/\\");
+    std::size_t dot = file.rfind('.');
+    if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) dot = file.size();
+    return file.substr(0, dot) + "-" + toHex(key).substr(0, 16) + file.substr(dot);
+}
+
 void Online::configure(const Bootstrap& bootstrap, const std::string& serialFile, const std::string& playerName, int protocolVersion) {
     reset();
     bootstrap_ = bootstrap;
-    serialFile_ = serialFile;
+    serialFile_ = serialFileFor(serialFile, bootstrap.key);
     name_ = playerName;
     version_ = protocolVersion;
 }

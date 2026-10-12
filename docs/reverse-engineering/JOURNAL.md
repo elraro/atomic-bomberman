@@ -803,3 +803,13 @@ Not a discovery about the original; a fault of the modern network code, found an
 - Besides the record: a player's old key state could be applied for a step or two in any round, recorded or not. Not noticed in play.
 - Validation (Level 4): `ab_net_tests` "records: the inputs applied follow the log" (six recorded rounds with keys changing to the end, three of them with packet loss and stalls; fails without the server's forgetting). 48 matches in the loop afterwards: all records hold.
 - Why the first version of that test did not fail: it changed keys every 5 ms at random, so that any old key state was found again a little later in the log. The check is strict only when a key state does not soon return.
+
+### Modern: the highest configuration serial seen is kept per signing key
+
+A fault of the modern code, found while running the end-to-end test by hand with a relay for the first time on this machine.
+
+- Seen: the second run of `tests/integration/online.sh` failed at its first step, "the configuration is older than one already seen". The first run's relay section signs a configuration with serial 999999999999, and the dedicated server had written that into `online-serial.txt` in the user's own data folder; every later configuration, from any signer, was then refused.
+- Two faults: one number for all configurations whoever signed them (a player who used two communities' masters would have been locked out of one), and a test that wrote into the real data folder.
+- Fix: the file is named after the key (`serialFileFor`). The end-to-end test gives its programs a data folder of their own (with the next change to that script).
+- The file the test had left behind was removed by hand (its content was the test's serial; no master of the user's exists yet).
+- Validation (Level 4): `ab_online_tests` "master client" (the number is kept under the key's name; the plain name stays untouched).

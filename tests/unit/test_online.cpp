@@ -596,7 +596,7 @@ void testMasterClient() {
     };
     issue(100, now - 60, now + 3600);
     const std::string serialFile = "ab-online-test-serial.txt";
-    std::remove(serialFile.c_str());
+    std::remove(serialFileFor(serialFile, publicKeyOf(seed)).c_str());
 
     Online online;
     online.setClock([&] { return now; });
@@ -625,7 +625,13 @@ void testMasterClient() {
     CHECK(online.ready() && online.config().serial == 100 && online.sessionId() == "sess1");
     CHECK(online.lobbies().size() == 2 && online.lobbiesTotal() == 2 && online.lobbiesSerial() == 1);
     CHECK(online.lobbies()[0].id == "l1" && online.lobbies()[0].name == "Open game" && online.lobbies()[0].players == 2 && online.lobbies()[0].certified && online.lobbies()[1].phase == "round");
-    CHECK(readSerial(serialFile) == 100);
+    // The highest serial seen is kept under the configuration's key: another configuration,
+    // signed by somebody else, has a number of its own.
+    const std::string kept = serialFileFor(serialFile, publicKeyOf(seed));
+    CHECK_TEXT(kept, "ab-online-test-serial-" + toHex(publicKeyOf(seed)).substr(0, 16) + ".txt");
+    CHECK_TEXT(serialFileFor("some.dir/serial", publicKeyOf(seed)), "some.dir/serial-" + toHex(publicKeyOf(seed)).substr(0, 16));
+    CHECK(serialFileFor("", publicKeyOf(seed)).empty());
+    CHECK(readSerial(kept) == 100 && readSerial(serialFile) == 0);
     // A second request reuses configuration and session.
     const int before = master.requests();
     online.refreshLobbies();
@@ -686,7 +692,7 @@ void testMasterClient() {
     issue(101, now - 60, now + 3600);
     online.refreshLobbies();
     CHECK(settle(online) && online.error().empty() && online.ready() && online.config().serial == 101);
-    CHECK(readSerial(serialFile) == 101);
+    CHECK(readSerial(kept) == 101);
     // Maintenance, and a game too old, are said plainly.
     now += 7200;
     issue(102, now - 60, now + 3600);
@@ -705,7 +711,7 @@ void testMasterClient() {
     old.configure(bootstrap, "", "Old", 7);
     old.refreshLobbies();
     CHECK(settle(old) && !old.ready() && old.error().find("too old") != std::string::npos);
-    std::remove(serialFile.c_str());
+    std::remove(kept.c_str());
 }
 
 }  // namespace

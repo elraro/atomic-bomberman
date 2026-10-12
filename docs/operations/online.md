@@ -77,7 +77,7 @@ On the offline machine, at least once a week:
 bin/abconfig sign -key root.key -in config.json -out config.signed.json -stamp
 ```
 
-`-stamp` writes the serial (the present time), the day of issue and the expiry (`-days N`, seven at most) into the document before signing. A game refuses a document with a lower serial than one it has already accepted, so an old one cannot be played back. Copy `config.signed.json` to every address the games look at.
+`-stamp` writes the serial (the present time), the day of issue and the expiry (`-days N`, seven at most) into the document before signing. A game refuses a document with a lower serial than one it has already accepted, so an old one cannot be played back. (It remembers that number in its data folder, in `online-serial-<the first 16 digits of the key>.txt`: one per key. If a serial far in the future was ever signed by mistake, every later one must be higher still.) Copy `config.signed.json` to every address the games look at.
 
 ```sh
 bin/abconfig verify -pub "$(cat root.pub)" -in config.signed.json     # what a game will accept, printed
