@@ -164,7 +164,7 @@ void encode(ByteWriter& w, const HelloMsg& m) {
 }
 
 const char* pathName(int path) {
-    static const char* const kNames[4] = {"Direct", "Relay", "TCP", "Relay (TCP)"};
+    static const char* const kNames[4] = {"Direct", "Relay", "TCP", "Direct"};
     return kNames[path & 3];
 }
 

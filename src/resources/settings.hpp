@@ -38,7 +38,6 @@ struct Settings {
     long long tournamentSerial = 0;   // tournament_serial: the newest issue of it seen
     bool netHideAddress = false;      // net_hide_address: online, be reached and reach others through the relay only
     int netOnline = 0;                // net_online: a hosted game is 0 not announced, 1 listed, 2 found by its code only
-    std::string netRelay;             // net_relay: relay to register a hosted game with ("host[:port]"), or empty
     bool netPrediction = true;        // net_prediction: show own moves at once instead of after the round trip
     // keydef=set,index,code: two keyboard sets of six keys (up, right, down, left,
     // action 1, action 2) as DirectInput key codes, which are PC scan codes. Defaults

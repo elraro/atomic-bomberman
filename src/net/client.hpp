@@ -17,7 +17,6 @@
 #include "net/link.hpp"
 #include "net/protocol.hpp"
 #include "net/record.hpp"
-#include "net/relay.hpp"
 #include "net/snapshot.hpp"
 #include "net/socket.hpp"
 
@@ -46,7 +45,7 @@ public:
     // The same over a path somebody else has found (ICE: carrier.hpp). `label` is what the
     // other end is called in messages.
     void connectVia(std::unique_ptr<Carrier> carrier, const std::string& label, const std::string& name, const std::string& password, std::uint64_t nowMs);
-    // What kind of path the connection runs over: "Direct", "Relay", "TCP".
+    // What kind of path the connection runs over: "Direct", "TCP", or what the way ICE found says ("Relay", "Relay (TCP)").
     std::string pathKind() const;
     // The volume check of the path (once joined): datagrams of a kilobyte to the server and
     // back, 64 KB each way over two seconds. Some networks let a new UDP flow start and drop
@@ -117,11 +116,10 @@ public:
     int localPlayers() const;  // how many players this computer has asked for
     const LobbyState& lobby() const { return lobby_; }
     const std::deque<ChatLine>& chat() const { return chat_; }
-    // The connection runs over UDP (otherwise inside a TCP connection: no UDP path, or a relay).
+    // The connection runs over UDP (otherwise inside a TCP connection, or over a way that ICE found).
     bool udpActive() const { return keyed_ && !overTcp_ && !carrier_; }
     int linkRttMs() const { return link_.rttMs(); }
     std::size_t linkUnacknowledged() const { return link_.unacknowledged(); }
-    bool viaRelay() const { return viaRelay_; }
     bool encrypted() const { return keyed_; }
 
     void setInput(const PlayerInput& in) { input_[0] = packInput(in); }
@@ -216,7 +214,7 @@ private:
     int probesSent_ = 0, probesBack_ = 0;  // back: of the last quarter
     std::uint64_t probeAt_ = 0;  // set: the packets go this way, not through the sockets above
     bool overTcp_ = false;     // the packets travel as frames of a TCP connection
-    bool tcpIntro_ = false;    // that connection is up (and the relay has been told what is wanted)
+    bool tcpIntro_ = false;    // that connection is up
     bool udpHeard_ = false;    // the server has answered over UDP
     bool answered_ = false;    // a server has answered at all
     std::uint64_t keySentAt_ = 0;
@@ -224,8 +222,6 @@ private:
     Address server_{};
     std::string name_;
     std::string address_;      // as given to connect()
-    bool viaRelay_ = false;    // "CODE@relay": the connection goes to a relay, which links it to the host
-    std::string relayCode_;
     std::string knownFile_;
     std::string expectedIdentity_;
     Key playerKey_{};

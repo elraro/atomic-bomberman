@@ -39,7 +39,7 @@ inline constexpr std::uint8_t kServerKey = 0x82;
 inline constexpr std::uint8_t kClearReject = 0x83;
 inline constexpr std::uint8_t kCookie = 0x84;
 inline constexpr std::size_t kCookieBytes = 16;
-// Where the packets travel inside a TCP connection (a network without UDP, or a relay):
+// Where the packets travel inside a TCP connection (a network without UDP):
 // each is one frame of this type.
 inline constexpr std::uint8_t kPacketFrame = 0x7E;
 // Searches of the local network, in the clear.
@@ -159,8 +159,7 @@ struct ClientInfo {
 inline constexpr int kPathDirect = 0;    // UDP, straight or through routers
 inline constexpr int kPathRelay = 1;     // through a TURN relay
 inline constexpr int kPathTcp = 2;       // inside a TCP connection
-inline constexpr int kPathTcpRelay = 3;  // inside TCP, through the project's own relay
-const char* pathName(int path);          // "Direct", "Relay", "TCP", "Relay (TCP)"
+const char* pathName(int path);          // "Direct", "Relay", "TCP"
 
 // The volume check of a new path (online-play.md): this many datagrams of this size go to
 // the server and come back, and the path counts as good if enough of the last ones return.

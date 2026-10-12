@@ -1,6 +1,6 @@
 # Online play over the internet (target design)
 
-Status: **every phase is implemented** (1: the screens worked with a gamepad, the on-screen keyboard, the ready state; 2: the link; 3: snapshots, all three described in `networking.md`; 4: the master server, the signed configuration, games found by list or by code: `master/README.md`, `../operations/online.md`; 6: server certificates and player keys; 7: signed match records; 8: tournaments as signed files, all three in section 7 below). 5: a way through routers by ICE, with STUN and a TURN relay reached over UDP, TCP or TLS, in "Connectivity" below). Where what was built differs from what this document first said, the difference is noted in place. It describes where the network mode is going. What the game does today is in `networking.md` (snapshots over the link, to an address, a TCP relay), which stays valid until the phases below replace its parts.
+Status: **every phase is implemented** (1: the screens worked with a gamepad, the on-screen keyboard, the ready state; 2: the link; 3: snapshots, all three described in `networking.md`; 4: the master server, the signed configuration, games found by list or by code: `master/README.md`, `../operations/online.md`; 6: server certificates and player keys; 7: signed match records; 8: tournaments as signed files, all three in section 7 below). 5: a way through routers by ICE, with STUN and a TURN relay reached over UDP, TCP or TLS, in "Connectivity" below). Where what was built differs from what this document first said, the difference is noted in place. What a connection is made of once the two sides have found each other (the link, snapshots, the lobby, the messages) is in `networking.md`.
 
 Like `networking.md`, this is the project's own design. Nothing here is a claim about the original game, whose IPX/serial network mode is not reproduced.
 
@@ -22,7 +22,7 @@ Like `networking.md`, this is the project's own design. Nothing here is a claim 
 | Checking a result | Every recorded match leaves a **signed match record** that anyone can replay with the gameplay core. Statistics are worked out from published records, not kept by the master. |
 | Tournaments | **Signed files** issued by an organiser; no master involved. |
 | Accounts | Optional and undecided. Nothing above needs them: in a tournament a player is a key. |
-| Networks that block UDP | **TURN over TCP** (and TLS on port 443) through coturn as the last resort, shown to the player as such. The project's own TCP relay is dropped (decided 2026-10-11). |
+| Networks that block UDP | **TURN over TCP** (and TLS on port 443) through coturn as the last resort, shown to the player as such. The project's own TCP relay is dropped (decided 2026-10-11; removed with protocol 12). |
 | Configuration that cannot be fetched | **No cache**: online play is refused until it can be (decided 2026-10-11). |
 | Master server language | Go, with PostgreSQL. |
 | STUN / TURN | Existing implementations: a library in the game, `coturn` as the server. No protocol of our own. |
@@ -167,7 +167,7 @@ Tried in this order; the first that works is used:
 
 ### What the player sees
 
-The lobby shows, per player, the path and the measured delay: `Direct`, `Relay`, `Relay (TCP), may stutter`. (As built: nothing for a direct path, `Relay`, `TCP` for the host's address inside TCP, or `Relay (TCP)` for the project's own relay, before the delay. A player who came by the relay over TCP or TLS is shown as `Relay`: the host sees the relayed address, not how the player reaches the relay.) The test runs when joining a lobby, before any match starts, and takes a few seconds at most.
+The lobby shows, per player, the path and the measured delay: `Direct`, `Relay`, `Relay (TCP), may stutter`. (As built: nothing for a direct path, `Relay`, `TCP` for the host's address inside TCP, before the delay. A player who came by the relay over TCP or TLS is shown as `Relay`: the host sees the relayed address, not how the player reaches the relay.) The test runs when joining a lobby, before any match starts, and takes a few seconds at most.
 
 **Volume check.** A path is declared good only after about 64 KB has gone over it in each direction during the test (padding datagrams over two or three seconds, acknowledged by the other side). The ICE checks and the handshake prove both directions, but they are a few kilobytes, and so is the traffic of a lobby. Reported by a reviewer, not verified by us: some networks let a new UDP flow start and then drop it silently after roughly 16 KB. Without the check such a path would die in the first round instead of in the test. An earlier version of this document left the probe out pending evidence; this report is that evidence.
 
@@ -188,7 +188,7 @@ There is **one kind of link**: datagrams over the path ICE chose, with messages 
 
 Today's design has TCP beside UDP on a known address. A hole-punched path has no TCP beside it, which is why the reliable channel moves into the link. What goes away with it: a game joined by address on a network that blocks UDP (today it falls back to TCP). Such a player needs the relay, and so the master for its credentials.
 
-The project's own relay (`--relay-server`, `CODE@relay` addresses; `networking.md`) stays until phase 5 works, and is removed then.
+The project's own relay (`--relay-server`, `CODE@relay` addresses) is removed, as decided: the relay over TCP and TLS does its work.
 
 What goes where:
 
@@ -396,7 +396,7 @@ Each phase is usable on its own and ends with tests.
 | 2 | The link abstraction: reliable messages over UDP; today's protocol moved onto it. **Done.** | nothing |
 | 3 | Snapshot model replacing lockstep, with measurements of size and behaviour under loss. **Done** (sizes in `networking.md`; no buffer of two steps yet, see there). | 2 |
 | 4 | Master server (guest sessions, lobbies, status), signed configuration, browse / create / join by code in the game. **Done**; a player reaches a host at the address the master saw, so the host must be reachable until phase 5. | 1 |
-| 5 | ICE library + coturn: discovery, hole punching, TURN over UDP, TCP and TLS, the ladder, volume check, always-relay setting, connection display; the old relay removed. **Done** (with libjuice, and a bridge for the relay over TCP and TLS), except: the old relay is still there (removed next). | 2, 4 |
+| 5 | ICE library + coturn: discovery, hole punching, TURN over UDP, TCP and TLS, the ladder, volume check, always-relay setting, connection display; the old relay removed. **Done** (with libjuice, and a bridge for the relay over TCP and TLS); the old relay is removed. | 2, 4 |
 | 6 | Server certificates and player keys: the tool that issues certificates, the certificate in the handshake, "verified" in the lobby, revocation through the configuration. **Done.** | 2 (revocation: 4) |
 | 7 | Signed match records: seed by commit and reveal, signed input statements, the record, `atomic_verify`, a tool that sums statistics from records. **Done** (per round; `atomic_verify --stats` is the tool that sums). | 3, 6 |
 | 8 | Tournaments as signed files: the format, the organiser's tool, the screen, servers admitting only listed players. **Done.** | 6, 7 |

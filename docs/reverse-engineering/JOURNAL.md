@@ -826,3 +826,11 @@ Not a discovery about the original; a record of what was built and seen.
 - TLS: the relay's certificate is not judged (stated in the specification and the operations guide, with what that leaves open).
 - Validation: see `docs/testing/validation-status.md`.
 - Not done: anything from a network that really blocks UDP; the game's own retry after a failed volume check has no automated test.
+
+### Modern: the project's own relay is removed
+
+Not a discovery about the original; a record of a decision carried out (the decision is of 2026-10-11: TURN over TCP replaces the project's own TCP relay once it works).
+
+- Gone: `src/net/relay.*`, `atomic_server --relay-server` and `--relay`, addresses of the form `CODE@relay`, the "Relay" field of the host screen, the setting `net_relay` (an old settings file that has it is read as before; the line is ignored), the path name `Relay (TCP)` in the lobby state, the test "relay".
+- What a player without UDP now has: for a game found on a master, the relay over TCP or TLS; for a game joined by its address, the same packets inside TCP to the host's port, if that port is open. A host whose router lets nothing in needs a master server with a relay; before, a relay program of the project's own on any reachable machine was enough. That is the price of the decision, and the only thing lost.
+- Validation: the unit tests and the end-to-end test pass without it (`ab_ui_tests` adjusted for a host screen with one row fewer).

@@ -16,7 +16,6 @@ src/net/protocol.*      messages and their byte encoding; decoding checks every 
 src/net/server.*        Server: connections, lobby, seats, settings, rounds, snapshots, LAN answers
 src/net/client.*        Client: connection, lobby state, chat, the newest state, prediction; LanBrowser
 src/net/crypto.*        X25519, ChaCha20-Poly1305, SHA-256, HMAC; the keys of a connection
-src/net/relay.*         the relay (also `atomic_server --relay-server`)
 src/net/upnp.*          asking the home router to forward the port (UPnP); PortMapper runs it on a thread
 src/server/main.cpp     atomic_server: the Server with a log and three console commands
 src/app/net_ui.*        the game's screens: join, host, lobby with chat, match, result
@@ -57,6 +56,6 @@ tools/diagnostics/net_bot.cpp   a client without a window that presses random ke
 - The screens with a person at the keyboard (real key events and text input rather than scripted ones), `/kick`, the Esc-twice exit, how the delay feels.
 - More than three clients at once.
 - The roulette wheel on screen in a network game (the test checks that the client's wheel stops where the server says; nobody has looked at it).
-- A relay on another machine, and a relay under load.
+- A TURN relay on another machine, and one under load.
 - An attack by someone who knows what they are doing. The tests show the protections do what they were written to do; they are not a security review.
 - Prediction with real delay. The test runs over the loopback interface with the look-ahead forced to four steps: it shows the predicted states are exactly right while inputs are steady, wrong for at most a few steps after a change, and that the confirmed state is never touched. How it feels at 50-200 ms, and how distracting the corrections of other players are, nobody has seen.

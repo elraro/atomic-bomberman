@@ -22,9 +22,9 @@ using State = net::Client::State;
 constexpr int kJoinFields = 8;   // name, address, password, join, browse online, join by code, tournament, hide my address; then the servers found, then back
 constexpr int kJoinHideRow = 7;
 constexpr int kTournamentRows = 5;  // the file, open, play my match, trust the organiser, back
-constexpr int kHostRows = 8;     // name, server name, port, password, relay, announce online, start, back
-constexpr int kHostOnlineRow = 5;
-constexpr int kHostStartRow = 6;
+constexpr int kHostRows = 7;     // name, server name, port, password, announce online, start, back
+constexpr int kHostOnlineRow = 4;
+constexpr int kHostStartRow = 5;
 constexpr int kBrowseShown = 12; // games on the list at a time
 const char* const kOnlineChoice[3] = {"No", "Listed for everybody", "By its code only"};
 constexpr int kLobbySettings = 14;             // the fourteen settings...
@@ -713,7 +713,6 @@ void NetUi::startHost() {
         return online::verify(k, std::string(message.begin(), message.end()), signature);
     };
 #endif
-    config.relay = net::cleanText(cfg_.netRelay, 64);
     if (!userSchemesDir_.empty()) config.banFile = userSchemesDir_ + "/../bans.txt";  // beside the settings file
     if (!userSchemesDir_.empty()) config.identityFile = userSchemesDir_ + "/../server.key";  // a hosted game tries to open the router's port; the lobby says how it went
     config.log = [](const std::string& line) { std::fprintf(stderr, "%s\n", line.c_str()); };
@@ -875,7 +874,6 @@ void NetUi::key(unsigned key, bool ctrl, bool pad) {
                 else if (row_ == 1) edit(&cfg_.netServerName, 32, false, pad);
                 else if (row_ == 2) edit(&portText_, 5, true, pad);
                 else if (row_ == 3) edit(&password_, 32, false, pad);
-                else if (row_ == 4) edit(&cfg_.netRelay, 64, false, pad);
                 else if (row_ == kHostOnlineRow) {
                     cfg_.netOnline = (cfg_.netOnline + 1) % 3;
                     if (hooks_.settingsChanged) hooks_.settingsChanged();
@@ -1252,7 +1250,7 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
     };
     if (join) {
         fieldRow(0, "Your name:", &cfg_.netName, false, "Player");
-        fieldRow(1, "Address:", &cfg_.netAddress, false, "(host, host:port or CODE@relay)");
+        fieldRow(1, "Address:", &cfg_.netAddress, false, "(host or host:port)");
         fieldRow(2, "Password:", &password_, true, "(none)");
         item(3, "Join this address", 86.0f + 24.0f * 3.0f);
         item(4, "Browse online games", 86.0f + 24.0f * 4.0f);
@@ -1280,7 +1278,6 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
         fieldRow(1, "Game name:", &cfg_.netServerName, false, "");
         fieldRow(2, "Port:", &portText_, false, "");
         fieldRow(3, "Password:", &password_, true, "(none)");
-        fieldRow(4, "Relay:", &cfg_.netRelay, false, "(none)");
         {
             // A choice, changed with left and right (or by choosing it).
             const float y = 86.0f + 24.0f * static_cast<float>(kHostOnlineRow);
@@ -1289,11 +1286,11 @@ void NetUi::drawEntry(Renderer& r, SpriteBank& bank, int frame) {
             label(r, bank, kOnlineChoice[std::clamp(cfg_.netOnline, 0, 2)], 230, y, 1, 1, 1);
             if (on) r.sprite(bank, "cursor1", frame / 8, -1, 62.0f, y + 15.0f);
         }
-        item(kHostStartRow, "Start the server", 86.0f + 24.0f * 6.0f + 6.0f);
-        item(kHostStartRow + 1, "Back", 86.0f + 24.0f * 7.0f + 6.0f);
+        item(kHostStartRow, "Start the server", 86.0f + 24.0f * static_cast<float>(kHostStartRow) + 6.0f);
+        item(kHostStartRow + 1, "Back", 86.0f + 24.0f * static_cast<float>(kHostStartRow + 1) + 6.0f);
         const std::vector<std::string> notes = {"Others join with your address and this port (TCP and UDP).",
                                                 "On the same network they find the game by themselves.",
-                                                "If your router lets nothing in: name a relay, and give out the code it shows.",
+                                                "If your router lets nothing in: announce the game online, and give out its code.",
                                                 "For a server without a window run atomic_server."};
         for (std::size_t i = 0; i < notes.size(); ++i) label(r, bank, notes[i], 60, 300.0f + 22.0f * static_cast<float>(i), 0.75f, 0.75f, 0.75f);
         label(r, bank, editing_ != nullptr ? "Type, then Enter" : "Up/Down: select   Enter: change / start   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);

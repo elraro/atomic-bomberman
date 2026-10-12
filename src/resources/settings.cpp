@@ -53,7 +53,6 @@ void Settings::parse(const std::string& text) {
         else if (key == "net_server_name") netServerName = value.substr(0, 32);
         else if (key == "net_port") netPort = n >= 1 && n <= 65535 ? n : netPort;
         else if (key == "net_prediction") netPrediction = n != 0;
-        else if (key == "net_relay") netRelay = value.substr(0, 64);
         else if (key == "online_config_url") onlineConfigUrl = value.substr(0, 1024);
         else if (key == "online_config_key") onlineConfigKey = value.substr(0, 64);
         else if (key == "net_online") netOnline = std::clamp(std::atoi(value.c_str()), 0, 2);
@@ -89,7 +88,7 @@ std::string Settings::serialize() const {
         << "\nschemefilename=" << scheme << ".SCH\nplaytime=" << playTime << "\ndiseases_destroyable=" << diseasesDestroyable
         << "\ndisable_game_music=" << disableGameMusic << "\nassign_keyboards=" << assignKeyboards << "\nfree_assets=" << freeAssets << "\nsmallmemory=" << smallMemory
         << "\nmusic_volume=" << musicVolume << "\nsound_volume=" << soundVolume << "\nnet_name=" << netName << "\nnet_address="
-        << netAddress << "\nnet_server_name=" << netServerName << "\nnet_port=" << netPort << "\nnet_prediction=" << netPrediction << "\nnet_relay=" << netRelay << "\nnet_online=" << netOnline
+        << netAddress << "\nnet_server_name=" << netServerName << "\nnet_port=" << netPort << "\nnet_prediction=" << netPrediction << "\nnet_online=" << netOnline
         << "\nonline_config_url=" << onlineConfigUrl << "\nonline_config_key=" << onlineConfigKey << "\ntournament=" << tournament << "\ntournament_key=" << tournamentKey
         << "\ntournament_serial=" << tournamentSerial << "\nnet_hide_address=" << (netHideAddress ? 1 : 0) << "\n";
     for (int set = 0; set < kKeySets; ++set)

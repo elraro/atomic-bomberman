@@ -46,7 +46,6 @@ void Client::startVolumeCheck(std::uint64_t nowMs) {
 
 std::string Client::pathKind() const {
     if (carrier_) return carrier_->kind();
-    if (viaRelay_) return "Relay (TCP)";
     return overTcp_ ? "TCP" : "Direct";
 }
 
@@ -107,19 +106,16 @@ void Client::connect(const std::string& address, const std::string& name, const 
     keySentAt_ = 0;
     volume_ = VolumeCheck::NotRun;
     cookie_.assign(kCookieBytes, 0);
-    // "CODE@relay": the game is reached through a relay, by the code its host was given.
-    std::string relay;
-    viaRelay_ = splitRelayAddress(address, &relayCode_, &relay);
-    const auto to = viaRelay_ ? resolveHostPort(relay, kRelayPort) : resolveHostPort(address, kDefaultPort);
+    const auto to = resolveHostPort(address, kDefaultPort);
     if (!to) {
-        fail("Cannot find \"" + (viaRelay_ ? relay : address) + "\"");
+        fail("Cannot find \"" + address + "\"");
         return;
     }
     server_ = *to;
     randomBytes(secret_.data(), secret_.size());
     public_ = x25519Base(secret_);
-    // Over UDP if it can be had; a relay carries TCP only.
-    overTcp_ = viaRelay_ || !udpAllowed_ || !udp_.open(0, false, false, server_.v6);
+    // Over UDP if it can be had.
+    overTcp_ = !udpAllowed_ || !udp_.open(0, false, false, server_.v6);
     if (overTcp_ && !tcp_.connect(server_)) {
         fail("Cannot connect to " + server_.text());
         return;
@@ -150,7 +146,6 @@ void Client::connectVia(std::unique_ptr<Carrier> carrier, const std::string& lab
     keySentAt_ = 0;
     volume_ = VolumeCheck::NotRun;
     cookie_.assign(kCookieBytes, 0);
-    viaRelay_ = false;
     overTcp_ = false;
     server_ = Address{};
     randomBytes(secret_.data(), secret_.size());
@@ -562,8 +557,7 @@ void Client::handlePacket(const Bytes& packet, std::uint64_t nowMs) {
         Key expected{};
         if (!fromHex(expectedIdentity_, expected) || expected != identity) return fail("This is not the game server the master server named (another identity)");
     }
-    // (Not through a relay either: its codes are new each time, so there is nothing to remember by.)
-    if (expectedIdentity_.empty() && !carrier_ && !knownFile_.empty() && !viaRelay_ && (!server_.loopback() || identityOnLoopback_)) {
+    if (expectedIdentity_.empty() && !carrier_ && !knownFile_.empty() && (!server_.loopback() || identityOnLoopback_)) {
         std::map<std::string, std::string> known = readKnown(knownFile_);
         const auto it = known.find(server_.text());
         if (it != known.end() && it->second != identity_) {
@@ -607,25 +601,13 @@ void Client::update(std::uint64_t nowMs) {
     } else if (overTcp_) {
         const bool alive = tcp_.pump();
         if (tcp_.connected() && !tcpIntro_) {
-            if (viaRelay_) {
-                // First a word to the relay; everything after it is passed on to the host.
-                ByteWriter join;
-                join.u32(kRelayMagic);
-                join.text(relayCode_);
-                tcp_.send(static_cast<std::uint8_t>(RelayMsg::Join), join.data());
-            }
             tcpIntro_ = true;
             sendKey(nowMs);  // once: this line loses nothing
         }
         std::uint8_t type = 0;
         Bytes payload;
-        while (!over() && tcp_.receive(type, payload)) {
-            if (!keyed_ && viaRelay_ && static_cast<RelayMsg>(type) == RelayMsg::Refuse) {
-                ByteReader r(payload);
-                return fail(cleanText(r.text(256), 200));
-            }
+        while (!over() && tcp_.receive(type, payload))
             if (type == kPacketFrame) handlePacket(payload, nowMs);
-        }
         if (over()) return;
         if (!alive) return fail(welcomed_ ? "The connection to the server was lost" : "Cannot connect to " + server_.text());
     } else {

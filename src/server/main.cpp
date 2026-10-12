@@ -17,7 +17,6 @@
 #include <vector>
 
 #include "free/free_data.hpp"
-#include "net/relay.hpp"
 #ifdef AB_ONLINE
 #include "online/announcer.hpp"
 #include "online/bootstrap.hpp"
@@ -89,8 +88,6 @@ const char* const kUsage =
     "  --upnp             ask the router to forward the port (UPnP), for a server behind a home router\n"
     "The first player to join is the administrator: changes the settings, starts the match.\n"
     "  --admin-password TEXT  a player who types /login TEXT in the chat becomes administrator\n"
-    "  --relay ADDRESS        register with a relay, for players who cannot reach this machine (they join with CODE@ADDRESS)\n"
-    "  --relay-server         be a relay instead of a game server (port 27408 unless --port is given)\n"
     "  --identity-file FILE   the server's lasting key (default: server.key in the per-user folder)\n"
     "  --certificate FILE     this server's certificate (who answers for it), shown to every player\n"
     "  --signing-key-file FILE  the key match records are signed with (default: server.sign.key in the per-user folder)\n"
@@ -113,7 +110,6 @@ int main(int argc, char** argv) {
     config.name = "Atomic Bomberman server";
     std::string gameDir;
     bool schemesDirGiven = false;
-    bool relayServer = false, portGiven = false;
     std::string onlineMode, onlineConfig, onlineKey;
     std::string certificateFile, signingKeyFile, recordsDir, tournamentAt, matchId;
     bool showKeys = false, noIce = false, hideAddress = false;
@@ -134,7 +130,6 @@ int main(int argc, char** argv) {
                 return 2;
             }
             config.port = static_cast<std::uint16_t>(port);
-            portGiven = true;
         } else if (a == "--name") config.name = ab::net::cleanText(next(), 32);
         else if (a == "--password") config.password = next();
         else if (a == "--game-dir") gameDir = next();
@@ -152,8 +147,6 @@ int main(int argc, char** argv) {
         else if (a == "--ban-file") config.banFile = next();
         else if (a == "--admin-password") config.adminPassword = next();
         else if (a == "--identity-file") config.identityFile = next();
-        else if (a == "--relay") config.relay = next();
-        else if (a == "--relay-server") relayServer = true;
         else if (a == "--certificate") certificateFile = next();
         else if (a == "--signing-key-file") signingKeyFile = next();
         else if (a == "--records-dir") recordsDir = next();
@@ -169,23 +162,6 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "ERROR unknown argument %s (see --help)\n", a.c_str());
             return 2;
         }
-    }
-    if (relayServer) {
-        // A relay: links hosts and players who cannot reach each other. It carries their
-        // encrypted traffic and knows nothing of the game.
-        ab::net::Relay relay;
-        if (!relay.start(portGiven ? config.port : ab::net::kRelayPort, logLine)) {
-            logLine("ERROR Cannot listen on TCP port " + std::to_string(portGiven ? config.port : ab::net::kRelayPort));
-            return 1;
-        }
-        std::signal(SIGINT, onSignal);
-        std::signal(SIGTERM, onSignal);
-        while (!g_stop) {
-            relay.update(ab::net::clockMs());
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-        logLine("INFO  Shutting down");
-        return 0;
     }
     const std::string requested = gameDir;
     config.gameDir = findGameDir(requested);
@@ -304,7 +280,6 @@ int main(int argc, char** argv) {
         config.port = 0;
         config.discoverable = false;
         config.upnp = false;
-        config.relay.clear();
         config.log = {};
     }
     ab::net::Server server;

@@ -17,7 +17,6 @@
 #include "net/link.hpp"
 #include "net/protocol.hpp"
 #include "net/record.hpp"
-#include "net/relay.hpp"
 #include "net/snapshot.hpp"
 #include "net/socket.hpp"
 #include "net/upnp.hpp"
@@ -39,7 +38,6 @@ struct ServerConfig {
     bool upnp = false;                  // ask the router to forward the port (UPnP)
     std::string banFile;                // banned addresses, one per line (empty: bans last until the server stops)
     int maxPerAddress = 10;             // connections accepted from one address at a time
-    std::string relay;                  // "host[:port]" of a relay to register with, for players who cannot reach this machine; empty: none
     std::string identityFile;           // the server's lasting key (made on first start); empty: a new identity every start
     std::string adminPassword;          // whoever gives it ("/login PASSWORD") becomes administrator; empty: off
     // The server's certificate (a signed document, sent to every client as it is; the server
@@ -78,8 +76,6 @@ public:
     // What players compare to know it is this server: "3F9A-11C0-7B42-E5D8".
     std::string identity() const { return fingerprint(identityPublic_); }
     std::string identityKeyHex() const { return toHex(identityPublic_); }  // the whole key, for the master server
-    // The code players give to join through the relay (empty until the relay has answered).
-    const std::string& relayCode() const { return relayCode_; }
 
     // Takes in a connection that arrives over a path made elsewhere (carrier.hpp).
     bool adopt(std::unique_ptr<Carrier> carrier);
@@ -113,7 +109,6 @@ private:
     void block(const std::string& host, std::uint64_t untilMs);
     bool blocked(const std::string& host) const;
     void saveBans() const;
-    void pumpRelay();
     void handleDatagram(const Address& from, const std::vector<std::uint8_t>& data, bool viaDiscovery);
     // The first packet of a connection (the client's key). `viaTcp`: it came inside that peer's TCP connection.
     void handleKey(Peer* viaTcp, const Address& from, const std::vector<std::uint8_t>& data);
@@ -162,20 +157,6 @@ private:
     std::uint64_t now_ = 0;
     std::uint64_t joinCounter_ = 0;
     Key identitySecret_{}, identityPublic_{};
-    // The relay: one lasting connection on which it announces players, and one new
-    // connection out for each player, which then behaves like an accepted one.
-    struct Adopting {
-        TcpSocket socket;
-        std::uint32_t ticket = 0;
-        std::string host;
-        std::uint64_t since = 0;
-    };
-    TcpSocket relayControl_;
-    Address relayAddress_{};
-    bool relayResolved_ = false, relayHelloSent_ = false;
-    std::string relayCode_, relayNotice_;
-    std::uint64_t relayRetryAt_ = 0, relayPingAt_ = 0;
-    std::vector<Adopting> adopting_;
     int adminId_ = -1;  // the administrator's client id; -1: whoever has been here longest
     Rng rng_{1};
 

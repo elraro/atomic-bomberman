@@ -286,7 +286,7 @@ void testScreensByPad() {
     // --- hosting: name, port, start ---
     host.ui.openHost();
     CHECK_TEXT(host.screen(), "host");
-    host.press(PadKey::Up, 6);  // from "Start the server" to the name
+    host.press(PadKey::Up, 5);  // from "Start the server" to the name
     host.press(PadKey::Confirm);
     CHECK(host.ui.keyboardShown());
     host.press(PadKey::Erase, 40);
@@ -302,7 +302,7 @@ void testScreensByPad() {
     CHECK(host.type(port));
     CHECK(host.pressKey("Done"));
     CHECK(!host.ui.keyboardShown());
-    host.press(PadKey::Down, 4);  // password, relay, announce online, start
+    host.press(PadKey::Down, 3);  // password, announce online, start
     host.press(PadKey::Confirm);
     CHECK(t.until([&] { return host.screen() == "lobby" && host.ui.client().lobby().clients.size() == 1; }));
     if (host.screen() != "lobby") return;
@@ -610,11 +610,11 @@ void testOnlineScreensByPad() {
     third.cfg.netOnline = 1;
     third.cfg.netPort = freePort();
     third.ui.openHost();
-    third.press(PadKey::Up, 3);  // announce, relay, password
+    third.press(PadKey::Up, 2);  // announce, password
     third.press(PadKey::Confirm);
     CHECK(third.type("secret"));
     third.press(PadKey::Menu);
-    third.press(PadKey::Down, 3);
+    third.press(PadKey::Down, 2);
     third.press(PadKey::Confirm);
     CHECK_TEXT(third.screen(), "error");
     CHECK(third.ui.errorText().find("no password") != std::string::npos);
