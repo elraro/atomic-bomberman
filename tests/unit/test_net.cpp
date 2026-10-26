@@ -396,6 +396,51 @@ void testLink() {
 
 // Snapshots: a world rebuilt from the row of numbers, or from differences, is the public
 // state it was taken from; and how large the differences are in ten-player rounds.
+// The same match, the same state and the same bytes on every machine: the values below were
+// recorded on x86-64, and a build for another processor (32-bit, ARM) has to give them too, or
+// its players could not play with the others. A deterministic round of four computer players,
+// then the world's hash, its saved state, its snapshot row and an encoded message.
+void testSameOnEveryMachine() {
+    const auto hex = [](const Key& k) {
+        std::string out;
+        for (std::size_t i = 0; i < 8; ++i) {
+            char two[3];
+            std::snprintf(two, sizeof two, "%02x", k[i]);
+            out += two;
+        }
+        return out;
+    };
+    Scheme scheme = Scheme::pillars();
+    scheme.brickDensity = 85;
+    World w{Values::defaults(), 4242};
+    w.startRound(scheme, true);
+    std::vector<AiPlayer> ai;
+    for (int i = 0; i < 4; ++i) {
+        w.addPlayer(i);
+        ai.emplace_back(31u + static_cast<std::uint32_t>(i));
+    }
+    for (int t = 0; t < 900 && !w.roundOver(); ++t) {
+        std::array<PlayerInput, kMaxPlayers> in{};
+        for (int i = 0; i < 4; ++i) in[static_cast<std::size_t>(i)] = ai[static_cast<std::size_t>(i)].decide(w, i, 50);
+        w.tick(50, in);
+    }
+    const std::vector<std::uint8_t> state = w.saveState();
+    const Bytes row = encodeDelta({}, w.snapshotFields());
+    RoundStartMsg start;
+    start.roundId = 9;
+    start.seed = 0x01234567u;
+    start.values = Values::defaults().entries();
+    start.winsNeeded = 3;
+    start.setup.scheme = scheme;
+    start.setup.level = 4;
+    start.setup.playTime = 150;
+    const Bytes message = encoded(start);
+    const std::string got = std::to_string(w.tickCount()) + " " + std::to_string(w.stateHash()) + " " + hex(sha256(state.data(), state.size())) + " " +
+                            hex(sha256(row.data(), row.size())) + " " + hex(sha256(message.data(), message.size()));
+    std::printf("  this machine: %s\n", got.c_str());
+    CHECK(got == "900 1801455735 10bc37464c7587e2 2baa5e5076ab2f40 1a532e5ddff5d12e");
+}
+
 void testSnapshotFields() {
     // The coder by itself.
     {
@@ -2448,6 +2493,7 @@ int main(int argc, char** argv) {
         {"codec", testCodec},
         {"link", testLink},
         {"snapshot fields", testSnapshotFields},
+        {"the same on every machine", testSameOnEveryMachine},
         {"cryptography test vectors", testCrypto},
         {"lobby", testLobby},
         {"encryption on the wire", testEncryptionOnTheWire},

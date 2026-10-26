@@ -9,6 +9,18 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Windows release builds link the C++ runtime statically so the .exe runs without a redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# 32-bit builds. On x86, floating point in the SSE registers as on 64-bit, not in the x87's
+# wider ones (MSVC does so already). On Linux, a 64-bit time (past 2038) and 64-bit file
+# sizes; set for everything built here, the fetched libraries too, so that they agree.
+if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT MSVC)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(i.86|x86|x86_64|AMD64)$")
+        add_compile_options(-msse2 -mfpmath=sse)
+    endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_compile_definitions(_FILE_OFFSET_BITS=64 _TIME_BITS=64)
+    endif()
+endif()
+
 # Warning flags for this project's own targets (not for a fetched SDL3).
 function(ab_warnings target)
     if(MSVC)
