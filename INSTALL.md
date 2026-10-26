@@ -11,19 +11,20 @@ For the import you need:
 
 ## 1. Get the program
 
-**Download.** Each push to the repository builds fifteen packages with GitHub Actions (workflow "build"):
+**Download.** Each push to the repository builds seventeen packages with GitHub Actions (workflow "build"):
 
 | Package | For |
 |---|---|
 | `atomic-bomberman-modern-linux-x86_64.tar.gz` | 64-bit Linux with X11 or Wayland, Intel or AMD processor |
 | `atomic-bomberman-modern-linux-arm64.tar.gz` | The same for 64-bit ARM (for example a Raspberry Pi 4 or 5 with a 64-bit system) |
 | `atomic-bomberman-modern-linux-i386.tar.gz` | 32-bit Linux on a PC (i686 with SSE2; Debian 12 or another system with glibc 2.36 or later) |
+| `atomic-bomberman-modern-linux-armhf.tar.gz` | 32-bit ARM Linux (ARMv7 or later with hardware floating point, for example Raspberry Pi OS 32-bit on a Pi 2 to 5; glibc 2.36 or later, as in Raspberry Pi OS 12 "bookworm") |
 | `atomic-bomberman-modern-windows-x64.zip` | 64-bit Windows 10 or later, Intel or AMD processor |
 | `atomic-bomberman-modern-windows-arm64.zip` | Windows 11 on ARM |
 | `atomic-bomberman-modern-windows-x86.zip` | 32-bit Windows (it runs on 64-bit Windows too) |
 | `atomic-bomberman-modern-macos-universal.zip` | macOS 11 or later: the application **Atomic Bomberman**, for Apple silicon and Intel alike (see the note below) |
 | `atomic-bomberman-modern-android.apk` | Android 7.0 or later (new; see `android/README.md`) |
-| `atomic-bomberman-server-linux-x86_64.tar.gz`, `…-linux-arm64.tar.gz`, `…-linux-i386.tar.gz` | Only the dedicated network server, Linux (no graphics needed) |
+| `atomic-bomberman-server-linux-x86_64.tar.gz`, `…-linux-arm64.tar.gz`, `…-linux-i386.tar.gz`, `…-linux-armhf.tar.gz` | Only the dedicated network server, Linux (no graphics needed) |
 | `atomic-bomberman-server-windows-x64.zip`, `…-windows-arm64.zip`, `…-windows-x86.zip` | Only the dedicated network server, Windows |
 | `atomic-bomberman-server-macos-universal.tar.gz` | Only the dedicated network server, macOS |
 

@@ -88,7 +88,7 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-Needs CMake 3.20+ and a C++20 compiler. `-DAB_FETCH_SDL3=ON` downloads SDL3 and links it in; leave it out to use an installed SDL3 (`libsdl3-dev`). Without SDL3 only the game core and the tests are built. Linux and Windows (for x86-64, 64-bit ARM and 32-bit x86), macOS and Android (64- and 32-bit ARM) packages are built by [`.github/workflows/build.yml`](.github/workflows/build.yml).
+Needs CMake 3.20+ and a C++20 compiler. `-DAB_FETCH_SDL3=ON` downloads SDL3 and links it in; leave it out to use an installed SDL3 (`libsdl3-dev`). Without SDL3 only the game core and the tests are built. Linux (x86-64, 64-bit ARM, 32-bit x86 and 32-bit ARM), Windows (x86-64, 64-bit ARM and 32-bit x86), macOS and Android (64- and 32-bit ARM) packages are built by [`.github/workflows/build.yml`](.github/workflows/build.yml).
 
 ## 🕹️ Running and controls
 
