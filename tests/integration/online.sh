@@ -267,11 +267,11 @@ if command -v turnserver >/dev/null 2>&1; then
     RCODE=$(sed -n 's/.*Online: code, code \([0-9]*\).*/\1/p' "$R/server.log" | head -n 1)
     [[ "$RCODE" =~ ^[0-9]{6}$ ]] || fail "the server behind the relay was not announced"
     timeout 150 "$BUILD/net_bot" "code:$RCODE" Rex --start-after 2000 --matches 1 --hide-address "${RELAYED[@]}" >"$R/rex.log" 2>&1 || { cat "$R/rex.log" "$R/server.log"; tail -n 30 "$R/coturn.log"; fail "Rex did not finish a match through the relay"; }
-    grep -q "ice: a way to the host (Relay)" "$R/rex.log" || { echo "FAIL detail: $(grep "ice:" "$R/rex.log" | head -n 1)"; fail "Rex should have reached the host through the relay"; }
+    grep -q "ice: a way to the host (Relay)" "$R/rex.log" || { echo "FAIL detail: $(grep "ice:" "$R/rex.log" | tail -n 5 | paste -sd ";")"; fail "Rex should have reached the host through the relay"; }
     grep -qi "allocate" "$R/coturn.log" || {
         tail -n 30 "$R/coturn.log"
         echo "FAIL detail: $(grep -c . "$R/coturn.log") lines of coturn log; last: $(tail -n 1 "$R/coturn.log" | cut -c1-200)"
-        echo "FAIL detail: $(grep "ice:" "$R/rex.log" | head -n 1)"
+        echo "FAIL detail: $(grep "ice:" "$R/rex.log" | tail -n 5 | paste -sd ";")"
         fail "coturn should have made an allocation"
     }
     echo "ok   through coturn: a hidden player and a hidden host played a match"
@@ -280,7 +280,7 @@ if command -v turnserver >/dev/null 2>&1; then
     # the same TURN, in a stream (and from the relay on to the host's relayed address, over UDP).
     for way in tcp tls; do
         timeout 150 "$BUILD/net_bot" "code:$RCODE" "Tess-$way" --start-after 2000 --matches 1 "--relay-$way" "${RELAYED[@]}" >"$R/$way.log" 2>&1 || { cat "$R/$way.log"; tail -n 30 "$R/coturn.log"; fail "a player did not finish a match through the relay over $way"; }
-        grep -q "ice: a way to the host (Relay (TCP))" "$R/$way.log" || { echo "FAIL detail: $(grep "ice:" "$R/$way.log" | head -n 1)"; fail "the way over $way should have been the relayed one"; }
+        grep -q "ice: a way to the host (Relay (TCP))" "$R/$way.log" || { echo "FAIL detail: $(grep "ice:" "$R/$way.log" | tail -n 5 | paste -sd ";")"; fail "the way over $way should have been the relayed one"; }
     done
     echo "ok   through coturn over TCP and over TLS: a player without UDP played a match each way"
 else

@@ -915,3 +915,9 @@ Next: somebody listening to the LOW-confidence clips and to the lines for single
 
 - CI builds the game and the dedicated server for 32-bit ARM Linux (armhf: ARMv7, hardware floating point), cross-compiled on the x86-64 runner in a Debian 12 container with Debian's armhf libraries (`crossbuild-essential-armhf`), and runs the whole test suite there through `qemu-arm` (CMake's cross-compiling emulator). GitHub's ARM runners were not used: their processors are taken to have no 32-bit ARM mode (Azure Cobalt 100, Neoverse N2; not tried).
 - So the tests run under emulation, not on a real ARM processor; the test "the same on every machine" checks that the state and bytes are those of x86-64. Not yet run on a real Raspberry Pi.
+
+### Modern: the container job once found a TCP-relayed way where a UDP one was expected
+
+- Seen: once, in the CI run of commit `bc5c371` (which changed no program code), job `docker (arm64)`: the player who hides its address reached the game server through the relay, but over TCP ("Relay (TCP)"), not over UDP as the job expects. The same job passed on x86-64 in that run, and on both processor types in the run before.
+- That is the designed fallback: when the first try (UDP) finds no way within 25 s, or the relay does not answer over UDP, the player tries once more through the relay over TCP. So the player stayed hidden; what failed is the first try, and why is UNKNOWN (the job's log needs signing in; the annotation showed only the final way).
+- Now `net_bot` prints each step of the search and when it came, and the CI and end-to-end checks show the last five such lines when a way is not the one expected, so a repeat tells whether the UDP try timed out or never reached the relay.

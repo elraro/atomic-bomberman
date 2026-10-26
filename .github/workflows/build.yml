@@ -137,17 +137,17 @@ jobs:
               "listed:Container game" "$@" --start-after 2000 --matches 1 \
               --online-config "https://$IP:8443/config.json" --online-key "$KEY" >"$log" 2>&1 || { tail -n 30 "$log"; failed "$log: no match played ($(grep 'ice:' "$log" | tail -n 1))"; }
             grep -q "done: matches=1" "$log" || { tail -n 30 "$log"; failed "$log: the match was not played to its end"; }
-            echo "ok   $log: $(grep 'ice: a way' "$log" | head -n 1)"
+            echo "ok   $log: $(grep 'ice: a way' "$log" | head -n 1) ($(grep -c 'ice: Looking' "$log") tries)"
           }
           bot udp.log Ann
           bot hidden.log Rex --hide-address
           for way in udp hidden; do
-            grep -q "ice: a way to the host (Relay)" $way.log || failed "$way: the way should be through the relay: $(grep 'ice:' $way.log | head -n 1)"
+            grep -q "ice: a way to the host (Relay)" $way.log || failed "$way: the way should be through the relay: $(grep 'ice:' $way.log | tail -n 5 | paste -sd ';')"
           done
           bot tcp.log Tess --relay-tcp
           bot tls.log Tina --relay-tls
           for way in tcp tls; do
-            grep -q "ice: a way to the host (Relay (TCP))" $way.log || failed "over $way the way should be the relayed one: $(grep 'ice:' $way.log | head -n 1)"
+            grep -q "ice: a way to the host (Relay (TCP))" $way.log || failed "over $way the way should be the relayed one: $(grep 'ice:' $way.log | tail -n 5 | paste -sd ';')"
           done
           docker compose logs coturn 2>&1 | grep -qi "allocate" || failed "the relay's log names no allocation ($(docker compose logs coturn 2>&1 | wc -l) lines; last: $(docker compose logs coturn 2>&1 | tail -n 1 | cut -c1-200))"
 

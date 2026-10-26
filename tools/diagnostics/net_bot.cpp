@@ -138,9 +138,16 @@ int main(int argc, char** argv) {
             // A way through the routers: descriptions exchanged by way of the master, then the addresses tried.
             ab::online::IceJoin join;
             join.start(master, info, hideAddress, ab::net::clockMs(), relayTls ? ab::online::Ways::Tls : relayTcp ? ab::online::Ways::Stream : ab::online::Ways::Udp);
+            // Each step as it comes, and when (a turn to the relay over TCP shows here, and after how long).
+            const std::uint64_t iceFrom = ab::net::clockMs();
+            std::string lastStep;
             while (join.state() == ab::online::IceJoin::State::Working) {
                 master.update();
                 join.update(ab::net::clockMs(), master);
+                if (join.step() != lastStep) {
+                    lastStep = join.step();
+                    std::printf("[%s] ice: %s (at %llu ms)\n", name.c_str(), lastStep.c_str(), static_cast<unsigned long long>(ab::net::clockMs() - iceFrom));
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
             if (join.state() == ab::online::IceJoin::State::Ready) {
