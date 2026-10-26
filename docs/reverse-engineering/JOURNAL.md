@@ -899,3 +899,8 @@ Next: somebody listening to the LOW-confidence clips and to the lines for single
 
 - CI builds and tries the two images on x86-64 and on 64-bit ARM (each on a runner of that type) and, for a push to the main branch or a release tag, publishes them at `ghcr.io/elraro/atomic-bomberman-master` and `-server`: `latest` for the main branch, the tag's name for a release. Only images whose job passed are published, and they are the very images that were tried.
 - The compose file names those images; `docker compose pull` fetches them, and without it they are built from the source as before.
+
+### Modern: full screen or a window, under Options
+
+- New row "Screen: Full Screen / Windowed" at the end of Options (setting `fullscreen`, default a window; not in the original, which always runs full screen at 640x480). Full screen is the desktop's own resolution with the picture scaled, so the display mode is never changed. The rows of Options are now 21 pixels apart instead of 22, so that the nineteenth row clears the key hint at the bottom.
+- Validation: unit test for the setting; run off-screen (SDL's offscreen driver), the row is drawn and switching it takes the window to full screen. That driver does not resize its drawing surface, so the picture after the switch could not be checked there; not yet tried on a real display.

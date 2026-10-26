@@ -1333,6 +1333,14 @@ void testSettings() {
     CHECK(!s.unusedVoices);            // off unless asked for
     s.parse("unused_voices=1\n");
     CHECK(s.unusedVoices);
+    CHECK(!s.fullscreen);              // a window unless asked for
+    s.parse("fullscreen=1\n");
+    CHECK(s.fullscreen);
+    {
+        Settings again;
+        again.parse(s.serialize());
+        CHECK(again.fullscreen);
+    }
     // Where an unused voice clip is put: the series the original's list uses its family for.
     CHECK_EQ(unusedVoiceSeries("add36a"), 700);
     CHECK_EQ(unusedVoiceSeries("zaa13aa"), 700);

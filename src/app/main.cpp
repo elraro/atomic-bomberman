@@ -393,7 +393,7 @@ const char* controlName(Control c) {
     }
 }
 
-constexpr int kOptionRows = 18;  // the original's, and this implementation's: sound test, original game data, which data to use
+constexpr int kOptionRows = 19;  // the original's, and this implementation's: sound test, original game data, which data to use, screen
 enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor, AudioAdjust, Movie, Net, SoundTest };
 
 using ab::SchemeEntry;
@@ -446,11 +446,15 @@ int runGame(int argc, char** argv, bool& again) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, opt.gles ? 0 : 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, opt.gles ? SDL_GL_CONTEXT_PROFILE_ES : SDL_GL_CONTEXT_PROFILE_CORE);
+    // Automated runs ignore the saved settings, and stay in a window.
+    const bool unattended = opt.frames > 0 || opt.menuShot > 0 || !opt.script.empty() || opt.demo;
+    ab::Settings early;
+    const bool earlyLoaded = !unattended && early.load(userFile("options.ini"));
     SDL_Window* window = SDL_CreateWindow("Atomic Bomberman (modern)", opt.native ? 640 : 960, opt.native ? 480 : 720,
 #ifdef __ANDROID__
                                           SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN);
 #else
-                                          SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+                                          SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | (earlyLoaded && early.fullscreen ? SDL_WINDOW_FULLSCREEN : 0));
 #endif
     if (window == nullptr) {
         std::fprintf(stderr, "ERROR SDL_CreateWindow: %s\n", SDL_GetError());
@@ -498,11 +502,7 @@ int runGame(int argc, char** argv, bool& again) {
         }
 #endif
     // Saved choice (Options, Graphics And Sound): the free set although original data is there.
-    const bool unattended = opt.frames > 0 || opt.menuShot > 0 || !opt.script.empty() || opt.demo;
-    if (!unattended) {
-        ab::Settings early;
-        if (early.load(userFile("options.ini")) && early.freeAssets) opt.freeAssets = true;
-    }
+    if (earlyLoaded && early.freeAssets) opt.freeAssets = true;
     // Unattended runs show these screens only when asked to with --import-folder.
     if ((!opt.importFolder.empty() || !unattended) && requested.empty() && !opt.freeAssets && ab::ensureFreeAssets(freeDir, true)) {
         ab::ImportScreens screens;
@@ -1201,6 +1201,9 @@ int runGame(int argc, char** argv, bool& again) {
             bool singleStep = false;
             while (SDL_PollEvent(&e)) {
                 if (e.type == SDL_EVENT_QUIT) running = false;
+                // Also when the window system switched it (a title-bar button), so that it is remembered.
+                if (e.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN || e.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN)
+                    cfg.fullscreen = e.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN;
                 {
                     int ww = 1, wh = 1;
                     SDL_GetWindowSize(window, &ww, &wh);
@@ -1620,6 +1623,15 @@ int runGame(int argc, char** argv, bool& again) {
                                     startAnew(cfg.freeAssets ? "The game now uses its free graphics and sounds."
                                                              : "The game now uses the original graphics and sounds.");
                                 }
+                                break;
+                            case 18:
+                                // Full screen (the desktop's own resolution, the picture scaled) or a window.
+                                // A phone is always full screen.
+#ifndef __ANDROID__
+                                cfg.fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) == 0;
+                                SDL_SetWindowFullscreen(window, cfg.fullscreen);
+                                saveSettings();
+#endif
                                 break;
                         }
                     }
@@ -2160,15 +2172,16 @@ int runGame(int argc, char** argv, bool& again) {
                     "Adjust Audio",                                                          // message 268
                     "Sound Test",
                     "Original Game Data: " + (folderShown.empty() ? std::string("Choose Folder") : folderShown),
-                    std::string("Graphics And Sound: ") + (ab::isFreeAssetDir(opt.gameDir) ? "Free" : "Original")};
+                    std::string("Graphics And Sound: ") + (ab::isFreeAssetDir(opt.gameDir) ? "Free" : "Original"),
+                    std::string("Screen: ") + ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0 ? "Full Screen" : "Windowed")};
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
                 for (int r = 0; r < kOptionRows; ++r) {
-                    const float y = 40.0f + 22.0f * static_cast<float>(r);
+                    const float y = 40.0f + 21.0f * static_cast<float>(r);
                     renderer.text(*spritesPtr, rows[r], 56, y + 1, 0, 0, 0);
                     renderer.text(*spritesPtr, rows[r], 55, y, r == optionRow ? 1.0f : 0.85f, r == optionRow ? 0.95f : 0.85f, r == optionRow ? 0.3f : 0.85f);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 41.0f, 55.0f + 22.0f * static_cast<float>(optionRow));
+                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 41.0f, 55.0f + 21.0f * static_cast<float>(optionRow));
                 renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::LevelSetup) {
