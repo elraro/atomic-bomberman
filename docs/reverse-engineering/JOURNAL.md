@@ -921,3 +921,8 @@ Next: somebody listening to the LOW-confidence clips and to the lines for single
 - Seen: once, in the CI run of commit `bc5c371` (which changed no program code), job `docker (arm64)`: the player who hides its address reached the game server through the relay, but over TCP ("Relay (TCP)"), not over UDP as the job expects. The same job passed on x86-64 in that run, and on both processor types in the run before.
 - That is the designed fallback: when the first try (UDP) finds no way within 25 s, or the relay does not answer over UDP, the player tries once more through the relay over TCP. So the player stayed hidden; what failed is the first try, and why is UNKNOWN (the job's log needs signing in; the annotation showed only the final way).
 - Now `net_bot` prints each step of the search and when it came, and the CI and end-to-end checks show the last five such lines when a way is not the one expected, so a repeat tells whether the UDP try timed out or never reached the relay.
+
+### Modern: the key that restarts a round is F12, not R
+
+- The round-restart key is this implementation's (not the original's). It was R, which is also "up" of the second keyboard set (R, G, F, D, S, A), so the second player restarted the round by walking up. Now F12, which no key set uses by default.
+- Checked with scripted runs into a match: pressing R leaves the match exactly as with no key; pressing F12 starts the round anew.

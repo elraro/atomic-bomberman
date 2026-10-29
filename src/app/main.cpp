@@ -152,7 +152,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--all-sounds") o.allSounds = true;
         else if (a == "--result-shot") o.resultShot = true;
         else if (a == "--script") {
-            // Comma-separated keys: up, down, left, right, enter, esc, space, backspace, t, f2, f3,
+            // Comma-separated keys: up, down, left, right, enter, esc, space, backspace, t, r, f2, f3, f12,
             // text=CHARACTERS (typed), wait (nothing). One every 10 frames.
             std::string list = next(), item;
             for (char ch : list + ",") {
@@ -1189,7 +1189,7 @@ int runGame(int argc, char** argv, bool& again) {
                 } else {
                     press.type = SDL_EVENT_KEY_DOWN;
                     press.key.key = k == "up" ? SDLK_UP : k == "down" ? SDLK_DOWN : k == "left" ? SDLK_LEFT : k == "right" ? SDLK_RIGHT
-                                    : k == "esc" ? SDLK_ESCAPE : k == "f2" ? SDLK_F2 : k == "f3" ? SDLK_F3 : k == "f5" ? SDLK_F5 : k == "f6" ? SDLK_F6 : k == "t" ? SDLK_T
+                                    : k == "esc" ? SDLK_ESCAPE : k == "f12" ? SDLK_F12 : k == "r" ? SDLK_R : k == "f2" ? SDLK_F2 : k == "f3" ? SDLK_F3 : k == "f5" ? SDLK_F5 : k == "f6" ? SDLK_F6 : k == "t" ? SDLK_T
                                     : k == "space" ? SDLK_SPACE : k == "backspace" ? SDLK_BACKSPACE : SDLK_RETURN;
                 }
                 if (k != "wait" && k.rfind("pad=", 0) != 0) SDL_PushEvent(&press);
@@ -1700,7 +1700,8 @@ int runGame(int argc, char** argv, bool& again) {
                                      "Audio cache hits: " + std::to_string(audio.cacheHitPercent()) + "%"},
                                     [&]() { screen = Screen::Match; });
                     }
-                    if (key == SDLK_R && !ctrl) beginMatch();
+                    // This implementation's: the round anew. Not R, which is "up" of the second key set.
+                    if (key == SDLK_F12) beginMatch();
                     if (key == SDLK_P) paused = !paused;
                     if (key == SDLK_N) singleStep = true;  // advance one step while paused
                 }
