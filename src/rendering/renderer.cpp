@@ -448,19 +448,25 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
             }
         }
 
-    std::size_t bi = 0;
-    for (const Bomb& b : world.bombs()) {
-        const std::size_t idx = bi++;
-        if (!b.active) continue;
-        const RenderSnapshot::Pos was = prev.from(b, idx);
-        const float bx = lerpBomb(was.x, b.x, alpha);
-        const float by = lerpBomb(was.y, b.y, alpha) - bombLift(b);
-        const char* seq = b.dud                        ? "bomb regular green dud"
-                        : b.type == BombType::Trigger ? "bomb trigger green"
-                        : b.type == BombType::Jelly   ? "bomb jelly green"
-                                                      : "bomb regular green";
-        sprite(bank, seq, frame - b.createdTick, b.owner >= 0 ? world.displayColour(b.owner) : -1, bx, by);
-    }
+    // Bombs on the ground go under the players; carried and flying bombs are drawn after
+    // them (below), because they are held or fly above the players' heads.
+    auto drawBombs = [&](bool airborne) {
+        std::size_t bi = 0;
+        for (const Bomb& b : world.bombs()) {
+            const std::size_t idx = bi++;
+            if (!b.active) continue;
+            if ((b.mode == BombMode::Flying || b.mode == BombMode::Held) != airborne) continue;
+            const RenderSnapshot::Pos was = prev.from(b, idx);
+            const float bx = lerpBomb(was.x, b.x, alpha);
+            const float by = lerpBomb(was.y, b.y, alpha) - bombLift(b);
+            const char* seq = b.dud                        ? "bomb regular green dud"
+                            : b.type == BombType::Trigger ? "bomb trigger green"
+                            : b.type == BombType::Jelly   ? "bomb jelly green"
+                                                          : "bomb regular green";
+            sprite(bank, seq, frame - b.createdTick, b.owner >= 0 ? world.displayColour(b.owner) : -1, bx, by);
+        }
+    };
+    drawBombs(false);
 
     // Players are drawn back to front.
     std::array<int, kMaxPlayers> order{};
@@ -518,6 +524,8 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
                 sprite(bank, "stand " + dir, 0, colour, px, py);
         }
     }
+
+    drawBombs(true);
 
     // Campaign enemies: "ghost <dir>" / "rover <dir>", frame = pixels walked.
     for (const Alien& a : world.aliens()) {
