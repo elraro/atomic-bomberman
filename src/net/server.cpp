@@ -1121,6 +1121,12 @@ void Server::beginRound(std::uint32_t roundSeed, const std::vector<SeedShare>& s
         for (const SchemeEntry& entry : schemes_)
             if (entry.file == st.scheme)
                 if (auto file = loadSchemeFile(entry.path)) arena = *file;
+        // "Random start": the stage's own start cells, shuffled anew each time a stage begins,
+        // as the original's next-stage code does (0x40133F, 200 swaps from 0x40141B).
+        if (settings_.randomStart)
+            for (int n = 0; n < 200; ++n)
+                std::swap(arena.scheme.start[static_cast<std::size_t>(rng_.below(kMaxPlayers))],
+                          arena.scheme.start[static_cast<std::size_t>(rng_.below(kMaxPlayers))]);
         int computers = st.computerPlayers;
         for (int s = 0; s < kMaxPlayers; ++s) {
             SeatKind& kind = roundKind_[static_cast<std::size_t>(s)];

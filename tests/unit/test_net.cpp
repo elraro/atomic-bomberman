@@ -1437,10 +1437,31 @@ void testNetCampaign() {
     ann.sendOption(Option::Campaign, 1);
     CHECK(h.until([&] { return bob.lobby().settings.campaignTitle == "first-steps"; }));
 
+    // "Random start": the stage's own start cells, shuffled (as the original's next-stage code does).
+    ann.sendOption(Option::RandomStart, 1);
+    CHECK(h.until([&] { return bob.lobby().settings.randomStart; }));
+
     ann.sendStart();
     CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }));
     // Stage 1 of first-steps: one rover, no computer players (the lobby's two stay out), no teams.
     CHECK(ann.setup().campaign);
+    {
+        const auto stages = loadCampaignFile(dir + "/data/res/first-steps.cam");
+        CHECK(stages && !stages->empty());
+        std::optional<SchemeFile> stageScheme;
+        for (const SchemeEntry& entry : listSchemes(dir + "/data/schemes", ""))
+            if (stages && entry.file == stages->front().scheme) stageScheme = loadSchemeFile(entry.path);
+        CHECK(stageScheme.has_value());
+        if (stageScheme) {
+            auto own = stageScheme->scheme.start;
+            auto used = ann.setup().scheme.start;
+            CHECK(used != own);  // shuffled
+            const auto order = [](const auto& a, const auto& b) { return a.y != b.y ? a.y < b.y : a.x < b.x; };
+            std::sort(own.begin(), own.end(), order);
+            std::sort(used.begin(), used.end(), order);
+            CHECK(used == own);  // the same cells
+        }
+    }
     CHECK(ann.roundStart().stageName == "A Lonely Rover");
     CHECK_EQ(ann.roundStart().stage, 1);
     CHECK_EQ(ann.roundStart().stages, 6);
