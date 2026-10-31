@@ -606,6 +606,20 @@ void Server::applyInput(Peer& p, const InputMsg& m) {
     // So the inputs applied step after step never go back to something held earlier, which
     // is what a recorded round is held against (record.hpp, inputsFollowLog).
     p.inputs.erase(p.inputs.upper_bound(m.step), p.inputs.end());
+    {
+        // (Counted for the tests: a button pressed only in values that came too late, and
+        // let go again in the value applied next, so that the press is never seen.)
+        const std::array<std::uint8_t, kMaxLocalPlayers> before = p.input;
+        std::array<std::uint8_t, kMaxLocalPlayers> next = m.inputs.empty() ? before : m.inputs[0];
+        for (std::size_t i = 0; i < m.inputs.size() && i <= m.step; ++i)
+            if (m.step - static_cast<std::uint32_t>(i) == done + 1) next = m.inputs[i];
+        for (std::size_t i = 0; i < m.inputs.size() && i <= m.step; ++i) {
+            const std::uint32_t step = m.step - static_cast<std::uint32_t>(i);
+            if (step > done || step <= p.inputStep) continue;
+            for (std::size_t l = 0; l < kMaxLocalPlayers; ++l)
+                if ((m.inputs[i][l] & 48 & ~before[l] & ~next[l]) != 0) ++skippedPresses_;
+        }
+    }
     for (std::size_t i = 0; i < m.inputs.size() && i <= m.step; ++i) {
         const std::uint32_t step = m.step - static_cast<std::uint32_t>(i);
         if (step > done) {

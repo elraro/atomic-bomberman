@@ -302,6 +302,19 @@ private:
     std::array<std::uint8_t, kMaxLocalPlayers> inputSent_{};
     std::uint64_t inputSentAt_ = 0;
     std::uint32_t inputNumber_ = 0;  // input messages sent in this round
+    // Steps of lead beyond the round trip, for a line whose delay varies: one more each time an
+    // input is seen to have reached the server too late, one less after a while without.
+    int extraLead_ = 0;
+    int pingPeak_ = 0;             // the highest round trip lately (ms)
+    std::uint64_t lateAt_ = 0;     // when an input was last seen to be late
+    std::uint64_t leadDownAt_ = 0; // when the extra lead was last lowered
+    int lateInputs_ = 0;           // (for the tests)
+    int pullBacks_ = 0;            // (for the tests: times the target was set anew)
+
+public:
+    int extraLead() const { return extraLead_; }
+    int lateInputs() const { return lateInputs_; }
+    int pullBacks() const { return pullBacks_; }
 };
 
 // Finds servers on the local network, whatever port they play on (UDP broadcast to the discovery port).

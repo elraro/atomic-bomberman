@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -17,6 +18,10 @@ bool startup();
 
 // For tests: this share (0-100) of all UDP datagrams sent by this process is thrown away.
 void setTestUdpLoss(int percent);
+// For tests: every UDP datagram sent by this process is held back for `delayMs` plus a random
+// 0..`jitterMs` (so that some overtake others), on the clock `now` gives; held datagrams go out
+// when the sending socket is next used. No clock: off.
+void setTestUdpDelay(int delayMs, int jitterMs, std::function<std::uint64_t()> now);
 
 // Milliseconds of a monotonic clock.
 std::uint64_t clockMs();
@@ -133,9 +138,18 @@ public:
     bool receiveFrom(Address& from, std::vector<std::uint8_t>& data);
 
 private:
+    bool sendNow(const Address& to, const std::vector<std::uint8_t>& data);
+    void sendHeld();  // (setTestUdpDelay)
+
     std::intptr_t fd_ = -1;
     std::uint16_t port_ = 0;
     bool v6_ = false;
+    struct Held {
+        std::uint64_t at;
+        Address to;
+        std::vector<std::uint8_t> data;
+    };
+    std::vector<Held> held_;
 };
 
 }  // namespace ab::net

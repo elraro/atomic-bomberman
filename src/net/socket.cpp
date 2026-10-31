@@ -157,6 +157,8 @@ std::intptr_t newSocket(int type, int family) {
 
 int g_udpLossPercent = 0;
 std::uint32_t g_udpLossState = 12345;
+int g_udpDelayMs = 0, g_udpJitterMs = 0;
+std::function<std::uint64_t()> g_udpDelayClock;
 
 #ifdef MSG_NOSIGNAL
 constexpr int kSendFlags = MSG_NOSIGNAL;
@@ -180,6 +182,11 @@ bool startup() {
 }
 
 void setTestUdpLoss(int percent) { g_udpLossPercent = percent; }
+void setTestUdpDelay(int delayMs, int jitterMs, std::function<std::uint64_t()> now) {
+    g_udpDelayMs = delayMs;
+    g_udpJitterMs = jitterMs;
+    g_udpDelayClock = std::move(now);
+}
 
 std::uint64_t clockMs() {
     using namespace std::chrono;
@@ -647,6 +654,30 @@ bool UdpSocket::sendTo(const Address& to, const std::vector<std::uint8_t>& data)
         g_udpLossState = g_udpLossState * 1103515245u + 12345u;
         if (static_cast<int>((g_udpLossState >> 16) % 100u) < g_udpLossPercent) return true;  // "sent", and lost
     }
+    if (g_udpDelayClock) {
+        g_udpLossState = g_udpLossState * 1103515245u + 12345u;
+        const int jitter = g_udpJitterMs > 0 ? static_cast<int>((g_udpLossState >> 16) % static_cast<std::uint32_t>(g_udpJitterMs + 1)) : 0;
+        held_.push_back({g_udpDelayClock() + static_cast<std::uint64_t>(g_udpDelayMs + jitter), to, data});
+        sendHeld();
+        return true;
+    }
+    if (!held_.empty()) sendHeld();  // the delay was switched off: what was held goes now
+    return sendNow(to, data);
+}
+
+void UdpSocket::sendHeld() {
+    const std::uint64_t now = g_udpDelayClock ? g_udpDelayClock() : ~std::uint64_t{0};
+    for (std::size_t i = 0; i < held_.size();) {
+        if (held_[i].at > now) {
+            ++i;
+            continue;
+        }
+        sendNow(held_[i].to, held_[i].data);
+        held_.erase(held_.begin() + static_cast<std::ptrdiff_t>(i));
+    }
+}
+
+bool UdpSocket::sendNow(const Address& to, const std::vector<std::uint8_t>& data) {
     if (to.v6 && !v6_) return false;  // an IPv6 address through an IPv4-only socket
     const Native sa = toNative(to, v6_);
     const auto n = ::sendto(native(fd_), reinterpret_cast<const char*>(data.data()),
@@ -661,6 +692,7 @@ bool UdpSocket::sendTo(const Address& to, const std::vector<std::uint8_t>& data)
 
 bool UdpSocket::receiveFrom(Address& from, std::vector<std::uint8_t>& data) {
     if (fd_ == -1) return false;
+    if (!held_.empty()) sendHeld();
     static thread_local char buffer[65536];  // a step with many random draws can be a large datagram
     sockaddr_storage sa{};
     SockLen len = sizeof sa;

@@ -5,8 +5,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <thread>
@@ -1076,6 +1078,111 @@ void testCookie() {
 
 // Client-side prediction: the picture runs ahead of the confirmed state, and is right
 // whenever nobody changes what they are doing.
+// A line with delay and jitter (40-80 ms each way, so datagrams overtake one another), and a
+// player who walks and taps the bomb key briefly now and then, with prediction on: every bomb
+// the player's own picture showed should be one the server placed in the same cell. Also
+// counts how often the server had to skip a press that came only in late messages.
+struct JitterResult {
+    int taps = 0, predicted = 0, placed = 0, vanished = 0, skipped = 0, late = 0, pullBacks = 0, lead = 0;
+};
+JitterResult playWithJitter(int delayMs, int jitterMs, int tapMs, int wantedTaps) {
+    JitterResult out;
+    Harness h;
+    CHECK(h.start("", 0));
+    Client& ann = h.join("Ann");
+    Client& bob = h.join("Bob");
+    CHECK(h.until([&] { return ann.lobby().clients.size() == 2 && bob.state() == Client::State::Lobby; }));
+    for (int i = 0; i < 8; ++i) ann.sendOption(Option::Wins, 1);
+    CHECK(h.until([&] { return bob.lobby().settings.winsNeeded == 9; }));
+    setTestUdpDelay(delayMs, jitterMs, [&h] { return h.now; });
+    ann.sendStart();
+    std::set<std::pair<std::uint32_t, int>> shown, real;  // (round, cell) of Ann's bombs
+    std::map<std::pair<std::uint32_t, int>, std::uint32_t> shownAt;  // the step it was first shown at
+    std::map<std::uint32_t, std::uint32_t> roundEnd;                   // the server's last step of each round
+    int sinceTap = 0, holding = 0, row = 0, east = 1;
+    for (int t = 0; t < 400000 && out.taps < wantedTaps; t += 5) {
+        h.turn();
+        if (ann.state() == Client::State::Result) {
+            ann.sendContinue();
+            bob.sendContinue();
+            row = 0, east = 1;
+            continue;
+        }
+        if (ann.state() != Client::State::Round || ann.view() == nullptr || h.server.world() == nullptr) continue;
+        const std::uint32_t round = ann.roundId();
+        for (const Bomb& b : ann.view()->bombs())
+            if (b.active && b.owner == 0) {
+                const Cell c = pixelToCell(b.x, b.y);
+                shown.insert({round, c.y * 100 + c.x});
+                shownAt.try_emplace({round, c.y * 100 + c.x}, ann.viewStep());
+            }
+        roundEnd[round] = h.server.steps();
+        for (const Bomb& b : h.server.world()->bombs())
+            if (b.active && b.owner == 0) {
+                const Cell c = pixelToCell(b.x, b.y);
+                real.insert({round, c.y * 100 + c.x});
+            }
+        // Along the even rows, east then west, two rows down at each end; a tap now and then,
+        // away from the ends (so the player is not caught by its own flames when turning).
+        const Player& me = ann.view()->player(0);
+        if (!me.alive) {
+            ann.setInput({});
+            continue;
+        }
+        const Cell at = pixelToCell(me.x, me.y);
+        PlayerInput in;
+        if (at.y < row * 2) in.dir[2] = true;
+        else if (east == 1 && at.x < 14) in.dir[1] = true;
+        else if (east == 0 && at.x > 0) in.dir[3] = true;
+        else if (row < 4) ++row, east = 1 - east, in.dir[2] = true;
+        if (holding > 0) {
+            in.button1 = true;
+            holding -= 5;
+        } else if ((sinceTap += 5) >= 1500 && at.y == row * 2 && at.x >= 3 && at.x <= 11) {
+            sinceTap = 0;
+            holding = tapMs;
+            in.button1 = true;
+            ++out.taps;
+        }
+        ann.setInput(in);
+    }
+    h.spin(1000);
+    setTestUdpDelay(0, 0, nullptr);
+    out.predicted = static_cast<int>(shown.size());
+    out.placed = static_cast<int>(real.size());
+    for (const auto& b : shown) {
+        if (real.count(b) != 0) continue;
+        ++out.vanished;
+        if (std::getenv("AB_JITTER_SWEEP")) std::printf("    not placed: round %u cell %d shown at step %u, round's last step %u\n", b.first, b.second, shownAt[b], roundEnd[b.first]);
+    }
+    out.skipped = h.server.skippedPresses();
+    out.late = ann.lateInputs();
+    out.pullBacks = ann.pullBacks();
+    out.lead = ann.extraLead();
+    return out;
+}
+
+void testJitter() {
+    if (const char* sweep = std::getenv("AB_JITTER_SWEEP")) {  // (exploring: DELAY,JITTER,TAP,LOSS)
+        int d = 0, j = 0, tap = 0, loss = 0;
+        std::sscanf(sweep, "%d,%d,%d,%d", &d, &j, &tap, &loss);
+        setTestUdpLoss(loss);
+        const JitterResult x = playWithJitter(d, j, tap, 60);
+        setTestUdpLoss(0);
+        std::printf("  sweep %s: taps=%d shown=%d placed=%d vanished=%d skipped=%d late=%d pullbacks=%d extra lead=%d\n", sweep, x.taps, x.predicted, x.placed,
+                    x.vanished, x.skipped, x.late, x.pullBacks, x.lead);
+        return;
+    }
+    // 20-170 ms each way. Before the client kept taps on their steps and stopped setting its
+    // target anew at every burst, 16 of 41 bombs shown here were never placed where shown.
+    const JitterResult r = playWithJitter(20, 150, 50, 40);
+    std::printf("  taps=%d shown=%d placed=%d shown but never placed there=%d presses skipped by the server=%d late=%d\n", r.taps, r.predicted, r.placed,
+                r.vanished, r.skipped, r.late);
+    CHECK(r.taps >= 40);
+    CHECK(r.placed > 10);
+    CHECK(r.vanished <= 1);
+}
+
 void testPrediction() {
     Harness h;
     CHECK(h.start("", 0));
@@ -1968,7 +2075,10 @@ void testPlayerKeysAndCertificate() {
 // names an earlier step for its keys than before, while the server still held what had
 // been guessed, with older keys, for the steps after that one.)
 void testRecordInputOrder() {
-    for (int run = 0; run < 6; ++run) {
+    for (int run = 0; run < 10; ++run) {
+        // The last four on a line with delay and jitter (20-170 ms each way), the lead worked
+        // out by the client, and keys that change faster than a step (15-65 ms).
+        const bool jitter = run >= 6;
         Harness h;
         ServerConfig config;
         config.port = 0;
@@ -1991,7 +2101,7 @@ void testRecordInputOrder() {
         Key key{};
         key.fill(0x33);
         ann.setPlayerKey(key, [key](const Bytes& message) { return standInSign(key, message); });
-        ann.setPredictionSteps(2 + run);  // as on a connection with that much delay: the server holds inputs for that many steps to come
+        ann.setPredictionSteps(jitter ? 0 : 2 + run);  // as on a connection with that much delay: the server holds inputs for that many steps to come
         ann.connect("127.0.0.1:" + std::to_string(h.server.port()), "Ann", "", h.now);
         CHECK(h.until([&] { return ann.state() == Client::State::Lobby; }));
         ann.sendStart();
@@ -1999,6 +2109,7 @@ void testRecordInputOrder() {
         CHECK(ann.recorded());
         const bool bad = run % 2 == 1;  // every other run on a bad connection
         if (bad) setTestUdpLoss(20);
+        if (jitter) setTestUdpDelay(20, 150, [&h] { return h.now; });
         // The keys change every 150 ms or so, going round twelve different combinations: one
         // that came back out of turn would not be found in the log again for a long while.
         std::uint32_t chance = 12345u + static_cast<std::uint32_t>(run) * 977u;
@@ -2007,7 +2118,7 @@ void testRecordInputOrder() {
             chance = chance * 1664525u + 1013904223u;
             if (i >= until) {
                 ++held;
-                until = i + 20 + static_cast<int>((chance >> 16) % 20);
+                until = i + (jitter ? 3 + static_cast<int>((chance >> 16) % 10) : 20 + static_cast<int>((chance >> 16) % 20));
             }
             PlayerInput a;
             a.dir[static_cast<std::size_t>(held % 4)] = true;
@@ -2028,6 +2139,7 @@ void testRecordInputOrder() {
         setTestUdpLoss(0);
         CHECK(ann.state() != Client::State::Round);
         CHECK(h.until([&] { return records.size() == 1; }, 5000));
+        setTestUdpDelay(0, 0, nullptr);
         if (records.empty()) continue;
         const MatchRecord& record = records[0];
         CHECK_EQ(record.players.size(), 1u);
@@ -2569,6 +2681,7 @@ int main(int argc, char** argv) {
         {"left behind", testLeftBehind},
         {"cookie", testCookie},
         {"prediction", testPrediction},
+        {"jitter", testJitter},
         {"back to the lobby", testBackToLobby},
         {"two players at one computer", testTwoPlayersOneComputer},
         {"roulette prize", testNetRoulette},

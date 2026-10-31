@@ -490,14 +490,19 @@ void Client::sendInput(std::uint64_t nowMs) {
     m.haveState = haveState_;
     m.haveStep = newest_;
     if (!mine_.empty() && predictedValid_) {
-        // What was assumed for the step being guessed and the ones before it.
+        // What was assumed for the step being guessed and the ones before it. Keys changed since
+        // that step was guessed count from the next step: a press let go again within a step
+        // keeps its step, and the release follows.
         m.step = mine_.rbegin()->first;
+        if (mine_.rbegin()->second != input_) {
+            if (m.step <= target_) ++m.step;
+            mine_[m.step] = input_;
+        }
         for (int k = 0; k < kInputsPerMessage; ++k) {
             const auto it = mine_.find(m.step - static_cast<std::uint32_t>(k));
             if (it == mine_.end()) break;
             m.inputs.push_back(it->second);
         }
-        m.inputs[0] = input_;  // the keys as they are now
     } else {
         m.step = applied_ + 1;
         m.inputs.push_back(input_);
@@ -693,6 +698,28 @@ bool Client::applyState(const Received& state, const EventSink& events) {
     }
     applied_ = state.step;
     ready_ = true;
+    if (const auto sent = mine_.find(applied_); sent != mine_.end() && prediction_) {
+        // The keys the server applied for this step are not the ones sent for it: they came too
+        // late (the line's delay varies more than the lead allows for). Lead by one step more.
+        const std::array<int, kMaxLocalPlayers> mySeats = seats();
+        bool late = false;
+        // (Only where the player acts on the keys as they come: not frozen at the start of the
+        // round, stunned, dead or in the pause after picking up a bomb.)
+        for (std::size_t l = 0; l < mySeats.size(); ++l) {
+            if (mySeats[l] < 0) continue;
+            const Player& p = world_->player(mySeats[l]);
+            if (p.alive && !world_->startFrozen() && p.stunTicks == 0 && p.action != 3 && packInput(p.lastInput) != sent->second[l]) late = true;
+        }
+        if (late) {
+            ++lateInputs_;
+            if (now_ - lateAt_ >= 500 || lateAt_ == 0) extraLead_ = std::min(extraLead_ + 1, 8);
+            lateAt_ = now_;
+        }
+    }
+    if (extraLead_ > 0 && now_ - lateAt_ >= 10000 && now_ - leadDownAt_ >= 10000) {
+        --extraLead_;
+        leadDownAt_ = now_;
+    }
     std::vector<Event> happened = state.events;
     // An own action that was already heard from the prediction is not heard twice. A
     // prediction that did not come true is forgotten after a second and a half.
@@ -718,20 +745,34 @@ void Client::predict(const EventSink& events) {
     int ahead = predictionSteps_;
     if (ahead <= 0) {
         const ClientInfo* me = lobby_.client(id_);
-        ahead = ((me != nullptr ? me->pingMs : 0) + kStepMs - 1) / kStepMs + 1;  // the round trip, and one step of sampling
+        // The round trip as the highest one measured lately (it eases down by about 20 ms a
+        // second): on an uneven line a single measurement says little.
+        pingPeak_ = std::max(me != nullptr ? me->pingMs : 0, pingPeak_ - 1);
+        ahead = (pingPeak_ + kStepMs - 1) / kStepMs + 1 + extraLead_;  // the round trip, one step of sampling, and the line's unevenness
     }
-    ahead = std::clamp(ahead, 1, 10);
+    ahead = std::clamp(ahead, 1, 16);
     const std::uint32_t wanted = applied_ + static_cast<std::uint32_t>(ahead);
-    // The target moves on by one per local step, steadily, and is pulled back only when it
-    // has drifted from where the confirmed step and the delay say it should be.
-    ++target_;
-    if (target_ + 2 < wanted || target_ > wanted + 2 || target_ <= applied_) target_ = wanted;
+    // The target moves on by one per local step, steadily. When it has drifted from where the
+    // confirmed step and the delay say it should be, it moves on by two, or waits a step, until
+    // it is back: on a line whose delay varies, the confirmed step arrives in bursts, and setting
+    // the target anew each time would shift (or forget) the keys already assumed for steps ahead.
+    // Only far off (a stall, a much longer delay), or once behind the confirmed step, is it set anew.
+    // (It waits only where that changes no keys already assumed: a press would otherwise be
+    // replaced by what is held now.)
+    const auto here = mine_.find(target_);
+    const bool canWait = mine_.upper_bound(target_) == mine_.end() && (here == mine_.end() || here->second == input_);
+    if (target_ + 8 < wanted || target_ > wanted + 8 || target_ < applied_ + 1) target_ = wanted, ++pullBacks_;
+    else if (target_ + 2 < wanted) target_ += 2;
+    else if (target_ < wanted + 2 || !canWait) ++target_;
     logInput();  // whatever is sent for a step is in the log first
     // (When the target has been pulled back, what was remembered for the steps beyond it is
     // forgotten: it would be sent again as those steps' inputs, though the keys have changed since.)
     mine_.erase(mine_.lower_bound(target_), mine_.end());
     mine_[target_] = input_;
     mine_.erase(mine_.begin(), mine_.upper_bound(applied_));
+    // A step passed over (the target moved on by more than one) is assumed to have had the
+    // keys held now, and is sent as such: the server is told every step the picture assumed.
+    for (std::uint32_t s = applied_ + 1; s < target_; ++s) mine_.try_emplace(s, input_);
     if (!predicted_) predicted_ = std::make_unique<World>(*world_);
     else *predicted_ = *world_;
     predicted_->ownRandom(applied_ * 2654435761u + 7u);  // chance cannot be guessed: any numbers will do until the server's arrive

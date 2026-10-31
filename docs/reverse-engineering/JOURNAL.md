@@ -964,3 +964,18 @@ Next: somebody listening to the LOW-confidence clips and to the lines for single
 
 - Reported by players: when a player walks up or down, the shadow is choppy.
 - Cause: between two simulation steps (50 ms) the player is drawn at a position blended between them. The shadow was drawn at the step's own position, so vertically it jumped once a step while the body glided (horizontally both used the blended x). Now the shadow uses the blended ground position. On a trampoline it stays on the ground under the jumping body, as before.
+
+### Modern: bombs that appeared and vanished in network play
+
+- Reported by players (network play only): a placed bomb sometimes disappears.
+- In the game itself a bomb disappears without exploding only when its carrier dies, or when a closing wall covers it with "Stomped Bombs Detonate" off. Neither fits.
+- Reproduced (new net test "jitter"; test-only UDP delay and jitter, `setTestUdpDelay`): a player walks and taps the bomb key briefly with prediction on. The test counts bombs the player's own picture showed in a cell where the server never placed one. Before: none at 40-80 ms each way, but 16 of 41 at 20-170 ms, 16 of 43 at 60-260 ms, 19 of 43 at 40-160 ms with 20 % loss, 31 of 55 at 100-400 ms with 5 % loss. The server placed about the same number of bombs in every case and almost never skipped a press. So the bombs were not lost: they landed a step or two later, often in the next cell, so the bomb shown vanished and another appeared beside it.
+- Causes found, all in the client's prediction:
+  1. A key change made after its step was guessed was sent as that same step's keys. A tap let go within a step overwrote its own press.
+  2. The step the client guesses to was set anew whenever it drifted two steps from its aim. With a jittery line the server's steps arrive in bursts, so this happened often, and the keys already assumed for later steps were thrown away.
+  3. Steps passed over when the target moved on by more than one had no keys sent for them.
+  4. The lead was the last ping measured (one sample a second) plus one step, with nothing for unevenness.
+- Changes (client only; nothing on the wire changes): a change of keys after its step was guessed counts from the next step. The target catches up by two steps, or waits a step, instead of being set anew (only when far off, or behind the confirmed step), and waits only where no assumed keys change. Passed-over steps get the keys held at the time and are sent. The lead uses the highest round trip seen lately (easing down by about 20 ms a second). A step the server applied with other keys than were sent for it (while the player could act) adds a step of lead, at most one per half second and up to 8; one comes off after 10 s without.
+- After: 0 of 27 at 20-170 ms, 1 of 28 at 60-260 ms, 1 of 28 at 40-160 ms with 20 % loss, 2 of 30 at 100-400 ms with 5 % loss.
+- Signed records still verify: "records: the inputs applied follow the log" now also plays four rounds on the jittery line, with keys changing every 15-65 ms.
+- Not tried: a real internet connection. The delay, jitter and loss are made up in the test.
