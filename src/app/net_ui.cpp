@@ -1658,7 +1658,9 @@ void NetUi::draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int fr
         std::array<int, kMaxPlayers> wins = client_.score().wins;
         if (client_.view()->campaign())  // the score boxes show campaign points
             for (int i = 0; i < kMaxPlayers; ++i) wins[static_cast<std::size_t>(i)] = client_.view()->player(i).score;
-        r.draw(*client_.view(), previous_, client_.stepAlpha(nowMs), windowW, windowH, &bank, &wins);
+        // The labels count the kills of the match: those before this round, and this round's.
+        const std::array<int, kMaxPlayers> killsBefore = client_.roundStart().score.kills;
+        r.draw(*client_.view(), previous_, client_.stepAlpha(nowMs), windowW, windowH, &bank, &wins, &killsBefore);
         r.begin(windowW, windowH, false);
         if (state == State::Result) drawResult(r, bank);
         drawChat(r, bank, nowMs);

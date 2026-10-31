@@ -291,13 +291,13 @@ float Renderer::textWidth(const SpriteBank& bank, const std::string& s) const {
 }
 
 void Renderer::draw(const World& world, const RenderSnapshot& prev, float alpha, int windowW, int windowH,
-                    SpriteBank* sprites, const std::array<int, kMaxPlayers>* wins) {
+                    SpriteBank* sprites, const std::array<int, kMaxPlayers>* wins, const std::array<int, kMaxPlayers>* killsBefore) {
     begin(windowW, windowH);
     if (sprites != nullptr && sprites->loaded())
         drawSprites(world, prev, alpha, *sprites);
     else
         drawShapes(world, prev, alpha);
-    drawHud(world, sprites, wins);
+    drawHud(world, sprites, wins, killsBefore);
     flush();
 }
 
@@ -315,7 +315,10 @@ void Renderer::digit(int value, float x, float y, float r, float g, float b) {
     if (s & 0x40) quad(x, y + 12 - t / 2, 14, t, r, g, b);
 }
 
-void Renderer::drawHud(const World& world, SpriteBank* bank, const std::array<int, kMaxPlayers>* wins) {
+void Renderer::drawHud(const World& world, SpriteBank* bank, const std::array<int, kMaxPlayers>* wins, const std::array<int, kMaxPlayers>* killsBefore) {
+    // Kills over the match so far, as the original's label shows them: its count (player +0x6C)
+    // is cleared once per match (0x4217DF), not per round.
+    const auto kills = [&](int i) { return world.player(i).kills + (killsBefore != nullptr ? (*killsBefore)[static_cast<std::size_t>(i)] : 0); };
     const int left = world.secondsLeft();
     const bool original = bank != nullptr && bank->loaded() && bank->sequenceLength("numeric font") >= 11;
     if (original) {
@@ -348,7 +351,7 @@ void Renderer::drawHud(const World& world, SpriteBank* bank, const std::array<in
     }
     if (!original && world.hurry() && (world.tickCount() / 4) % 2 == 0) quad(250, 14, 140, 16, 0.95f, 0.85f, 0.20f);
     if (original && bank->font().texture != 0) {
-        // Score labels as in the original: message 37 "S:%d K:%d" (round wins, kills) in the
+        // Score labels as in the original: message 37 "S:%d K:%d" (round wins, kills in the match) in the
         // player's colour; columns at x 10, 110, ... (values 115-119), rows at y 6 and 26 (113/114).
         for (int i = 0; i < kMaxPlayers; ++i) {
             const Player& p = world.player(i);
@@ -356,7 +359,7 @@ void Renderer::drawHud(const World& world, SpriteBank* bank, const std::array<in
             const float* c = kPlayerColor[world.displayColour(i)];  // team colour in team play
             // In campaign mode message 39 "S:%u L:%u": points and lives.
             const std::string label = "S:" + std::to_string(wins != nullptr ? (*wins)[static_cast<std::size_t>(i)] : 0) +
-                                      (world.campaign() ? " L:" + std::to_string(p.lives) : " K:" + std::to_string(p.kills));
+                                      (world.campaign() ? " L:" + std::to_string(p.lives) : " K:" + std::to_string(kills(i)));
             const float lx = 10.0f + static_cast<float>(i / 2) * 100.0f;
             const float ly = 6.0f + static_cast<float>(i & 1) * 20.0f;
             const bool dark = c[0] + c[1] + c[2] < 1.0f;
@@ -382,7 +385,7 @@ void Renderer::drawHud(const World& world, SpriteBank* bank, const std::array<in
         const float px = 12.0f + static_cast<float>(i % 5) * 100.0f;
         const float py = 8.0f + static_cast<float>(i / 5) * 20.0f;
         quad(px, py, 10, 10, c[0], c[1], c[2], p.alive ? 1.0f : 0.35f);
-        for (int k = 0; k < p.kills && k < 12; ++k) quad(px + 14 + static_cast<float>(k) * 5, py + 2, 3, 6, 0.9f, 0.9f, 0.9f);
+        for (int k = 0; k < kills(i) && k < 12; ++k) quad(px + 14 + static_cast<float>(k) * 5, py + 2, 3, 6, 0.9f, 0.9f, 0.9f);
     }
 }
 

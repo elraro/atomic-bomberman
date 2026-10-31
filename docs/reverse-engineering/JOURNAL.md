@@ -952,3 +952,10 @@ Next: somebody listening to the LOW-confidence clips and to the lines for single
 - Seen: once, in the CI run of commit `cde9ecb` on the macOS runner. After the chat part (all five lines arrived), Ann's "start" left the server in its lobby. Both clients were in the lobby, with nothing of Ann's unacknowledged and no refusal in her chat. Not reproduced in 160 runs here.
 - Likely cause (MEDIUM, by reasoning): with 40 % of datagrams lost, Ann's join can take longer than the 1 s the test harness waits before Bob's, so Bob reached the server first and became the administrator. The server ignores a start from anybody but the administrator without a word, which fits what was seen.
 - Change (test only): whoever is the administrator starts, once the other player is ready. If it fails again, the details line now says which client was the administrator.
+
+### Discovery: the in-game "K:" label counts the kills of the whole match
+
+- Reported by the user: the kill count shown during a round went back to 0 every round, while the screen between rounds showed the match total.
+- Original (static, objdump of `bm95.exe`): the label (message 37, "S:%d K:%d", built at `0x4210B4`) prints the player's 16-bit fields +0x6A (round wins) and +0x6C (kills), for players at `0x461BC4` with a stride of 0x98. A kill adds one to +0x6C (`0x41DD43`). A suicide takes one away (`0x41DD33`), unless the flag at `0x46497C` is set. +0x6C is cleared only by the per-match reset (`0x4217DF`) and set by `0x422602`, a setter with a player index and a value. So the label shows the running total of the match. Confidence: HIGH (static).
+- Modern: the label showed the current round's kills (`Player::kills`, reset every round). It now shows the match's kills before this round plus this round's. Locally that is the match score when the round began; on a network client it is the score the round-start message carries. The flat-shapes display counts the same way.
+- Validation: scripted all-computer match; early in round 3, before any death, the labels showed the totals of rounds 1 and 2, including negative counts after suicides. Tests unchanged and passing.

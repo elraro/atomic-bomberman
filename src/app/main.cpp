@@ -792,6 +792,7 @@ int runGame(int argc, char** argv, bool& again) {
         std::vector<std::string> campaignFiles;
         int campaignRow = 0;
         std::array<int, ab::kMaxPlayers>& matchKills = score.kills;  // kills over the rounds of the match
+        std::array<int, ab::kMaxPlayers> killsBeforeRound{};          // matchKills when this round began (for the labels)
         int& matchWinner = score.matchWinner;                        // player or team once the match is decided
         std::array<ab::Cell, ab::kMaxPlayers> startCells = scheme.start;
         ab::Rng appRng(opt.seed * 2654435761u + 99u);
@@ -895,6 +896,7 @@ int runGame(int argc, char** argv, bool& again) {
                 if (setup.present[static_cast<std::size_t>(i)] && (teamPlay ? teams[static_cast<std::size_t>(i)] : i) == prizeWinner)
                     setup.prize[static_cast<std::size_t>(i)] = prizeType;
             ab::applyRoundSetup(world, values, setup);
+            killsBeforeRound = matchKills;
             previous.capture(world);
             roundOverSteps = 0;
             resultKey = false;
@@ -1890,7 +1892,7 @@ int runGame(int argc, char** argv, bool& again) {
                 if (campaignMode)  // the score boxes show campaign points
                     for (int i = 0; i < ab::kMaxPlayers; ++i)
                         shown[static_cast<std::size_t>(i)] = campaignScore[static_cast<std::size_t>(i)] + world.player(i).score;
-                renderer.draw(world, previous, alpha, w, h, spritesPtr.get(), &shown);
+                renderer.draw(world, previous, alpha, w, h, spritesPtr.get(), &shown, &killsBeforeRound);
                 if (world.roundOver() && spritesPtr->loaded() && roundOverSteps > 20) {
                     // After a second on the frozen field: the original's result pictures.
                     const int win = world.teamPlay() ? world.winningTeam() : world.winner();

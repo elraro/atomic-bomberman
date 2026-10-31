@@ -20,7 +20,7 @@ Finding from this comparison: the per-step x/y values stored in sequence `STAT` 
 
 ## Known gaps
 
-- The HUD is drawn with the original assets: clock digits from `kfont.ani` at the original position, the blinking `hurry` banner, and `S:n K:n` score labels in `font1.fon` at the original coordinates (compared with an original screenshot: clock and first label coincide; the black player's outlined label is approximated). Pickup, warp and trapped ("cornerhead") animations are not drawn.
+- The HUD is drawn with the original assets: clock digits from `kfont.ani` at the original position, the blinking `hurry` banner, and `S:n K:n` score labels in `font1.fon` at the original coordinates (S: round wins, K: kills over the whole match so far, as the original keeps its count per match) (compared with an original screenshot: clock and first label coincide; the black player's outlined label is approximated). Pickup, warp and trapped ("cornerhead") animations are not drawn.
 - Death (`die green N`), kick, punch and carrying (`walkbomb`/`standbomb`) animations are drawn; the level theme is selectable (`--level`). None of these has been compared frame by frame with the original.
 - The walk animation uses the original's rule (advance one frame every 3 pixels walked) but has not been compared frame by frame.
 - Flame pieces: the modern core marks the last cell at full range as a tip and the rest as mid pieces. The original's exact choice when an arm is cut short has not been read from the code.
