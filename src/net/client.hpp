@@ -152,8 +152,9 @@ public:
     bool prediction() const { return prediction_; }
     // How many steps ahead to predict; 0 (the default) works it out from the measured ping.
     void setPredictionSteps(int steps) { predictionSteps_ = steps; }
-    // What to draw: the predicted state while this player is in a running round with
-    // prediction on, otherwise the confirmed state. Never used for results or scores.
+    // What to draw: in a running round, the predicted state (with prediction on), or the newest
+    // confirmed one; in both the other players are drawn from their recent confirmed steps, one
+    // step per local step (see showOthers). Otherwise the confirmed state. Never used for results or scores.
     const World* view() const { return predicted_ && predictedValid_ ? predicted_.get() : world_.get(); }
     std::uint32_t viewStep() const { return predicted_ && predictedValid_ ? target_ : applied_; }
 
@@ -278,7 +279,6 @@ private:
     int deltas_ = 0;
     std::size_t largestDelta_ = 0;
     std::uint32_t ackSent_ = 0;
-    std::uint64_t nextStepAt_ = 0;
     std::uint64_t lastStepAt_ = 0;
     std::array<std::uint8_t, kMaxLocalPlayers> input_{};
     bool prediction_ = true;

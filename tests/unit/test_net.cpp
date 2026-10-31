@@ -1190,7 +1190,7 @@ void testJitter() {
 struct Smoothness {
     int samples = 0, still = 0, jumps = 0, typical = 0;
 };
-Smoothness watchOthers(int delayMs, int jitterMs) {
+Smoothness watchOthers(int delayMs, int jitterMs, bool annPredicts = true) {
     Smoothness out;
     Harness h;
     CHECK(h.start("", 0));
@@ -1199,6 +1199,7 @@ Smoothness watchOthers(int delayMs, int jitterMs) {
     CHECK(h.until([&] { return ann.lobby().clients.size() == 2 && bob.state() == Client::State::Lobby; }));
     for (int i = 0; i < 4; ++i) ann.sendOption(Option::PlayTime, 1);  // (the harness's minute starts the closing walls at once)
     CHECK(h.until([&] { return bob.lobby().settings.playTime >= 180; }));
+    ann.setPrediction(annPredicts);
     setTestUdpDelay(delayMs, jitterMs, [&h] { return h.now; });
     ann.sendStart();
     CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }));
@@ -1277,6 +1278,17 @@ void testSmoothOthers() {
         CHECK(r.still <= r.samples / 50);
         CHECK(r.jumps <= r.samples / 50);
     }
+    // A player who does not guess ahead (and anyone watching) sees the same: before, 98 still and
+    // 96 jumps at 40-80 ms, 205 still at 20-170 ms.
+    for (const auto& [d, j] : std::vector<std::pair<int, int>>{{40, 40}, {20, 150}}) {
+        const Smoothness r = watchOthers(d, j, false);
+        std::printf("  no prediction, %d-%d ms: %d samples, typical %d px; standing still %d, two steps or more %d\n", d, d + j, r.samples, r.typical, r.still,
+                    r.jumps);
+        CHECK(r.samples > 400);
+        CHECK(r.typical > 0);
+        CHECK(r.still <= r.samples / 50);
+        CHECK(r.jumps <= r.samples / 50);
+    }
 }
 
 void testPrediction() {
@@ -1346,8 +1358,11 @@ void testPrediction() {
     watch(3000);
     const std::uint32_t later = ann.stepsApplied();
     CHECK(wrong(steady + 12, later) == 0);
-    // Bob has prediction off and Ann's guesses never touch what is confirmed: all agree with the server.
-    CHECK(bob.view() == bob.world());
+    // Bob has prediction off: his picture is what is confirmed (the players drawn from their recent
+    // confirmed steps, never ahead of them), and Ann's guesses never touch what is confirmed: all
+    // agree with the server.
+    CHECK(bob.view() != nullptr && bob.othersStep() <= bob.stepsApplied());
+    CHECK(bob.view()->bombs().size() == bob.world()->bombs().size());
     h.spin(50);
     if (ann.state() == Client::State::Round && ann.stepsApplied() == h.server.steps()) CHECK_EQ(ann.world()->stateHash(true), h.server.world()->stateHash(true));
     CHECK_EQ(ann.snapshotsLoaded(), 0);

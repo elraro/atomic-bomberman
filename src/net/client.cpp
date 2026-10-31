@@ -298,7 +298,6 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     newest_ = 0;
     applied_ = 0;
     ready_ = false;  // until the snapshot that follows the round start
-    nextStepAt_ = nowMs;
     lastStepAt_ = nowMs;
     inputSentAt_ = 0;
     inputNumber_ = 0;
@@ -700,7 +699,7 @@ bool Client::applyState(const Received& state, const EventSink& events) {
     }
     applied_ = state.step;
     ready_ = true;
-    if (prediction_) {
+    {
         std::array<Player, kMaxPlayers>& seen = othersSeen_[applied_];
         for (int i = 0; i < kMaxPlayers; ++i) seen[static_cast<std::size_t>(i)] = world_->player(i);
         while (othersSeen_.size() > 64) othersSeen_.erase(othersSeen_.begin());
@@ -883,17 +882,33 @@ int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& befo
                 }
             }
         } else {
-            predictedValid_ = false;
-            while (!queue_.empty() && ran < 400 && (nowMs >= nextStepAt_ || queue_.size() > 20)) {
+            // Nothing guessed (a player who chose not to, or someone watching): the server's states
+            // are taken as soon as they arrive, and the picture is the newest of them with the
+            // players drawn from their recent steps, one step per local step (as showOthers does
+            // for the other players of one who guesses), so that they move evenly on a line whose
+            // delay varies.
+            while (!queue_.empty() && ran < 400) {
                 const Received next = std::move(queue_.front());
                 queue_.pop_front();
-                if (before && ready_) before(*world_);
                 if (!applyState(next, after)) return ran;
                 ++ran;
-                // Behind by more than a few steps: twice the speed until caught up.
-                const std::uint64_t interval = queue_.size() > 3 ? kStepMs / 2 : kStepMs;
-                nextStepAt_ = std::max(nextStepAt_, nowMs > 100 ? nowMs - 100 : 0) + interval;
-                lastStepAt_ = nowMs;
+            }
+            if (!ready_) return ran;
+            if (world_->roundOver() || ended_) {
+                if (predictedValid_ && before) before(*predicted_);
+                predictedValid_ = false;
+            } else {
+                if (nowMs > nextLocalAt_ + 500) nextLocalAt_ = nowMs;  // after a stall: no burst of steps
+                while (nowMs >= nextLocalAt_) {
+                    if (before) before(predictedValid_ ? *predicted_ : *world_);
+                    if (!predicted_) predicted_ = std::make_unique<World>(*world_);
+                    else *predicted_ = *world_;
+                    showOthers({});
+                    predictedValid_ = true;
+                    target_ = othersStep_;
+                    lastStepAt_ = nextLocalAt_;
+                    nextLocalAt_ += kStepMs;
+                }
             }
         }
     } catch (const std::exception& e) {
