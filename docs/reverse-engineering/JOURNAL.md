@@ -934,3 +934,10 @@ Next: somebody listening to the LOW-confidence clips and to the lines for single
 - Confidence: HIGH (static: the call sites and the loop back; not watched in a running original).
 - Modern: this implementation drew it once per match, both in the local game and in the network server. Both now draw it at the start of each round (a campaign stage still names its own level). The local log line "Round started" and the server's "Round N started" now name the level.
 - Validation: new net test "random level each round", which fails on the old server code. A scripted local match of four computer players on Random gave levels 4, 7, 8, 9, 10, 3, 9 in its first seven rounds, each with its graphics loaded.
+
+### Confirmed: "Random Start" shuffles once per match (once per stage in a campaign)
+
+- Asked by the user: does each round get new random start positions? No.
+- Original (static, objdump of `bm95.exe`): the match setup `0x410F81` runs once, at `0x42A440`, before the round loop that begins at `0x42A47C`. It loads the scheme's start cells into `0x46460C`/`0x46465C` (`0x4046CC`, called at `0x410FA5`), then calls `0x421793` (at `0x411178`). With `random_start` (`0x464AE8`) on, `0x421793` makes 200 swaps of two of the ten. The round setup `0x410B6E` does not write those arrays. Their other writers are the editor (`0x4028D2`), a network message handler (type `0x35`, `0x40E143`: a client taking the host's positions) and the campaign's next-stage code `0x40133F`. That code loads the stage's scheme (`0x404833`) and makes its own 200 swaps (`0x40141B`-`0x401512`): a campaign shuffles at each stage.
+- So in a match, every round starts from the same shuffled positions, and the next match is shuffled anew. Confidence: HIGH (static; not watched in a running original).
+- Modern: the local game does the same (per match in `newMatch`, per stage in `startCampaignStage`). The network server shuffles per match too, but its campaign uses each stage's start cells without shuffling: a difference, not yet changed.
