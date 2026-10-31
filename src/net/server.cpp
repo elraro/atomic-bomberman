@@ -988,14 +988,7 @@ std::string Server::startMatch() {
     if (settings_.teamPlay && (perTeam[0] == 0 || perTeam[1] == 0)) return "Must have at least one player on each team!";
 
     score_ = {};
-    level_ = settings_.level;
-    if (level_ < 0) {
-        // "Random Each Game": values 1150-1160 say which levels may come up.
-        for (int tries = 0; tries < 100; ++tries) {
-            level_ = rng_.below(11);
-            if (!values_.has(1150 + level_) || values_.get(1150 + level_) != 0) break;
-        }
-    }
+    level_ = settings_.level;  // "Random Each Game" (-1): drawn for each round, in beginRound()
     startCells_ = schemeFile_.scheme.start;
     if (settings_.randomStart)
         for (int n = 0; n < 200; ++n)
@@ -1140,6 +1133,13 @@ void Server::beginRound(std::uint32_t roundSeed, const std::vector<SeedShare>& s
         start.stageName = st.name;
         start.stage = stageIndex_ + 1;
         start.stages = static_cast<int>(stages_.size());
+    } else if (settings_.level < 0) {
+        // "Random Each Game": a level drawn for every round, as the original's round setup does
+        // (0x410B6E, run before each round); values 1150-1160 say which may come up.
+        for (int tries = 0; tries < 100; ++tries) {
+            level_ = rng_.below(11);
+            if (!values_.has(1150 + level_) || values_.get(1150 + level_) != 0) break;
+        }
     }
     setup.level = level_;
     setup.scheme = arena.scheme;
@@ -1217,7 +1217,7 @@ void Server::beginRound(std::uint32_t roundSeed, const std::vector<SeedShare>& s
     for (auto& p : peers_)
         if (p->joined && !p->gone && !p->out) sendSnapshot(*p);  // where the round begins, as far as a player may know
     if (campaignMode_) say("Stage " + std::to_string(start.stage) + " of " + std::to_string(start.stages) + ": " + start.stageName);
-    log("INFO  Round " + std::to_string(roundId_) + " started seed=" + std::to_string(seed) + (campaignMode_ ? " stage=\"" + start.stageName + "\"" : ""));
+    log("INFO  Round " + std::to_string(roundId_) + " started seed=" + std::to_string(seed) + " level=" + std::to_string(level_) + (campaignMode_ ? " stage=\"" + start.stageName + "\"" : ""));
 }
 
 void Server::stepRound() {

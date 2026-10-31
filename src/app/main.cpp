@@ -836,13 +836,6 @@ int runGame(int argc, char** argv, bool& again) {
             matchKills = {};
             matchOver = false;
             matchWinner = -1;
-            if (randomLevel) {
-                // "Random Each Game": values 1150-1160 say which levels may come up.
-                for (int tries = 0; tries < 100; ++tries) {
-                    level = appRng.below(11);
-                    if (values.get(1150 + level) != 0) break;
-                }
-            }
             applySettings();
             startCells = scheme.start;
             if (cfg.randomStart)
@@ -853,6 +846,15 @@ int runGame(int argc, char** argv, bool& again) {
                 }
         };
         auto beginMatch = [&]() {
+            if (randomLevel && !campaignMode) {
+                // "Random Each Game": a level drawn for every round, as the original's round setup
+                // does (0x410B6E, run before each round); values 1150-1160 say which may come up.
+                for (int tries = 0; tries < 100; ++tries) {
+                    level = appRng.below(11);
+                    if (values.get(1150 + level) != 0) break;
+                }
+                applySettings();  // its graphics and extras
+            }
             // The original flushes its sound cache and picks a new selection of voice lines
             // every value 7 seconds (value 9 in the normal memory model), between rounds.
             if (sound && values.get(cfg.smallMemory ? 9 : 7) > 0 && audio.selectionAge() > values.get(cfg.smallMemory ? 9 : 7)) {
@@ -896,7 +898,7 @@ int runGame(int argc, char** argv, bool& again) {
             previous.capture(world);
             roundOverSteps = 0;
             resultKey = false;
-            std::fprintf(stderr, "INFO  Round started players=%d\n", n);
+            std::fprintf(stderr, "INFO  Round started players=%d level=%d\n", n, level);
         };
         // After the roulette the match setup goes on: the player list, or straight into the match.
         auto leaveRoulette = [&]() {

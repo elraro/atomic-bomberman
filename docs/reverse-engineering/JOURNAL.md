@@ -926,3 +926,11 @@ Next: somebody listening to the LOW-confidence clips and to the lines for single
 
 - The round-restart key is this implementation's (not the original's). It was R, which is also "up" of the second keyboard set (R, G, F, D, S, A), so the second player restarted the round by walking up. Now F12, which no key set uses by default.
 - Checked with scripted runs into a match: pressing R leaves the match exactly as with no key; pressing F12 starts the round anew.
+
+### Discovery: "Random Each Game" draws a level for every round
+
+- Reported by the user: with "Random Each Game" the first round's level was random, then every later round of the match kept it.
+- Original (static, objdump of `bm95.exe`; Ghidra was not running): the round setup `0x410B6E` sets the current level (`0x46499C`). If `levelno` (`0x464998`) is 0 or more it uses that level. Otherwise it draws one, up to 200 tries, until value `0x47E + level` (1150 + level) allows it. On a network client it takes the level from the host instead. The match loop `0x42A3F7` calls `0x410B6E` before the first round (`0x42A452`) and again before each later round (`0x42AFEC`, `0x42A68B`), and loops back to the round start at `0x42A47C`. So the level is drawn every round.
+- Confidence: HIGH (static: the call sites and the loop back; not watched in a running original).
+- Modern: this implementation drew it once per match, both in the local game and in the network server. Both now draw it at the start of each round (a campaign stage still names its own level). The local log line "Round started" and the server's "Round N started" now name the level.
+- Validation: new net test "random level each round", which fails on the old server code. A scripted local match of four computer players on Random gave levels 4, 7, 8, 9, 10, 3, 9 in its first seven rounds, each with its graphics loaded.

@@ -782,6 +782,31 @@ void testRound(bool udp) {
     for (const std::string& line : h.log) CHECK(line.rfind("ERROR", 0) != 0);
 }
 
+// "Random Each Game": a level drawn for every round, not once per match (the original's round
+// setup, 0x410B6E, draws it before each round).
+void testRandomLevelEachRound() {
+    Harness h;
+    CHECK(h.start("", 2));
+    Client& ann = h.join("Ann");
+    Client& bob = h.join("Bob");
+    CHECK(h.until([&] { return ann.state() == Client::State::Lobby && bob.state() == Client::State::Lobby && ann.lobby().clients.size() == 2; }));
+    ann.sendOption(Option::Level, -1);
+    for (int i = 0; i < 8; ++i) ann.sendOption(Option::Wins, 1);
+    CHECK(h.until([&] { return ann.lobby().settings.level == -1 && ann.lobby().settings.winsNeeded == 9; }));
+    ann.sendStart();
+    std::vector<int> levels;
+    for (int round = 0; round < 4; ++round) {
+        CHECK(h.until([&] { return ann.state() == Client::State::Round && ann.roundId() == static_cast<std::uint32_t>(round + 1); }));
+        levels.push_back(ann.roundStart().setup.level);
+        CHECK(levels.back() >= 0 && levels.back() <= 10);
+        CHECK(playToResult(h, {&ann, &bob}));
+        ann.sendContinue();
+        bob.sendContinue();
+    }
+    std::sort(levels.begin(), levels.end());
+    CHECK(std::unique(levels.begin(), levels.end()) - levels.begin() > 1);
+}
+
 // A player who leaves in the middle is played by the computer; the others go on.
 // The administrator can start only when every other player has said "ready"; the
 // question is asked again after each match.
@@ -2506,6 +2531,7 @@ int main(int argc, char** argv) {
         {"ready", testReady},
         {"round over udp", [] { testRound(true); }},
         {"round over tcp only", [] { testRound(false); }},
+        {"random level each round", testRandomLevelEachRound},
         {"leave during round", testLeaveDuringRound},
         {"udp loss", testUdpLoss},
         {"loss from the first packet", testLossFromTheStart},
