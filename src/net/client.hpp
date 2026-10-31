@@ -306,6 +306,18 @@ private:
     // input is seen to have reached the server too late, one less after a while without.
     int extraLead_ = 0;
     int pingPeak_ = 0;             // the highest round trip lately (ms)
+    // The other players as the server confirmed them at each recent step. The picture shows them
+    // as they were at othersStep_, which moves on by one step per local step and is held a few
+    // steps (othersDelay_) behind the newest confirmed step: the server's steps arrive in bursts
+    // on a line whose delay varies, and drawn as they arrive the others would stand still for
+    // a step and then jump two. The delay grows by one each time the steps ran out, and comes
+    // down after a while without.
+    std::map<std::uint32_t, std::array<Player, kMaxPlayers>> othersSeen_;
+    std::uint32_t othersStep_ = 0;
+    int othersDelay_ = 2;
+    std::uint64_t othersShortAt_ = 0, othersDownAt_ = 0;
+    int othersShort_ = 0;          // (for the tests: times the steps ran out)
+    void showOthers(const std::array<bool, kMaxPlayers>& own);
     std::uint64_t lateAt_ = 0;     // when an input was last seen to be late
     std::uint64_t leadDownAt_ = 0; // when the extra lead was last lowered
     int lateInputs_ = 0;           // (for the tests)
@@ -315,6 +327,9 @@ public:
     int extraLead() const { return extraLead_; }
     int lateInputs() const { return lateInputs_; }
     int pullBacks() const { return pullBacks_; }
+    int othersDelay() const { return othersDelay_; }
+    int othersShort() const { return othersShort_; }
+    std::uint32_t othersStep() const { return othersStep_; }
 };
 
 // Finds servers on the local network, whatever port they play on (UDP broadcast to the discovery port).

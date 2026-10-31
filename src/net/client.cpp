@@ -308,6 +308,8 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     soundedUpTo_ = 0;
     heard_.clear();
     mine_.clear();
+    othersSeen_.clear();
+    othersStep_ = 0;
     nextLocalAt_ = nowMs;
     // The server's tuning table on top of the built-in one: the rules are the server's.
     Values values = Values::defaults();
@@ -698,6 +700,11 @@ bool Client::applyState(const Received& state, const EventSink& events) {
     }
     applied_ = state.step;
     ready_ = true;
+    if (prediction_) {
+        std::array<Player, kMaxPlayers>& seen = othersSeen_[applied_];
+        for (int i = 0; i < kMaxPlayers; ++i) seen[static_cast<std::size_t>(i)] = world_->player(i);
+        while (othersSeen_.size() > 64) othersSeen_.erase(othersSeen_.begin());
+    }
     if (const auto sent = mine_.find(applied_); sent != mine_.end() && prediction_) {
         // The keys the server applied for this step are not the ones sent for it: they came too
         // late (the line's delay varies more than the lead allows for). Lead by one step more.
@@ -797,7 +804,52 @@ void Client::predict(const EventSink& events) {
     for (int seat : mySeats)
         if (seat >= 0) own[static_cast<std::size_t>(seat)] = true;
     predicted_->keepToConfirmed(*world_, own);
+    showOthers(own);
     predictedValid_ = true;
+}
+
+void Client::showOthers(const std::array<bool, kMaxPlayers>& own) {
+    if (othersSeen_.empty()) return;
+    const std::uint32_t newest = othersSeen_.rbegin()->first;
+    // On by one step per local step. It waits only when no confirmed step is left in hand (and
+    // keeps one more in hand from then on), and moves on by two only when far more than that
+    // has piled up: the server's steps come in bursts, and aiming at "the newest less the delay"
+    // would make the picture wait and jump with every burst.
+    if (othersStep_ == 0 || othersStep_ + static_cast<std::uint32_t>(othersDelay_) + 12 < newest || othersStep_ > newest)
+        othersStep_ = newest > static_cast<std::uint32_t>(othersDelay_) ? newest - static_cast<std::uint32_t>(othersDelay_) : 1;
+    else if (othersStep_ + static_cast<std::uint32_t>(othersDelay_) + 4 < newest) othersStep_ += 2;
+    else if (othersStep_ < newest) ++othersStep_;
+    else {
+        ++othersShort_;
+        if (now_ - othersShortAt_ >= 500 || othersShortAt_ == 0) othersDelay_ = std::min(othersDelay_ + 1, 8);
+        othersShortAt_ = now_;
+    }
+    if (othersDelay_ > 1 && now_ - othersShortAt_ >= 10000 && now_ - othersDownAt_ >= 10000) {
+        --othersDelay_;
+        othersDownAt_ = now_;
+    }
+    // The one seen at that step. A step the server's word skipped (datagrams overtake one another
+    // on such a line, and an older state is not applied after a newer one) is not there: the one
+    // before it is shown, at a place and walk frame part of the way to the one after.
+    auto after = othersSeen_.upper_bound(othersStep_);
+    if (after == othersSeen_.begin()) return;
+    auto at = std::prev(after);
+    for (int i = 0; i < kMaxPlayers; ++i) {
+        if (own[static_cast<std::size_t>(i)] || !predicted_->player(i).present) continue;
+        Player shown = at->second[static_cast<std::size_t>(i)];
+        if (at->first != othersStep_ && after != othersSeen_.end()) {
+            const Player& next = after->second[static_cast<std::size_t>(i)];
+            const auto part = [&](int a, int b) {
+                return a + (b - a) * static_cast<int>(othersStep_ - at->first) / static_cast<int>(after->first - at->first);
+            };
+            if (shown.alive && next.alive && std::abs(next.x - shown.x) + std::abs(next.y - shown.y) < 40) {
+                shown.x = part(shown.x, next.x);
+                shown.y = part(shown.y, next.y);
+                if (next.animCounter >= shown.animCounter) shown.animCounter = part(shown.animCounter, next.animCounter);
+            }
+        }
+        predicted_->player(i) = shown;
+    }
 }
 
 int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& before, const EventSink& after) {
@@ -824,8 +876,10 @@ int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& befo
                 while (nowMs >= nextLocalAt_) {
                     if (before) before(predictedValid_ ? *predicted_ : *world_);
                     predict(after);
+                    // The picture is blended from when the step was due, not from when this frame
+                    // came: a late frame would otherwise start the blend again and hitch.
+                    lastStepAt_ = nextLocalAt_;
                     nextLocalAt_ += kStepMs;
-                    lastStepAt_ = nowMs;
                 }
             }
         } else {

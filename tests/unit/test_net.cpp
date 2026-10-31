@@ -1183,6 +1183,102 @@ void testJitter() {
     CHECK(r.vanished <= 1);
 }
 
+// How evenly another player is seen to move on a line with delay and jitter: Bob walks back
+// and forth along the bottom row, and every 50 ms (one local step) Ann's picture is asked how
+// far he moved. Even motion gives the same distance every time; a picture that waits for the
+// server's bursts shows him standing still for a step and then jumping two.
+struct Smoothness {
+    int samples = 0, still = 0, jumps = 0, typical = 0;
+};
+Smoothness watchOthers(int delayMs, int jitterMs) {
+    Smoothness out;
+    Harness h;
+    CHECK(h.start("", 0));
+    Client& ann = h.join("Ann");
+    Client& bob = h.join("Bob");
+    CHECK(h.until([&] { return ann.lobby().clients.size() == 2 && bob.state() == Client::State::Lobby; }));
+    for (int i = 0; i < 4; ++i) ann.sendOption(Option::PlayTime, 1);  // (the harness's minute starts the closing walls at once)
+    CHECK(h.until([&] { return bob.lobby().settings.playTime >= 180; }));
+    setTestUdpDelay(delayMs, jitterMs, [&h] { return h.now; });
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }));
+    std::map<int, int> moves;  // distance moved in a sample -> how often
+    std::map<int, int> serverMoves;  // the same on the server, per step
+    std::uint32_t serverStep = 0;
+    int serverX = -1;
+    int lastX = -1, west = 1;
+    std::map<int, int> stepMoves, targetMoves;
+    std::uint32_t lastOthersStep = 0, lastTarget = 0;
+    for (int t = 0; t < 30000 && ann.state() == Client::State::Round; t += 5) {
+        h.turn();
+        if (bob.view() == nullptr || ann.view() == nullptr) continue;
+        const Player& b = bob.view()->player(1);
+        const Cell at = pixelToCell(b.x, b.y);
+        if (west == 1 && at.x <= 2) west = 0;
+        if (west == 0 && at.x >= 12) west = 1;
+        PlayerInput in;
+        in.dir[west == 1 ? 3 : 1] = true;
+        bob.setInput(in);
+        if (h.server.world() != nullptr && h.server.steps() != serverStep && t >= 3000) {
+            serverStep = h.server.steps();
+            const int sx = h.server.world()->player(1).x;
+            if (serverX >= 0 && std::abs(sx - serverX) < 40) ++serverMoves[std::abs(sx - serverX)];
+            serverX = sx;
+        }
+        if (t % 50 != 0 || t < 3000) continue;  // (after the start of the round, when he is under way)
+        const int x = ann.view()->player(1).x;
+        if (lastOthersStep != 0) ++stepMoves[static_cast<int>(ann.othersStep()) - static_cast<int>(lastOthersStep)];
+        if (lastTarget != 0) ++targetMoves[static_cast<int>(ann.viewStep()) - static_cast<int>(lastTarget)];
+        lastOthersStep = ann.othersStep();
+        lastTarget = ann.viewStep();
+        if (lastX >= 0) {
+            const int d = std::abs(x - lastX);
+            if (d < 40) ++moves[d];  // (not a turn at the end of the walk)
+        }
+        lastX = x;
+    }
+    setTestUdpDelay(0, 0, nullptr);
+    if (std::getenv("AB_DEBUG_SMOOTH"))
+        std::printf("    end: ann state %d, server phase %d, steps %u, bob alive %d at %d,%d\n", static_cast<int>(ann.state()), static_cast<int>(h.server.phase()), h.server.steps(),
+                    h.server.world() ? h.server.world()->player(1).alive : -1, h.server.world() ? h.server.world()->player(1).x : -1, h.server.world() ? h.server.world()->player(1).y : -1);
+    if (std::getenv("AB_DEBUG_SMOOTH")) {
+        std::printf("    ann: others delay %d, ran out %d; picture moves:", ann.othersDelay(), ann.othersShort());
+        for (const auto& [d, n] : moves) std::printf(" %d:%d", d, n);
+        std::printf("; others step moves:");
+        for (const auto& [d, n] : stepMoves) std::printf(" %d:%d", d, n);
+        std::printf("; target moves:");
+        for (const auto& [d, n] : targetMoves) std::printf(" %d:%d", d, n);
+        std::printf("; server moves:");
+        for (const auto& [d, n] : serverMoves) std::printf(" %d:%d", d, n);
+        std::printf("\n");
+    }
+    if (std::getenv("AB_DEBUG_SMOOTH") && h.server.world()) std::printf("    ann alive %d killed by %d, present players %d\n", h.server.world()->player(0).alive, h.server.world()->player(0).killedBy, h.server.world()->alivePlayers());
+    int most = 0;
+    for (const auto& [d, n] : moves) {
+        out.samples += n;
+        if (n > most) most = n, out.typical = d;
+    }
+    for (const auto& [d, n] : moves) {
+        if (d == 0) out.still += n;
+        if (out.typical > 0 && d >= out.typical * 2) out.jumps += n;
+    }
+    return out;
+}
+
+void testSmoothOthers() {
+    // Before the picture kept other players' recent steps (and drew them a step behind the newest,
+    // filling the steps the line skipped), they stood still and then jumped: in 103 and 98 of 539
+    // samples at 40-80 ms, and stood still in 225 at 20-170 ms.
+    for (const auto& [d, j] : std::vector<std::pair<int, int>>{{0, 0}, {40, 40}, {20, 150}}) {
+        const Smoothness r = watchOthers(d, j);
+        std::printf("  %d-%d ms: %d samples, typical %d px; standing still %d, two steps or more %d\n", d, d + j, r.samples, r.typical, r.still, r.jumps);
+        CHECK(r.samples > 400);
+        CHECK(r.typical > 0);
+        CHECK(r.still <= r.samples / 50);
+        CHECK(r.jumps <= r.samples / 50);
+    }
+}
+
 void testPrediction() {
     Harness h;
     CHECK(h.start("", 0));
@@ -2682,6 +2778,7 @@ int main(int argc, char** argv) {
         {"cookie", testCookie},
         {"prediction", testPrediction},
         {"jitter", testJitter},
+        {"smooth others", testSmoothOthers},
         {"back to the lobby", testBackToLobby},
         {"two players at one computer", testTwoPlayersOneComputer},
         {"roulette prize", testNetRoulette},

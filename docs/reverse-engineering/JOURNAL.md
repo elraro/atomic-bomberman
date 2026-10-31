@@ -979,3 +979,16 @@ Next: somebody listening to the LOW-confidence clips and to the lines for single
 - After: 0 of 27 at 20-170 ms, 1 of 28 at 60-260 ms, 1 of 28 at 40-160 ms with 20 % loss, 2 of 30 at 100-400 ms with 5 % loss.
 - Signed records still verify: "records: the inputs applied follow the log" now also plays four rounds on the jittery line, with keys changing every 15-65 ms.
 - Not tried: a real internet connection. The delay, jitter and loss are made up in the test.
+
+### Modern: other players move evenly in network play
+
+- Reported by players (network play only): the game is sometimes choppy, where the original is smooth.
+- Measured (new net test "smooth others"; test-only delay and jitter): Bob walks steadily, and every 50 ms Ann's picture is asked how far he moved. With no delay he moves 9-10 px every time. At 40-80 ms each way he stood still in 103 of 539 samples and jumped two steps in 98. At 20-170 ms he stood still in 225. Two causes:
+  1. Other players were drawn as the server last confirmed them. On a line whose delay varies, the confirmed steps arrive in bursts: none for a step, then two.
+  2. Datagrams overtake one another and an older state is not applied after a newer one, so some steps are never seen at all.
+- Changes (client only; nothing on the wire changes):
+  - The picture keeps each other player's confirmed state for the last 64 steps and draws them at a step that moves on by one per local step. It waits only when no confirmed step is left in hand, and then keeps one more step in hand from then on (up to 8; one comes off after 10 s without). It skips ahead only when far more has piled up.
+  - A step that was never seen is drawn part of the way between the steps before and after it (place and walk frame).
+  - The blend between steps is timed from when the step was due, not from when the frame came.
+- After: at 40-80 ms, never standing still and no jumps; at 20-170 ms, 4 still and no jumps in 539 samples. The delay settled at one step: other players are drawn 50 ms behind the newest state the server has sent, on top of the line's own delay. Their bombs and flames are still drawn as soon as they arrive, so a bomb may appear a step before its owner is drawn reaching it.
+- Not tried: a real internet connection, or by eye.
