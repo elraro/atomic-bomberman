@@ -496,13 +496,15 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
         }
         float px = lerp(prev.players[static_cast<std::size_t>(i)].x, p.x, alpha);
         float py = lerp(prev.players[static_cast<std::size_t>(i)].y, p.y, alpha);
+        float ground = py;  // the shadow: under the body, moving as smoothly as it does
         if (p.special == Special::Trampoline) {
             // Up for the first half of the jump, down for the second (original values 680/681).
             px = static_cast<float>(p.x);
             const int f = p.specialFrames;
-            py = static_cast<float>(p.y) - static_cast<float>((f < 15 ? f : 30 - f) * 35);
+            ground = static_cast<float>(p.y);
+            py = ground - static_cast<float>((f < 15 ? f : 30 - f) * 35);
         }
-        sprite(bank, "shadow", 0, -1, px, static_cast<float>(p.y));
+        sprite(bank, "shadow", 0, -1, px, ground);
         const std::string dir = kDirName[static_cast<unsigned>(p.facing) & 3u];
         const bool carrying = p.holding >= 0;
         bool drawn = false;

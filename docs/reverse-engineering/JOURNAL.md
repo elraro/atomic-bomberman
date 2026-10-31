@@ -959,3 +959,8 @@ Next: somebody listening to the LOW-confidence clips and to the lines for single
 - Original (static, objdump of `bm95.exe`): the label (message 37, "S:%d K:%d", built at `0x4210B4`) prints the player's 16-bit fields +0x6A (round wins) and +0x6C (kills), for players at `0x461BC4` with a stride of 0x98. A kill adds one to +0x6C (`0x41DD43`). A suicide takes one away (`0x41DD33`), unless the flag at `0x46497C` is set. +0x6C is cleared only by the per-match reset (`0x4217DF`) and set by `0x422602`, a setter with a player index and a value. So the label shows the running total of the match. Confidence: HIGH (static).
 - Modern: the label showed the current round's kills (`Player::kills`, reset every round). It now shows the match's kills before this round plus this round's. Locally that is the match score when the round began; on a network client it is the score the round-start message carries. The flat-shapes display counts the same way.
 - Validation: scripted all-computer match; early in round 3, before any death, the labels showed the totals of rounds 1 and 2, including negative counts after suicides. Tests unchanged and passing.
+
+### Modern: the player's shadow moves as smoothly as the player
+
+- Reported by players: when a player walks up or down, the shadow is choppy.
+- Cause: between two simulation steps (50 ms) the player is drawn at a position blended between them. The shadow was drawn at the step's own position, so vertically it jumped once a step while the body glided (horizontally both used the blended x). Now the shadow uses the blended ground position. On a trampoline it stays on the ground under the jumping body, as before.
