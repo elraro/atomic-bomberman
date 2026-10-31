@@ -900,8 +900,17 @@ void testLossFromTheStart() {
     setTestUdpLoss(40);
     Client& ann = h.join("Ann", "pass");
     Client& bob = h.join("Bob", "pass");
-    const bool joined = h.until([&] { return ann.state() == Client::State::Lobby && bob.state() == Client::State::Lobby && ann.lobby().clients.size() == 2 && bob.ready(); }, 60000);
+    // At this loss a join can take longer than the harness waits before the next one, so Bob may
+    // reach the server first and be the administrator (seen once on macOS: Ann's "start" was then
+    // ignored, as a start from anybody else is). Whoever it is starts; the other has to be ready.
+    const bool joined = h.until(
+        [&] {
+            return ann.state() == Client::State::Lobby && bob.state() == Client::State::Lobby && ann.lobby().clients.size() == 2 &&
+                   (ann.isAdmin() ? bob.ready() : bob.isAdmin() && ann.ready());
+        },
+        60000);
     CHECK(joined);
+    Client& admin = ann.isAdmin() ? ann : bob;
     // (Not checked: that both are on UDP. With four packets in ten lost a client may hear
     // nothing for two seconds and go on inside TCP, as it is meant to; seen on macOS.)
     // One after the other has arrived (the server takes one chat line per 300 ms from a
@@ -922,7 +931,7 @@ void testLossFromTheStart() {
     for (const ChatLine& line : ann.chat())
         if (!line.fromServer) order = order && line.text == "line " + std::to_string(n++);
     CHECK(order);
-    ann.sendStart();
+    admin.sendStart();
     const bool started = h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }, 60000);
     const bool finished = started && playToResult(h, {&ann, &bob});
     setTestUdpLoss(0);
@@ -930,9 +939,9 @@ void testLossFromTheStart() {
     CHECK(finished);
     if (!started) {
         // What stood where, for a failure that only shows on another machine.
-        std::printf("  FAIL (details) ann: state=%d udp=%d rtt=%d waiting=%zu  bob: state=%d udp=%d rtt=%d waiting=%zu  server: phase=%d players=%d\n",
-                    static_cast<int>(ann.state()), ann.udpActive() ? 1 : 0, ann.linkRttMs(), ann.linkUnacknowledged(), static_cast<int>(bob.state()), bob.udpActive() ? 1 : 0,
-                    bob.linkRttMs(), bob.linkUnacknowledged(), static_cast<int>(h.server.phase()), h.server.players());
+        std::printf("  FAIL (details) ann: state=%d udp=%d rtt=%d waiting=%zu admin=%d  bob: state=%d udp=%d rtt=%d waiting=%zu admin=%d  server: phase=%d players=%d\n",
+                    static_cast<int>(ann.state()), ann.udpActive() ? 1 : 0, ann.linkRttMs(), ann.linkUnacknowledged(), ann.isAdmin() ? 1 : 0, static_cast<int>(bob.state()),
+                    bob.udpActive() ? 1 : 0, bob.linkRttMs(), bob.linkUnacknowledged(), bob.isAdmin() ? 1 : 0, static_cast<int>(h.server.phase()), h.server.players());
         for (const Client* c : {&ann, &bob})
             if (!c->chat().empty()) std::printf("  FAIL (details) last line seen by %s: %s\n", c == &ann ? "ann" : "bob", c->chat().back().text.c_str());
         if (ann.state() == Client::State::Failed || bob.state() == Client::State::Failed)

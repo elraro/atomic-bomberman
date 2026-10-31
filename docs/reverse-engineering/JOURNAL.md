@@ -946,3 +946,9 @@ Next: somebody listening to the LOW-confidence clips and to the lines for single
 
 - The network server now shuffles a campaign stage's own start cells with "Random start" on: 200 swaps, each time a stage begins (also when a stage is played again), as the original's next-stage code does (`0x40133F`). Before, a network campaign ignored "Random start". The local game already did this.
 - Validation: the net test "campaign" now plays with "Random start" on. It checks that the first stage's start cells are those of its scheme, in another order. The check fails on the old server code.
+
+### Modern: one macOS failure of the network test "loss from the first packet"
+
+- Seen: once, in the CI run of commit `cde9ecb` on the macOS runner. After the chat part (all five lines arrived), Ann's "start" left the server in its lobby. Both clients were in the lobby, with nothing of Ann's unacknowledged and no refusal in her chat. Not reproduced in 160 runs here.
+- Likely cause (MEDIUM, by reasoning): with 40 % of datagrams lost, Ann's join can take longer than the 1 s the test harness waits before Bob's, so Bob reached the server first and became the administrator. The server ignores a start from anybody but the administrator without a word, which fits what was seen.
+- Change (test only): whoever is the administrator starts, once the other player is ready. If it fails again, the details line now says which client was the administrator.
