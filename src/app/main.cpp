@@ -37,6 +37,7 @@
 #include "resources/mve_file.hpp"
 #include "resources/scheme_file.hpp"
 #include "resources/settings.hpp"
+#include "resources/upscale.hpp"
 
 namespace {
 
@@ -54,6 +55,19 @@ struct Options {
     std::string importFolder; // --import-folder: a folder looked at on every start for a copy of the original game to convert
     std::string importShot;   // automated: save pictures of the import screens as PREFIX-<screen>.ppm
     bool allSounds = false;   // --all-sounds: import also the sounds the game never plays (for the sound test)
+    bool upscale = false;     // --upscale-assets: make enlarged copies of the imported graphics with Real-ESRGAN, then exit
+    std::string esrgan;       // --esrgan PATH: the realesrgan-ncnn-vulkan program (or the ATOMIC_ESRGAN variable, or a "realesrgan" folder)
+    std::string esrganModel = "realesrgan-x4plus";  // --esrgan-model NAME
+    int hiresScale = 4;       // --hires-scale N
+    int esrganGpu = -1;       // --esrgan-gpu N: Vulkan device of the upscaling program (its own choice when absent)
+    int esrganTile = 0;       // --esrgan-tile N
+    bool verifyHires = false; // --hires-verify: check the enlarged pictures that exist and make bad ones again
+    int windowW = 0, windowH = 0;  // --window WxH: size of the window at the start (for tests and screenshots)
+    bool rawEdges = false;    // --hires-raw-edges: draw enlarged sprites with the outline the model made, not the smoothed one
+    bool cleanEdges = false;  // --hires-clean-edges: replace dark dither pixels at the edge of sprites by their neighbours before enlarging (little gain; changes what a part is made from)
+    std::string upscaleOnly;  // --upscale-only a,b: only these parts
+    bool adoptHires = false;  // --hires-adopt: take over complete enlarged pictures the manifest lost (after a crash)
+    bool noHires = false;     // --no-hires: draw the original-size graphics even if enlarged ones exist
     int menuShot = 0;         // automated: 1 = capture the main menu, 2 = the player list, ... 10-13 the network screens
     bool resultShot = false;  // automated: capture the result screen of the first decided round and exit
     std::vector<std::string> script;  // automated: key names pressed one after another (see --script)
@@ -110,6 +124,20 @@ Options parseArgs(int argc, char** argv) {
                       "                       when it is new or was converted by another release (what the Android app does)\n"
                       "  --all-sounds         with --import-assets: also the sounds on the disc that the game never plays\n"
                       "                       (about 180 MB more; hear them under Options, Sound Test)\n"
+                      "  --upscale-assets     make enlarged copies of the imported graphics (AI upscaling with Real-ESRGAN), then exit;\n"
+                      "                       only what is missing or changed is made, so it can be run again at any time\n"
+                      "  --esrgan PATH        the realesrgan-ncnn-vulkan program (or ATOMIC_ESRGAN, or a folder \"realesrgan\" next to the game)\n"
+                      "  --esrgan-model NAME  model of its models folder (default realesrgan-x4plus)\n"
+                      "  --hires-scale N      enlargement the model makes (default 4)\n"
+                      "  --esrgan-gpu N       Vulkan device of the upscaling program (see its list at the start of a run; a weak one can give noise)\n"
+                      "  --esrgan-tile N      tile size of the upscaling program (smaller: less load on the graphics chip)\n"
+                      "  --upscale-only A,B   with --upscale-assets: only these parts (bombs, walk, res/mainmenu, ...)\n"
+                      "  --window WxH         size of the window at the start (default 960x720)\n"
+                      "  --hires-raw-edges    draw enlarged sprites with the outline the model made, not the smoothed one\n"
+                      "  --hires-clean-edges  replace dark dither pixels at the edge of sprites before enlarging (little gain, and every part is then made again)\n"
+                      "  --hires-verify       with --upscale-assets: also check the pictures that exist and make noise or empty ones again\n"
+                      "  --hires-adopt        with --upscale-assets: keep complete, correctly sized pictures of an earlier run whose list was lost\n"
+                      "  --no-hires           do not use enlarged graphics, if there are some\n"
                       "  --game-dir DIR       imported assets or an original game folder to play from\n"
                       "  --free               play with the free asset set even if original game data is found\n"
                       "  --start              skip the menu and start a match at once\n"
@@ -150,6 +178,25 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--import-folder") o.importFolder = next();
         else if (a == "--import-shot") o.importShot = next();
         else if (a == "--all-sounds") o.allSounds = true;
+        else if (a == "--upscale-assets") o.upscale = true;
+        else if (a == "--esrgan") o.esrgan = next();
+        else if (a == "--esrgan-model") o.esrganModel = next();
+        else if (a == "--hires-scale") o.hiresScale = std::clamp(std::atoi(next().c_str()), 2, 4);
+        else if (a == "--hires-adopt") o.adoptHires = true;
+        else if (a == "--hires-verify") o.verifyHires = true;
+        else if (a == "--hires-clean-edges") o.cleanEdges = true;
+        else if (a == "--hires-raw-edges") o.rawEdges = true;
+        else if (a == "--window") {
+            int w = 0, h = 0;
+            if (std::sscanf(next().c_str(), "%dx%d", &w, &h) == 2 && w >= 320 && h >= 240) {
+                o.windowW = w;
+                o.windowH = h;
+            }
+        }
+        else if (a == "--upscale-only") o.upscaleOnly = next();
+        else if (a == "--esrgan-gpu") o.esrganGpu = std::max(0, std::atoi(next().c_str()));
+        else if (a == "--esrgan-tile") o.esrganTile = std::max(0, std::atoi(next().c_str()));
+        else if (a == "--no-hires") o.noHires = true;
         else if (a == "--result-shot") o.resultShot = true;
         else if (a == "--script") {
             // Comma-separated keys: up, down, left, right, enter, esc, space, backspace, t, r, f2, f3, f12,
@@ -377,6 +424,35 @@ std::string findGameDir(const std::string& requested) {
     return "";
 }
 
+// The Real-ESRGAN program: --esrgan, then the ATOMIC_ESRGAN environment variable, then a
+// "realesrgan" folder (current folder, next to the program, or one or two levels above it).
+std::string findEsrgan(const std::string& requested) {
+#ifdef _WIN32
+    const char* const name = "realesrgan-ncnn-vulkan.exe";
+#else
+    const char* const name = "realesrgan-ncnn-vulkan";
+#endif
+    std::vector<std::filesystem::path> candidates;
+    if (!requested.empty()) candidates.emplace_back(requested);
+    if (const char* env = std::getenv("ATOMIC_ESRGAN")) candidates.emplace_back(env);
+    candidates.emplace_back(std::filesystem::path("realesrgan") / name);
+    if (const char* base = SDL_GetBasePath()) {
+        const std::filesystem::path b(base);
+        candidates.push_back(b / "realesrgan" / name);
+        candidates.push_back(b / ".." / "realesrgan" / name);
+        candidates.push_back(b / ".." / ".." / "realesrgan" / name);
+    }
+    for (const auto& c : candidates) {
+        std::error_code ec;
+        if (std::filesystem::is_directory(c, ec)) {
+            if (std::filesystem::exists(c / name, ec)) return (c / name).string();
+        } else if (std::filesystem::exists(c, ec)) {
+            return c.string();
+        }
+    }
+    return "";
+}
+
 // How each player slot is controlled, as on the original's player list.
 // The pads are Pad0 up to Pad0 + kMaxPads - 1 (one per seat).
 enum class Control { Off, Key0, Key1, Ai, Pad0 };
@@ -405,6 +481,45 @@ int g_runs = 0;
 int runGame(int argc, char** argv, bool& again) {
     ++g_runs;
     Options opt = parseArgs(argc, argv);
+    ab::SpriteBank::setHiresEnabled(!opt.noHires);
+    ab::SpriteBank::setHiresSmoothEdges(!opt.rawEdges);
+    if (opt.upscale) {
+        ab::UpscaleOptions up;
+        up.assetsDir = opt.assetsDir.empty() ? findGameDir(opt.gameDir) : opt.assetsDir;
+        up.esrganExe = findEsrgan(opt.esrgan);
+        up.model = opt.esrganModel;
+        up.scale = opt.hiresScale;
+        up.adopt = opt.adoptHires;
+        up.verify = opt.verifyHires;
+        up.cleanEdges = opt.cleanEdges;
+        for (std::size_t from = 0; from <= opt.upscaleOnly.size();) {
+            std::size_t to = opt.upscaleOnly.find(',', from);
+            if (to == std::string::npos) to = opt.upscaleOnly.size();
+            if (to > from) up.only.push_back(opt.upscaleOnly.substr(from, to - from));
+            from = to + 1;
+        }
+        up.gpu = opt.esrganGpu;
+        up.tile = opt.esrganTile;
+        if (up.assetsDir.empty()) {
+            std::printf("No imported game data found. Import it first (--import-assets), or name the folder with --assets-dir.\n");
+            return 1;
+        }
+        std::printf("Enlarging the graphics\n  from:  %s\n  to:    %s\n  model: %s x%d\n  with:  %s\n", up.assetsDir.c_str(), ab::hiresDirFor(up.assetsDir).c_str(),
+                    up.model.c_str(), up.scale, up.esrganExe.c_str());
+        std::fflush(stdout);
+        const ab::UpscaleReport r = ab::upscaleAssets(up, [](const ab::UpscaleProgress& p) {
+            std::printf("[%3d/%d] %s\n", p.done + 1, p.total, p.item.c_str());
+            std::fflush(stdout);
+            return true;
+        });
+        std::printf("%d parts made, %d taken over, %d were up to date, %d pictures made again (%d of them without the model), %d failed.\n", r.made, r.adopted, r.current, r.repaired, r.plain, r.failed);
+        if (!r.ok) {
+            std::printf("Not finished: %s\n", r.error.c_str());
+            return 1;
+        }
+        std::printf("Done. Start the game to see them (--no-hires switches them off).\n");
+        return 0;
+    }
     if (!opt.importFrom.empty()) {
         const std::string to = opt.assetsDir.empty() ? userAssetsDir() : opt.assetsDir;
         std::printf("Importing game data\n  from: %s\n  to:   %s\n", opt.importFrom.c_str(), to.c_str());
@@ -449,7 +564,7 @@ int runGame(int argc, char** argv, bool& again) {
     const bool unattended = opt.frames > 0 || opt.menuShot > 0 || !opt.script.empty() || opt.demo;
     ab::Settings early;
     const bool earlyLoaded = !unattended && early.load(userFile("options.ini"));
-    SDL_Window* window = SDL_CreateWindow("Atomic Bomberman (modern)", opt.native ? 640 : 960, opt.native ? 480 : 720,
+    SDL_Window* window = SDL_CreateWindow("Atomic Bomberman (modern)", opt.windowW > 0 ? opt.windowW : opt.native ? 640 : 960, opt.windowH > 0 ? opt.windowH : opt.native ? 480 : 720,
 #ifdef __ANDROID__
                                           SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN);
 #else

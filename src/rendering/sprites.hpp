@@ -5,6 +5,7 @@
 #pragma once
 
 #include <array>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -14,6 +15,7 @@
 
 #include "free/free_art.hpp"
 #include "resources/ani_file.hpp"
+#include "resources/png.hpp"
 
 namespace ab {
 
@@ -64,7 +66,17 @@ public:
     // 0-9 = player colour remap.
     std::optional<Sprite> sprite(const std::string& sequence, int index, int colour);
 
+    // Enlarged copies of the graphics made by --upscale-assets (resources/upscale.hpp) are used
+    // when the "hires" folder next to the asset folder has them; off with --no-hires.
+    static void setHiresEnabled(bool on);
+    static void setHiresSmoothEdges(bool on);  // outline of enlarged sprites from the original mask (default on)
+    bool hires() const { return !hiresDir_.empty(); }
+
 private:
+    // A texture from the enlarged picture `path` if there is one that is a whole multiple of
+    // the logical size w x h (the size the game draws it at); else 0.
+    // `post`: changes the enlarged frame before it is uploaded (the sprite's outline is smoothed, a bomb is drawn again); none for a picture.
+    unsigned hiresTexture(const std::string& path, int w, int h, const std::function<void(PngImage&)>& post = {}) const;
     struct Ref {
         std::size_t file;
         std::size_t seq;
@@ -83,6 +95,8 @@ private:
     GamePalette palette_;
     std::array<std::vector<std::uint8_t>, 10> remap_;
     std::vector<AniFile> files_;
+    std::vector<std::string> fileStems_;  // file name of each of files_ without folder and extension
+    std::string hiresDir_;                // empty: no enlarged pictures
     std::unordered_map<std::string, Ref> sequences_;
     std::map<std::tuple<std::size_t, int, int>, unsigned> textures_;
     unsigned background_ = 0;

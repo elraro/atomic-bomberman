@@ -1,26 +1,37 @@
 #include "rendering/sprites.hpp"
 
 #include <algorithm>
+#include <cctype>
 
 #include "free/free_data.hpp"
 #include "rendering/gl.hpp"
 
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
+
+#include "resources/png.hpp"
+#include "resources/bomb_redraw.hpp"
+#include "resources/sprite_refine.hpp"
+#include "resources/upscale.hpp"
 
 namespace ab {
 
 namespace {
 
 std::size_t gTextureBytes = 0;  // pixels uploaded so far, for the debug window
+bool gHiresEnabled = true;
+bool gHiresSmoothEdges = true;
 
-unsigned uploadRgba(int w, int h, const std::vector<std::uint8_t>& rgba) {
+// `smooth`: enlarged pictures are drawn smaller than they are, so they are filtered; the
+// original's small pictures are drawn as they are, with hard pixels.
+unsigned uploadRgba(int w, int h, const std::vector<std::uint8_t>& rgba, bool smooth = false) {
     gTextureBytes += rgba.size();
     unsigned tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, smooth ? GL_LINEAR : GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, smooth ? GL_LINEAR : GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -29,6 +40,24 @@ unsigned uploadRgba(int w, int h, const std::vector<std::uint8_t>& rgba) {
 }
 
 }  // namespace
+
+void SpriteBank::setHiresEnabled(bool on) { gHiresEnabled = on; }
+
+void SpriteBank::setHiresSmoothEdges(bool on) { gHiresSmoothEdges = on; }
+
+unsigned SpriteBank::hiresTexture(const std::string& path, int w, int h, const std::function<void(PngImage&)>& post) const {
+    if (hiresDir_.empty() || w < 1 || h < 1) return 0;
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) return 0;
+    const auto img = loadPngFile(path);
+    if (!img || img->width % w != 0 || img->height % h != 0 || img->width / w != img->height / h) {
+        std::fprintf(stderr, "WARN  enlarged picture does not fit, the original is used: %s\n", path.c_str());
+        return 0;
+    }
+    PngImage big = std::move(*img);
+    if (post && gHiresSmoothEdges) post(big);
+    return uploadRgba(big.width, big.height, big.rgba, true);
+}
 
 unsigned SpriteBank::picture(const std::string& name) {
     const auto it = pictures_.find(name);
@@ -40,15 +69,18 @@ unsigned SpriteBank::picture(const std::string& name) {
             pictureSizes_[name] = {pic->width, pic->height};
         }
     } else if (auto pcx = loadPcxFile(gameDir_ + "/data/res/" + name + ".pcx")) {
-        std::vector<std::uint8_t> rgba(pcx->indices.size() * 4);
-        for (std::size_t i = 0; i < pcx->indices.size(); ++i) {
-            const std::uint8_t* c = &pcx->palette[static_cast<std::size_t>(pcx->indices[i]) * 3];
-            rgba[i * 4] = c[0];
-            rgba[i * 4 + 1] = c[1];
-            rgba[i * 4 + 2] = c[2];
-            rgba[i * 4 + 3] = 255;
+        tex = hiresTexture(hiresDir_ + "/res/" + name + ".png", pcx->width, pcx->height);
+        if (tex == 0) {
+            std::vector<std::uint8_t> rgba(pcx->indices.size() * 4);
+            for (std::size_t i = 0; i < pcx->indices.size(); ++i) {
+                const std::uint8_t* c = &pcx->palette[static_cast<std::size_t>(pcx->indices[i]) * 3];
+                rgba[i * 4] = c[0];
+                rgba[i * 4 + 1] = c[1];
+                rgba[i * 4 + 2] = c[2];
+                rgba[i * 4 + 3] = 255;
+            }
+            tex = uploadRgba(pcx->width, pcx->height, rgba);
         }
-        tex = uploadRgba(pcx->width, pcx->height, rgba);
         pictureSizes_[name] = {pcx->width, pcx->height};
     }
     pictures_[name] = tex;
@@ -99,6 +131,9 @@ bool SpriteBank::addAni(const std::string& path) {
     const std::size_t fi = files_.size();
     for (std::size_t s = 0; s < file->sequences.size(); ++s) sequences_[file->sequences[s].name] = {fi, s};
     files_.push_back(std::move(*file));
+    std::string stem = std::filesystem::path(path).stem().string();
+    std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    fileStems_.push_back(std::move(stem));
     return true;
 }
 
@@ -131,6 +166,15 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
     }
     palette_ = std::move(*pal);
     gameDir_ = gameDir;
+    hiresDir_.clear();
+    if (gHiresEnabled) {
+        const std::string dir = hiresDirFor(gameDir);
+        std::error_code ec;
+        if (std::filesystem::is_directory(dir, ec)) {
+            hiresDir_ = dir;
+            std::fprintf(stderr, "INFO  Enlarged graphics: %s\n", dir.c_str());
+        }
+    }
     for (int i = 0; i < 10; ++i)
         if (auto r = readFileBytes(gameDir + "/" + std::to_string(i) + ".rmp"); r && r->size() >= 256)
             remap_[static_cast<std::size_t>(i)].assign(r->begin(), r->begin() + 256);
@@ -163,15 +207,18 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
     for (int n = 1; n <= 17; ++n) addAni(ani + "xplode" + std::to_string(n) + ".ani");
 
     if (auto pcx = loadPcxFile(gameDir + "/data/res/field" + lv + ".pcx")) {
-        std::vector<std::uint8_t> rgba(pcx->indices.size() * 4);
-        for (std::size_t i = 0; i < pcx->indices.size(); ++i) {
-            const std::uint8_t* c = &pcx->palette[static_cast<std::size_t>(pcx->indices[i]) * 3];
-            rgba[i * 4] = c[0];
-            rgba[i * 4 + 1] = c[1];
-            rgba[i * 4 + 2] = c[2];
-            rgba[i * 4 + 3] = 255;
+        background_ = hiresTexture(hiresDir_ + "/res/field" + lv + ".png", pcx->width, pcx->height);
+        if (background_ == 0) {
+            std::vector<std::uint8_t> rgba(pcx->indices.size() * 4);
+            for (std::size_t i = 0; i < pcx->indices.size(); ++i) {
+                const std::uint8_t* c = &pcx->palette[static_cast<std::size_t>(pcx->indices[i]) * 3];
+                rgba[i * 4] = c[0];
+                rgba[i * 4 + 1] = c[1];
+                rgba[i * 4 + 2] = c[2];
+                rgba[i * 4 + 3] = 255;
+            }
+            background_ = uploadRgba(pcx->width, pcx->height, rgba);
         }
-        background_ = uploadRgba(pcx->width, pcx->height, rgba);
     } else {
         std::fprintf(stderr, "WARN  cannot read field%s.pcx\n", lv.c_str());
     }
@@ -213,25 +260,11 @@ int SpriteBank::sequenceLength(const std::string& name) const {
 }
 
 unsigned SpriteBank::makeTexture(const AniFrame& f, int colour) {
-    std::vector<std::uint8_t> rgba(f.pixels.size() * 4);
     const std::vector<std::uint8_t>* remap =
         (colour >= 0 && colour < 10 && !remap_[static_cast<std::size_t>(colour)].empty())
             ? &remap_[static_cast<std::size_t>(colour)]
             : nullptr;
-    for (std::size_t i = 0; i < f.pixels.size(); ++i) {
-        const std::uint16_t px = f.pixels[i];
-        if (f.hasKey && px == f.key) continue;  // transparent
-        // As in the original: RGB555 -> palette index, optional player remap, palette colour.
-        std::uint8_t idx = palette_.lookup[px & 0x7FFF];
-        if (idx == 0) continue;  // index 0 is the transparent colour on screen
-        if (remap != nullptr && (*remap)[idx] != 0) idx = (*remap)[idx];
-        const std::uint8_t* c = &palette_.rgb6[static_cast<std::size_t>(idx) * 3];
-        rgba[i * 4] = static_cast<std::uint8_t>(c[0] * 4 > 255 ? 255 : c[0] * 4);
-        rgba[i * 4 + 1] = static_cast<std::uint8_t>(c[1] * 4 > 255 ? 255 : c[1] * 4);
-        rgba[i * 4 + 2] = static_cast<std::uint8_t>(c[2] * 4 > 255 ? 255 : c[2] * 4);
-        rgba[i * 4 + 3] = 255;
-    }
-    return uploadRgba(f.width, f.height, rgba);
+    return uploadRgba(f.width, f.height, aniFrameRgba(f, palette_, remap));
 }
 
 std::optional<Sprite> SpriteBank::sprite(const std::string& sequence, int index, int colour) {
@@ -257,7 +290,25 @@ std::optional<Sprite> SpriteBank::sprite(const std::string& sequence, int index,
 
     const auto key = std::make_tuple(it->second.file, step.frame, colour);
     auto tex = textures_.find(key);
-    if (tex == textures_.end()) tex = textures_.emplace(key, makeTexture(f, colour)).first;
+    if (tex == textures_.end()) {
+        unsigned texture = 0;
+        if (!hiresDir_.empty()) {
+            // The enlarged frame in the player's colour if it differs from the plain one, else the plain one.
+            const std::string base = hiresDir_ + "/ani/" + fileStems_[it->second.file] + "/" + std::to_string(step.frame);
+            const std::vector<std::uint8_t> plain = aniFrameRgba(f, palette_, nullptr);  // the mask does not depend on the colour
+            const std::vector<std::uint8_t>* table = (colour >= 0 && colour < 10 && !remap_[static_cast<std::size_t>(colour)].empty()) ? &remap_[static_cast<std::size_t>(colour)] : nullptr;
+            const std::string& stem = fileStems_[it->second.file];
+            const bool bomb = stem == "bombs" || stem == "bombanim" || stem == "bomanim2";  // balls with a fuse cap
+            const auto post = [&](PngImage& big) {
+                refineSilhouette(big, f.width, f.height, plain);
+                if (bomb) redrawBomb(big, f, palette_, table);
+            };
+            if (colour >= 0) texture = hiresTexture(base + "_c" + std::to_string(colour) + ".png", f.width, f.height, post);
+            if (texture == 0) texture = hiresTexture(base + ".png", f.width, f.height, post);
+        }
+        if (texture == 0) texture = makeTexture(f, colour);
+        tex = textures_.emplace(key, texture).first;
+    }
     return Sprite{tex->second, f.width, f.height, f.hotX, f.hotY, step.dx, step.dy};
 }
 

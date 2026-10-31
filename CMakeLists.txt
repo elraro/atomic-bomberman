@@ -45,7 +45,7 @@ ab_warnings(ab_game)
 # Readers for the original game's data files (legacy formats stay out of the core).
 add_library(ab_resources src/resources/scheme_file.cpp src/resources/ani_file.cpp src/resources/asset_import.cpp
     src/resources/settings.cpp src/resources/help_file.cpp src/resources/campaign_file.cpp src/resources/mve_file.cpp
-    src/resources/unused_voices.cpp)
+    src/resources/unused_voices.cpp src/resources/png.cpp src/resources/sprite_refine.cpp src/resources/bomb_redraw.cpp src/resources/upscale.cpp)
 target_link_libraries(ab_resources PUBLIC ab_game)
 ab_warnings(ab_resources)
 
@@ -246,6 +246,10 @@ enable_testing()
 add_executable(mve_dump tools/diagnostics/mve_dump.cpp)
 target_link_libraries(mve_dump PRIVATE ab_resources)
 ab_warnings(mve_dump)
+
+add_executable(bomb_sheet tools/diagnostics/bomb_sheet.cpp)
+target_link_libraries(bomb_sheet PRIVATE ab_resources)
+ab_warnings(bomb_sheet)
 
 add_executable(ai_stats tools/diagnostics/ai_stats.cpp)
 target_link_libraries(ai_stats PRIVATE ab_game)
