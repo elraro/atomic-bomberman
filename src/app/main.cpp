@@ -463,18 +463,17 @@ std::string findEsrgan(const std::string& requested) {
 }
 
 // How each player slot is controlled, as on the original's player list.
-enum class Control { Off, Key0, Key1, Ai, Pad0, Pad1, Pad2, Pad3 };
+// The pads are Pad0 up to Pad0 + kMaxPads - 1 (one per seat).
+enum class Control { Off, Key0, Key1, Ai, Pad0 };
+constexpr int kMaxPads = ab::PadKeys::kMaxPads;
 
-const char* controlName(Control c) {
+std::string controlName(Control c) {
     switch (c) {
         case Control::Key0: return "KEY 0";
         case Control::Key1: return "KEY 1";
         case Control::Ai: return "AI";
-        case Control::Pad0: return "JOY 0";
-        case Control::Pad1: return "JOY 1";
-        case Control::Pad2: return "JOY 2";
-        case Control::Pad3: return "JOY 3";
-        default: return "OFF";
+        case Control::Off: return "OFF";
+        default: return "JOY " + std::to_string(static_cast<int>(c) - static_cast<int>(Control::Pad0));
     }
 }
 
@@ -796,11 +795,11 @@ int runGame(int argc, char** argv, bool& again) {
         ab::Audio audio;
         const bool sound = !opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir, cfg.smallMemory, cfg.unusedVoices);
         audio.setVolumes(cfg.musicVolume, cfg.soundVolume);
-        // Up to four gamepads, opened once at start.
-        std::array<SDL_Gamepad*, 4> pads{};
+        // Up to one gamepad per seat, opened once at start.
+        std::array<SDL_Gamepad*, kMaxPads> pads{};
         int padCount = 0;
         if (SDL_JoystickID* ids = SDL_GetGamepads(&padCount)) {
-            padCount = std::min(padCount, 4);
+            padCount = std::min(padCount, kMaxPads);
             for (int i = 0; i < padCount; ++i) pads[static_cast<std::size_t>(i)] = SDL_OpenGamepad(ids[i]);
             SDL_free(ids);
         } else {
@@ -1378,7 +1377,7 @@ int runGame(int argc, char** argv, bool& again) {
                             pads[i] = SDL_OpenGamepad(e.gdevice.which);
                             known = true;
                         }
-                    for (padCount = 4; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
+                    for (padCount = kMaxPads; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
                     continue;
                 }
                 if (e.type == SDL_EVENT_GAMEPAD_REMOVED) {
@@ -1388,7 +1387,7 @@ int runGame(int argc, char** argv, bool& again) {
                             pads[i] = nullptr;
                             padKeys.stick(static_cast<int>(i), 0, 0, SDL_GetTicks());
                         }
-                    for (padCount = 4; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
+                    for (padCount = kMaxPads; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
                     continue;
                 }
                 // A phone's back key is Esc.

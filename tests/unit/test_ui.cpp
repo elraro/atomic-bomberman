@@ -100,6 +100,13 @@ void testPadKeys() {
     CHECK(pad.take() == Keys{PadKey::Left});
     pad.stick(1, 0, 0, 9010);
     CHECK(pad.take().empty());
+    // Every one of the ten seats has its own stick; an eleventh pad is ignored.
+    pad.stick(PadKeys::kMaxPads - 1, 0, 32767, 9100);
+    CHECK(pad.take() == Keys{PadKey::Down});
+    pad.stick(PadKeys::kMaxPads - 1, 0, 0, 9110);
+    CHECK(pad.take().empty());
+    pad.stick(PadKeys::kMaxPads, 0, 32767, 9120);
+    CHECK(pad.take().empty());
 
     // While the players steer, only Start is a key, and a direction held when the round
     // ends does not start repeating.
