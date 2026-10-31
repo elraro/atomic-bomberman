@@ -108,6 +108,51 @@ The terminal prints `INFO  Game files: …` with the folder in use. If none of t
 
 Controls and options are in `README.md`.
 
+## 4. Sharper graphics at a large window (optional)
+
+The original's pictures are 640 × 480. Once the data is imported (step 2), they can be enlarged four times with an AI upscaling program, for a clean picture in a Full HD window. This is done on your computer, from your imported data, and can be repeated at any time. You need a graphics card with Vulkan support, and, for a full run, a few hours of time (the computer is loaded all the time; it can be stopped and goes on later).
+
+1. **Get the upscaling program.** It is **Real-ESRGAN ncnn Vulkan** (`realesrgan-ncnn-vulkan`, project `xinntao/Real-ESRGAN-ncnn-vulkan` on GitHub, release zip for your system). Unpack it into a folder called `realesrgan` next to the game, or name its place with `--esrgan PATH` or the `ATOMIC_ESRGAN` environment variable. Check that its `models` folder holds `realesrgan-x4plus.param` and `realesrgan-x4plus.bin`; a release zip without these files has been seen, and then they must be taken from the `models` folder of the project's source. Files ending in `.pth` cannot be used. (`--esrgan-model` names another model of that folder.)
+2. **Find out which graphics chip it uses.** If the computer has two (a laptop with an integrated chip and a graphics card), the first lines of a run list them as `[0 …]`, `[1 …]`. Use the strong one with `--esrgan-gpu N`. Without it the program may take the weak one, which can give noise and empty pictures, or hang the computer under the long load (a Windows blue screen `DPC_WATCHDOG_VIOLATION` was seen). `--esrgan-tile N` makes the program work on smaller tiles, which loads the chip less.
+3. **Try a little first.** This enlarges only the bombs (about a minute):
+
+   ```sh
+   ./atomic --upscale-assets --esrgan-gpu 1 --upscale-only bombs
+   ```
+
+   (`--assets-dir DIR` if the data is not where the game finds it.) Start the game and look at the bombs. `--no-hires` draws the originals again, to compare.
+4. **Run it all.**
+
+   ```sh
+   ./atomic --upscale-assets --esrgan-gpu 1
+   ```
+
+   It lists the part it is working on (`[n/156] ani/walk`): sprites first, then the full-screen pictures. Ctrl+C stops it; the same command goes on where it stopped, losing at most the part that was being made. At the end it prints a summary.
+5. **Check it.** This looks at every picture that is there (the model sometimes gives noise or nothing) and makes the bad ones again; it needs a few minutes if nothing is wrong:
+
+   ```sh
+   ./atomic --upscale-assets --esrgan-gpu 1 --hires-verify
+   ```
+
+   If it says that parts "could not be made", run it once more; the lines starting with `WARN` name them.
+6. **Play.** Start the game as usual. It finds the enlarged pictures by itself, and it logs `INFO  Enlarged graphics: …`.
+
+The result goes into a folder `hires` **next to** the asset folder (so that a new import, which replaces the asset folder, does not remove it; with the per-user asset folder of step 2 it is the folder `atomic/hires` beside `atomic/assets`) and is as copyrighted as the data it comes from: do not share it. A part that does not exist in `hires` is drawn from the original.
+
+**Doing it again.** The command can be run again at any time. A `manifest.txt` in `hires` records what each part was made from, by which model and at which scale, so only what is missing or changed is made, and a run that was stopped (Ctrl+C, a crash of the computer) goes on where it stopped. The manifest is written so that a crash leaves either the old or the new one. If it is lost anyway, `--hires-adopt` takes over the pictures that are there and complete and of the right size instead of making them again. More options for a run:
+
+| Option | Meaning |
+|---|---|
+| `--hires-verify` | also checks every picture that is there (it is shrunk back and compared with the original) and makes noise, empty or wrongly sized ones again. A picture that fails is tried again as it is, then with an edge around it (the model cannot do very small pictures), and as the last way out it is enlarged without the model (soft, but never wrong); the summary counts those. |
+| `--upscale-only A,B` | only these parts: `bombs`, `walk`, `res/mainmenu`, … |
+| `--hires-adopt` | see above |
+| `--hires-clean-edges` | replaces dark dither pixels at the edge of sprites by their neighbours before enlarging. Little gain, and it changes what every part is made from, so all of them are made again. |
+| `--hires-scale N` | 2 to 4 (default 4) |
+
+**What the game adds when it loads the pictures** (nothing of this is stored in `hires`, so it needs no new run): sprites get a smooth outline taken from the original's mask, so the edge of a sprite is not ragged and has no dark rim; the bombs of the original (`bombs`, `bombanim`, `bomanim2`, every size and player colour) are drawn again as a ball with its shadow, with the shape and the shading learned from the original frame, and with the fuse cap enlarged from the original's pixels. `--hires-raw-edges` switches both off and draws the pictures as the model made them. `--window WxH` sets the size of the window at the start (for screenshots and tests).
+
+Not yet enlarged: the fonts (`*.fon`) and the menu text; they are drawn from the original.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
