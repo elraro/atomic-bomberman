@@ -22,6 +22,7 @@
 #include "resources/mve_file.hpp"
 #include "resources/unused_voices.hpp"
 #include "resources/settings.hpp"
+#include "rendering/draw_order.hpp"
 #include "rendering/glyphs.hpp"
 #include "resources/ani_file.hpp"
 #include "resources/asset_import.hpp"
@@ -1638,6 +1639,36 @@ void testTrampoline() {
 
 void testTeamPlay() {
     World w{Values::defaults(), 5};
+// A carried or thrown bomb is drawn in front of the player, not behind: it is lifted above
+// the head, and drawn under the player's sprite it looked as if it were behind them.
+void testThrownBombIsDrawnInFront() {
+    Fixture f;
+    f.w.player(0).inventory[kPowGrab] = 1;
+    f.place(0, {6, 2});
+    f.place(1, {14, 10});
+    f.press1(0);                            // drop: lies on the ground
+    f.run(1);
+    CHECK(!bombDrawnOverPlayers(f.w.bombs()[0]));
+    f.in[0].button1 = true;                 // pick it up
+    f.run(1);
+    CHECK(f.w.bombs()[0].mode == BombMode::Held);
+    CHECK(bombDrawnOverPlayers(f.w.bombs()[0]));
+    f.run(12);
+    f.hold(0, 1);
+    f.run(6);
+    f.hold(0, kNoDir);
+    f.in[0].button1 = false;                // throw
+    f.run(1);
+    CHECK(f.w.bombs()[0].mode == BombMode::Flying);
+    CHECK(bombDrawnOverPlayers(f.w.bombs()[0]));
+    for (int i = 0; i < 200 && f.w.bombs()[0].active && f.w.bombs()[0].mode == BombMode::Flying; ++i) {
+        CHECK(bombDrawnOverPlayers(f.w.bombs()[0]));
+        f.run(1);
+    }
+    if (f.w.bombs()[0].active && f.w.bombs()[0].mode == BombMode::Resting)
+        CHECK(!bombDrawnOverPlayers(f.w.bombs()[0]));  // landed: under the players again
+}
+
     w.startRound(Scheme::pillars(), false);
     w.setTeamPlay(true, {0, 1, 0, 1});
     for (int i = 0; i < 4; ++i) w.addPlayer(i);
@@ -2625,3 +2656,4 @@ int main() {
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }
+        {"thrown bomb in front", testThrownBombIsDrawnInFront},
