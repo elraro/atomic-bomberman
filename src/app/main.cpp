@@ -2377,7 +2377,7 @@ int runGame(int argc, char** argv, bool& again) {
                     renderer.text(*spritesPtr, rows[r], 56, y + 1, 0, 0, 0);
                     renderer.text(*spritesPtr, rows[r], 55, y, r == optionRow ? 1.0f : 0.85f, r == optionRow ? 0.95f : 0.85f, r == optionRow ? 0.3f : 0.85f);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 41.0f, 55.0f + 21.0f * static_cast<float>(optionRow));
+                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 36.0f, 55.0f + 21.0f * static_cast<float>(optionRow));
                 renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 462, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::LevelSetup) {
