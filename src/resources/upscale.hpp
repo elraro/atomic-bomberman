@@ -3,9 +3,11 @@
 //
 // Layout of the folder "hires" that sits next to the asset folder (so that a new import,
 // which replaces the asset folder, does not delete it):
-//   hires/ani/<file>/<frame>.png       a frame of data/ani/<file>.ani, drawn at <scale> times the size
-//   hires/ani/<file>/<frame>_c<N>.png  the same in player colour N (only where it differs)
+//   hires/ani/<file>.hani              the frames of data/ani/<file>.ani, drawn at <scale> times the size, in one
+//                                      container (hires_pack.hpp): each frame, and in player colour N (only where it differs)
 //   hires/res/<name>.png               data/res/<name>.pcx
+// Earlier runs made a folder hires/ani/<file>/ of <frame>.png and <frame>_c<N>.png instead; the game still reads
+// it, and the next run puts it into a container.
 //   hires/manifest.txt                 what each part was made from, by which model, at what scale
 // Only what is missing or out of date is made again; an interrupted run goes on where it stopped.
 #pragma once

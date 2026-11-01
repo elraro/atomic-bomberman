@@ -45,12 +45,12 @@ ab_warnings(ab_game)
 # Readers for the original game's data files (legacy formats stay out of the core).
 add_library(ab_resources src/resources/scheme_file.cpp src/resources/ani_file.cpp src/resources/asset_import.cpp
     src/resources/settings.cpp src/resources/help_file.cpp src/resources/campaign_file.cpp src/resources/mve_file.cpp
-    src/resources/unused_voices.cpp src/resources/png.cpp src/resources/sprite_refine.cpp src/resources/bomb_redraw.cpp src/resources/upscale.cpp)
+    src/resources/unused_voices.cpp src/resources/png.cpp src/resources/sprite_refine.cpp src/resources/bomb_redraw.cpp src/resources/hires_pack.cpp src/resources/upscale.cpp)
 target_link_libraries(ab_resources PUBLIC ab_game)
 ab_warnings(ab_resources)
 
 # The free asset set, made by code: graphics, sounds and data for people without the original game.
-add_library(ab_free src/free/free_art.cpp src/free/free_sound.cpp src/free/free_data.cpp)
+add_library(ab_free src/free/free_art.cpp src/free/free_sound.cpp src/free/free_data.cpp src/resources/steam_art.cpp)
 target_link_libraries(ab_free PUBLIC ab_game ab_resources)
 ab_warnings(ab_free)
 
