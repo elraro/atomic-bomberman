@@ -369,6 +369,30 @@ unsigned SpriteBank::makeTexture(const AniFrame& f, int colour) {
     return uploadRgba(f.width, f.height, aniFrameRgba(f, palette_, remap));
 }
 
+bool SpriteBank::spriteRgba(const std::string& sequence, int index, int colour, int* width, int* height, std::vector<std::uint8_t>* rgba) {
+    if (free_) {
+        const auto found = art_.sequences.find(sequence);
+        if (found == art_.sequences.end() || found->second.empty()) return false;
+        const FreeFrame& f = art_.frames[static_cast<std::size_t>(found->second[static_cast<std::size_t>(index) % found->second.size()])];
+        *width = f.width, *height = f.height;
+        *rgba = colouredFrame(f, colour);
+        return true;
+    }
+    const auto it = sequences_.find(sequence);
+    if (it == sequences_.end()) return false;
+    const AniSequence& seq = files_[it->second.file].sequences[it->second.seq];
+    if (seq.steps.empty()) return false;
+    const int frame = seq.steps[static_cast<std::size_t>(index) % seq.steps.size()].frame;
+    const auto& frames = files_[it->second.file].frames;
+    if (frame < 0 || static_cast<std::size_t>(frame) >= frames.size() || frames[static_cast<std::size_t>(frame)].pixels.empty()) return false;
+    const AniFrame& f = frames[static_cast<std::size_t>(frame)];
+    const std::vector<std::uint8_t>* remap =
+        (colour >= 0 && colour < 10 && !remap_[static_cast<std::size_t>(colour)].empty()) ? &remap_[static_cast<std::size_t>(colour)] : nullptr;
+    *width = f.width, *height = f.height;
+    *rgba = aniFrameRgba(f, palette_, remap);
+    return true;
+}
+
 std::optional<Sprite> SpriteBank::sprite(const std::string& sequence, int index, int colour) {
     if (free_) {
         const auto found = art_.sequences.find(sequence);

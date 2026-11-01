@@ -2,6 +2,7 @@
 // through the read-only World interface; gameplay never calls into this.
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -59,6 +60,9 @@ public:
     // scale: the sprite's size and its reference point scaled about (x, y), for small previews.
     bool sprite(SpriteBank& bank, const std::string& sequence, int index, int colour, float x, float y, float scale = 1.0f);
     void quad(float x, float y, float w, float h, float r, float g, float b, float a = 1.0f);
+    // The head of a player's standing picture (facing the viewer) in a player colour, 20 px tall with its top left at (x, y).
+    // Cut from the regular sprite, so it follows the original and the free set alike. Returns its width (0 if missing).
+    float playerHead(SpriteBank& bank, int colour, float x, float y);
 
 private:
     struct Vertex {
@@ -67,6 +71,11 @@ private:
         float r, g, b, a;
     };
     void textured(unsigned texture, float x, float y, float w, float h);
+    struct HeadCut {  // the head within the standing frame of a player colour
+        unsigned texture = 0;
+        int x = 0, y = 0, w = 0, h = 0;
+    };
+    std::map<int, HeadCut> headCuts_;
     void setTexture(unsigned texture);
     void flush();
     void drawHud(const World& world, SpriteBank* bank, const std::array<int, kMaxPlayers>* wins);
