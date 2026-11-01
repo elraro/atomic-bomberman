@@ -148,7 +148,7 @@ Options parseArgs(int argc, char** argv) {
                       "  --game-dir DIR       imported assets or an original game folder to play from\n"
                       "  --free               play with the free asset set even if original game data is found\n"
                       "  --start              skip the menu and start a match at once\n"
-                      "  --scheme NAME        scheme (map) to play, e.g. BASIC\n"
+                      "  --scheme NAME        scheme (map) to play, e.g. BASIC; random-match or random-round draw one\n"
                       "  --level N            level theme 0-10\n"
                       "  --players N          number of players (default 4)\n"
                       "  --humans N           keyboard players, 0-2\n"
@@ -712,6 +712,15 @@ int runGame(int argc, char** argv, bool& again) {
         opt.scheme = cfg.scheme;
         for (char& ch : opt.scheme) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     }
+    // A random scheme per match or per round: from the saved settings, or --scheme random-match / random-round.
+    int schemeRandom = opt.schemeSet ? 0 : cfg.schemeRandom;
+    std::string schemeArg = opt.scheme;
+    for (char& ch : schemeArg) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    if (opt.schemeSet && (schemeArg == "random-match" || schemeArg == "random-round")) {
+        schemeRandom = schemeArg == "random-match" ? 1 : 2;
+        opt.scheme = cfg.scheme;  // the one the first draw replaces
+        for (char& ch : opt.scheme) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
     if (opt.roulette) cfg.goldman = true;
 
     ab::Values values = ab::Values::defaults();
@@ -757,6 +766,28 @@ int runGame(int argc, char** argv, bool& again) {
             if (schemes[i].file == opt.scheme) schemeIndex = static_cast<int>(i);
         int setupRow = 0;
         bool teamPlay = cfg.teamPlay;
+        if (teamPlay && schemeRandom == 2) schemeRandom = 1;  // team play: the teams follow the scheme, so it stays for the match
+        // The scheme list of the level screen: two random entries (-1 per match, -2 per round) before
+        // the schemes themselves; no "per round" with team play.
+        bool schemePopup = false;
+        int popupRow = 0, popupTop = 0;
+        std::vector<int> popupChoices;
+        constexpr int kRandomMatch = -1, kRandomRound = -2, kPopupRows = 7;
+        auto schemeChoices = [&]() {
+            std::vector<int> c{kRandomMatch};
+            if (!teamPlay) c.push_back(kRandomRound);
+            for (std::size_t i = 0; i < schemes.size(); ++i) c.push_back(static_cast<int>(i));
+            return c;
+        };
+        auto currentChoice = [&]() { return schemeRandom == 1 ? kRandomMatch : schemeRandom == 2 ? kRandomRound : schemeIndex; };
+        auto applyChoice = [&](int choice) {
+            schemeRandom = choice == kRandomMatch ? 1 : choice == kRandomRound ? 2 : 0;
+            if (choice >= 0) schemeIndex = choice;
+        };
+        auto schemeTitle = [&](int choice) {
+            return choice == kRandomMatch ? std::string("Random (per match)") : choice == kRandomRound ? std::string("Random (per round)")
+                                                                                                     : schemes[static_cast<std::size_t>(choice)].title;
+        };
         std::array<int, ab::kMaxPlayers> teams{};
         std::array<ab::SchemePower, 13> schemePowers{};  // the scheme's -P lines
         int teamsFromScheme = -1;
@@ -788,6 +819,7 @@ int runGame(int argc, char** argv, bool& again) {
             cfg.level = randomLevel ? -1 : level;
             cfg.winsNeeded = winsNeeded;
             cfg.teamPlay = teamPlay;
+            cfg.schemeRandom = schemeRandom;
             if (!schemes.empty()) {
                 cfg.scheme = schemes[static_cast<std::size_t>(schemeIndex)].file;
                 for (char& ch : cfg.scheme) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
@@ -975,6 +1007,26 @@ int runGame(int argc, char** argv, bool& again) {
         net.setGameVersion(AB_VERSION);
         // What the original resets once per match (0x421793): scores, kills and, with
         // "random start", the start positions: 200 swaps of two of the ten.
+        auto shuffleStartCells = [&]() {
+            startCells = scheme.start;
+            if (cfg.randomStart)
+                for (int n = 0; n < 200; ++n) {
+                    const auto a = static_cast<std::size_t>(appRng.below(ab::kMaxPlayers));
+                    const auto b = static_cast<std::size_t>(appRng.below(ab::kMaxPlayers));
+                    std::swap(startCells[a], startCells[b]);
+                }
+        };
+        // A random scheme (this implementation's addition): never the same twice in a row.
+        auto drawScheme = [&]() {
+            if (schemes.empty()) return;
+            const int n = static_cast<int>(schemes.size());
+            int pick = appRng.below(n);
+            if (n > 1 && pick == schemeIndex) pick = (pick + 1 + appRng.below(n - 1)) % n;
+            schemeIndex = pick;
+        };
+        bool matchFresh = false;   // the first round of a match has its scheme from newMatch
+        Uint64 schemeShownAt = 0;  // when a drawn scheme was announced
+        std::string schemeShown;
         auto newMatch = [&]() {
             wins = {};
             matchKills = {};
@@ -987,16 +1039,27 @@ int runGame(int argc, char** argv, bool& again) {
                     if (values.get(1150 + level) != 0) break;
                 }
             }
+            if (teamPlay && schemeRandom == 2) schemeRandom = 1;
+            if (schemeRandom != 0 && !campaignMode) drawScheme();
             applySettings();
-            startCells = scheme.start;
-            if (cfg.randomStart)
-                for (int n = 0; n < 200; ++n) {
-                    const auto a = static_cast<std::size_t>(appRng.below(ab::kMaxPlayers));
-                    const auto b = static_cast<std::size_t>(appRng.below(ab::kMaxPlayers));
-                    std::swap(startCells[a], startCells[b]);
-                }
+            shuffleStartCells();
+            matchFresh = true;
         };
         auto beginMatch = [&]() {
+            // "Random (per round)": a new scheme for every round after the first.
+            if (schemeRandom == 2 && !campaignMode && !matchFresh) {
+                drawScheme();
+                applySettings();
+                shuffleStartCells();
+            }
+            matchFresh = false;
+            if (schemeRandom != 0 && !campaignMode && !schemes.empty()) {
+                schemeShown = "Scheme: " + schemes[static_cast<std::size_t>(schemeIndex)].title;
+                schemeShownAt = SDL_GetTicks();
+                std::fprintf(stderr, "INFO  Random scheme=\"%s\"\n", schemes[static_cast<std::size_t>(schemeIndex)].file.c_str());
+            } else {
+                schemeShown.clear();
+            }
             // The original flushes its sound cache and picks a new selection of voice lines
             // every value 7 seconds (value 9 in the normal memory model), between rounds.
             if (sound && values.get(cfg.smallMemory ? 9 : 7) > 0 && audio.selectionAge() > values.get(cfg.smallMemory ? 9 : 7)) {
@@ -1736,7 +1799,10 @@ int runGame(int argc, char** argv, bool& again) {
                     if (d != 0) {
                         if (sound) audio.playRange(20, 20);
                         switch (optionRow) {
-                            case 0: teamPlay = !teamPlay; break;
+                            case 0:
+                                teamPlay = !teamPlay;
+                                if (teamPlay && schemeRandom == 2) schemeRandom = 1;
+                                break;
                             case 1: cfg.randomStart = !cfg.randomStart; break;
                             case 2: cfg.conveyorSpeed = (cfg.conveyorSpeed + d + 3) % 3; break;
                             case 3: cfg.stompedBombsDetonate = !cfg.stompedBombsDetonate; break;
@@ -1824,20 +1890,56 @@ int runGame(int argc, char** argv, bool& again) {
                 } else if (screen == Screen::LevelSetup) {
                     // Level, scheme and match length, as on the original's second pre-game screen.
                     const int d = key == SDLK_RIGHT ? 1 : key == SDLK_LEFT ? -1 : 0;
+                    if (schemePopup) {
+                        // The scheme list: up and down move the cursor, Enter (A) takes the entry, Esc (B) leaves it as it was.
+                        const int n = static_cast<int>(popupChoices.size());
+                        if (key == SDLK_UP) popupRow = std::max(0, popupRow - 1);
+                        if (key == SDLK_DOWN) popupRow = std::min(n - 1, popupRow + 1);
+                        if (key == SDLK_PAGEUP) popupRow = std::max(0, popupRow - kPopupRows);
+                        if (key == SDLK_PAGEDOWN) popupRow = std::min(n - 1, popupRow + kPopupRows);
+                        if (key == SDLK_HOME) popupRow = 0;
+                        if (key == SDLK_END) popupRow = n - 1;
+                        if (popupRow < popupTop) popupTop = popupRow;
+                        if (popupRow >= popupTop + kPopupRows) popupTop = popupRow - kPopupRows + 1;
+                        if (key == SDLK_RETURN && n > 0) {
+                            applyChoice(popupChoices[static_cast<std::size_t>(popupRow)]);
+                            schemePopup = false;
+                        }
+                        if (key == SDLK_ESCAPE) schemePopup = false;
+                        continue;
+                    }
                     if (key == SDLK_UP) setupRow = (setupRow + 3) % 4;
                     if (key == SDLK_DOWN) setupRow = (setupRow + 1) % 4;
-                    if (d != 0 && setupRow == 3) teamPlay = !teamPlay;
+                    if (d != 0 && setupRow == 3) {
+                        teamPlay = !teamPlay;
+                        if (teamPlay && schemeRandom == 2) schemeRandom = 1;
+                    }
                     if (d != 0 && setupRow == 0) {
                         // Random Each Game, then the eleven levels.
                         const int choice = ((randomLevel ? -1 : level) + d + 1 + 12) % 12 - 1;
                         randomLevel = choice < 0;
                         if (!randomLevel) level = choice;
                     }
-                    if (d != 0 && setupRow == 1 && !schemes.empty())
-                        schemeIndex = (schemeIndex + d + static_cast<int>(schemes.size())) % static_cast<int>(schemes.size());
+                    if (d != 0 && setupRow == 1 && !schemes.empty()) {
+                        // Through the list the popup shows: the random entries, then the schemes, wrapping.
+                        const std::vector<int> choices = schemeChoices();
+                        const int n = static_cast<int>(choices.size());
+                        int at = 0;
+                        for (int i = 0; i < n; ++i)
+                            if (choices[static_cast<std::size_t>(i)] == currentChoice()) at = i;
+                        applyChoice(choices[static_cast<std::size_t>((at + d + n) % n)]);
+                    }
                     if (d != 0 && setupRow == 2) winsNeeded = std::clamp(winsNeeded + d, 1, 10);
                     if (key == SDLK_ESCAPE) screen = Screen::PlayerList;
-                    if (key == SDLK_RETURN) {
+                    if (key == SDLK_RETURN && setupRow == 1 && !schemes.empty()) {
+                        // Enter on the scheme line opens the list; the other lines start the match.
+                        popupChoices = schemeChoices();
+                        popupRow = 0;
+                        for (int i = 0; i < static_cast<int>(popupChoices.size()); ++i)
+                            if (popupChoices[static_cast<std::size_t>(i)] == currentChoice()) popupRow = i;
+                        popupTop = std::clamp(popupRow - kPopupRows / 2, 0, std::max(0, static_cast<int>(popupChoices.size()) - kPopupRows));
+                        schemePopup = true;
+                    } else if (key == SDLK_RETURN) {
                         if (sound) audio.playRange(10, 10);
                         newMatch();
                         saveSettings();
@@ -2072,6 +2174,14 @@ int runGame(int argc, char** argv, bool& again) {
                     for (int i = 0; i < ab::kMaxPlayers; ++i)
                         shown[static_cast<std::size_t>(i)] = campaignScore[static_cast<std::size_t>(i)] + world.player(i).score;
                 renderer.draw(world, previous, alpha, w, h, spritesPtr.get(), &shown);
+                if (!schemeShown.empty() && spritesPtr->loaded() && !world.roundOver() && SDL_GetTicks() - schemeShownAt < 3000) {
+                    // A drawn scheme is announced for three seconds at the start of the round.
+                    renderer.begin(w, h);
+                    const float tx = 320.0f - renderer.textWidth(*spritesPtr, schemeShown) / 2.0f;
+                    renderer.text(*spritesPtr, schemeShown, tx + 1, 4, 0, 0, 0);
+                    renderer.text(*spritesPtr, schemeShown, tx, 3, 1.0f, 0.95f, 0.3f);
+                    renderer.end();
+                }
                 if (world.roundOver() && spritesPtr->loaded() && roundOverSteps > 20) {
                     // After a second on the frozen field: the original's result pictures.
                     const int win = world.teamPlay() ? world.winningTeam() : world.winner();
@@ -2408,7 +2518,7 @@ int runGame(int argc, char** argv, bool& again) {
                 }
                 const std::string lines[4] = {
                     randomLevel ? "Random Each Game" : ab::kLevelName[level],
-                    schemes.empty() ? std::string("(built-in arena)") : "Scheme: " + schemes[static_cast<std::size_t>(schemeIndex)].title,
+                    schemes.empty() ? std::string("(built-in arena)") : "Scheme: " + schemeTitle(currentChoice()),
                     std::to_string(winsNeeded) + (cfg.winByKills ? " Kills" : " Wins") + " to win match",  // messages 211, 208/209
                     std::string("Team play: ") + (teamPlay ? "ON (teams from the scheme)" : "OFF")};
                 for (int r = 0; r < 4; ++r) {
@@ -2418,7 +2528,46 @@ int runGame(int argc, char** argv, bool& again) {
                     renderer.text(*spritesPtr, lines[r], 55, y, 1, 1, 1);
                 }
                 renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 36.0f, 185.0f + 24.0f * static_cast<float>(setupRow));
-                renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Enter: start", 60, 440, 0.4f, 1.0f, 1.0f);
+                renderer.text(*spritesPtr, schemePopup ? "Up/Down: select   Enter: take   Esc: cancel"
+                                                       : "Up/Down: select   Left/Right: change   Enter: start (list on Scheme)",
+                              60, 440, 0.4f, 1.0f, 1.0f);
+                if (schemePopup) {
+                    // The scheme list in the style of the original's campaign file box.
+                    const float bx = 150, by = 110, bw = 340, bh = 250;
+                    const float lx = bx + 10, ly = by + 36, lw = bw - 52, rowH = 22;
+                    const int n = static_cast<int>(popupChoices.size());
+                    renderer.quad(0, 0, 640, 480, 0.0f, 0.0f, 0.0f, 0.45f);
+                    renderer.quad(bx - 2, by - 2, bw + 4, bh + 4, 0.62f, 0.60f, 0.56f, 1.0f);
+                    renderer.quad(bx, by, bw, bh, 0.36f, 0.34f, 0.31f, 1.0f);
+                    renderer.quad(bx + 8, by + 8, bw - 16, 22, 0.24f, 0.23f, 0.21f, 1.0f);
+                    const std::string title = "Select a scheme:";
+                    renderer.text(*spritesPtr, title, bx + bw / 2 - renderer.textWidth(*spritesPtr, title) / 2.0f, by + 12, 0.85f, 0.85f, 0.85f);
+                    renderer.quad(lx, ly, lw, rowH * kPopupRows, 0.27f, 0.26f, 0.24f, 1.0f);
+                    for (int r = 0; r < kPopupRows && popupTop + r < n; ++r) {
+                        const int at = popupTop + r;
+                        const float y = ly + rowH * static_cast<float>(r);
+                        if (at == popupRow) renderer.quad(lx, y, lw, rowH, 0.52f, 0.50f, 0.47f, 1.0f);
+                        const bool shown = at == popupRow;
+                        renderer.text(*spritesPtr, schemeTitle(popupChoices[static_cast<std::size_t>(at)]), lx + 8, y + 4, shown ? 1.0f : 0.88f, shown ? 1.0f : 0.88f, shown ? 1.0f : 0.88f);
+                    }
+                    // Scrollbar: arrows above and below, the thumb in between shows where the window is.
+                    const float sx = lx + lw + 8, sw = 22, trackY = ly + 20, trackH = rowH * kPopupRows - 40;
+                    renderer.quad(sx, ly, sw, 18, 0.46f, 0.44f, 0.41f, 1.0f);
+                    renderer.quad(sx, ly + rowH * kPopupRows - 18, sw, 18, 0.46f, 0.44f, 0.41f, 1.0f);
+                    renderer.text(*spritesPtr, "^", sx + 7, ly + 2, 1, 1, 1);
+                    renderer.text(*spritesPtr, "v", sx + 7, ly + rowH * kPopupRows - 16, 1, 1, 1);
+                    renderer.quad(sx, trackY, sw, trackH, 0.30f, 0.29f, 0.27f, 1.0f);
+                    const float share = n > kPopupRows ? static_cast<float>(kPopupRows) / static_cast<float>(n) : 1.0f;
+                    const float thumbH = trackH * share;
+                    const float span = static_cast<float>(std::max(1, n - kPopupRows));
+                    const float thumbY = trackY + (trackH - thumbH) * (n > kPopupRows ? static_cast<float>(popupTop) / span : 0.0f);
+                    renderer.quad(sx, thumbY, sw, thumbH, 0.56f, 0.54f, 0.50f, 1.0f);
+                    // "Done" only shows what Enter does; the list is worked with the cursor.
+                    const float dw = 110, dx = bx + bw / 2 - dw / 2, dy = ly + rowH * kPopupRows + 18;
+                    renderer.quad(dx - 1, dy - 1, dw + 2, 28, 0.62f, 0.60f, 0.56f, 1.0f);
+                    renderer.quad(dx, dy, dw, 26, 0.42f, 0.40f, 0.37f, 1.0f);
+                    renderer.text(*spritesPtr, "Done", dx + dw / 2 - renderer.textWidth(*spritesPtr, "Done") / 2.0f, dy + 6, 0.9f, 0.9f, 0.9f);
+                }
                 renderer.end();
             } else if (screen == Screen::MainMenu) {
                 // Vertical centres of the seven lines of lettering in mainmenu.pcx (measured in the picture).

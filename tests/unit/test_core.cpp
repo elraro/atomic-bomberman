@@ -1348,6 +1348,18 @@ void testSettings() {
         again.parse(s.serialize());
         CHECK(again.fullscreen);
     }
+    // A random scheme per match or per round: off unless asked for, clamped, and kept by a save.
+    CHECK_EQ(s.schemeRandom, 0);
+    s.parse("scheme_random=2\n");
+    CHECK_EQ(s.schemeRandom, 2);
+    {
+        Settings again;
+        again.parse(s.serialize());
+        CHECK_EQ(again.schemeRandom, 2);
+    }
+    s.parse("scheme_random=7\n");
+    CHECK_EQ(s.schemeRandom, 2);
+    s.parse("scheme_random=0\n");
     // Where an unused voice clip is put: the series the original's list uses its family for.
     CHECK_EQ(unusedVoiceSeries("add36a"), 700);
     CHECK_EQ(unusedVoiceSeries("zaa13aa"), 700);
