@@ -175,11 +175,11 @@ void Renderer::text(const SpriteBank& bank, const std::string& s, float x, float
     }
 }
 
-bool Renderer::sprite(SpriteBank& bank, const std::string& sequence, int index, int colour, float x, float y) {
+bool Renderer::sprite(SpriteBank& bank, const std::string& sequence, int index, int colour, float x, float y, float scale) {
     const auto s = bank.sprite(sequence, index, colour);
     if (!s) return false;
-    textured(s->texture, x - static_cast<float>(s->hotX), y - static_cast<float>(s->hotY),
-             static_cast<float>(s->width), static_cast<float>(s->height));
+    textured(s->texture, x - static_cast<float>(s->hotX) * scale, y - static_cast<float>(s->hotY) * scale,
+             static_cast<float>(s->width) * scale, static_cast<float>(s->height) * scale);
     return true;
 }
 
