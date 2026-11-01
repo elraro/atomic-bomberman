@@ -137,7 +137,7 @@ The original's pictures are 640 × 480. Once the data is imported (step 2), they
    If it says that parts "could not be made", run it once more; the lines starting with `WARN` name them.
 6. **Play.** Start the game as usual. It finds the enlarged pictures by itself, and it logs `INFO  Enlarged graphics: …`.
 
-The result goes into a folder `hires` **next to** the asset folder (so that a new import, which replaces the asset folder, does not remove it; with the per-user asset folder of step 2 it is the folder `atomic/hires` beside `atomic/assets`) and is as copyrighted as the data it comes from: do not share it. A part that does not exist in `hires` is drawn from the original.
+The result goes into a folder `hires` **next to** the asset folder (so that a new import, which replaces the asset folder, does not remove it; with the per-user asset folder of step 2 it is the folder `atomic/hires` beside `atomic/assets`) and is as copyrighted as the data it comes from: do not share it. A part that does not exist in `hires` is drawn from the original. The frames of each sprite file are kept in one container, `hires/ani/<file>.hani` (a small directory followed by the PNG files as they are), not as thousands of single files; the pictures (`hires/res/*.png`) stay single files. A folder of PNGs that an earlier run made (`hires/ani/<file>/`) is still read by the game, and the next `--upscale-assets` run puts it into a container (nothing is enlarged again) and removes the folder.
 
 **Doing it again.** The command can be run again at any time. A `manifest.txt` in `hires` records what each part was made from, by which model and at which scale, so only what is missing or changed is made, and a run that was stopped (Ctrl+C, a crash of the computer) goes on where it stopped. The manifest is written so that a crash leaves either the old or the new one. If it is lost anyway, `--hires-adopt` takes over the pictures that are there and complete and of the right size instead of making them again. More options for a run:
 
@@ -152,6 +152,20 @@ The result goes into a folder `hires` **next to** the asset folder (so that a ne
 **What the game adds when it loads the pictures** (nothing of this is stored in `hires`, so it needs no new run): sprites get a smooth outline taken from the original's mask, so the edge of a sprite is not ragged and has no dark rim; the bombs of the original (`bombs`, `bombanim`, `bomanim2`, every size and player colour) are drawn again as a ball with its shadow, with the shape and the shading learned from the original frame, and with the fuse cap enlarged from the original's pixels. `--hires-raw-edges` switches both off and draws the pictures as the model made them. `--window WxH` sets the size of the window at the start (for screenshots and tests).
 
 Not yet enlarged: the fonts (`*.fon`) and the menu text; they are drawn from the original.
+
+### Pictures for Steam (optional)
+
+To add the game to Steam as a non-Steam game (Library → Add a game), `atomic --steam-art` makes the pictures Steam asks for under *Manage → Customize artwork*, and an icon:
+
+| File | In Steam |
+|---|---|
+| `capsule_600x900.png` | main capsule (*Hauptkapsel*) |
+| `hero_3840x1240.png` | background (*Hintergrund*) |
+| `logo_1280x720.png` | logo (*Logo*, transparent) |
+| `wide_capsule_920x430.png` | wide main capsule (*Weite Hauptkapsel*) |
+| `icon_256.png`, `icon.ico` | icon of the shortcut (*Properties → Shortcut*, click the icon) |
+
+They go into a folder `steam` beside the asset folder (`--steam-out DIR` names another). They are drawn from the game's own graphics (the level background, the players, a bomb, the font) and use the enlarged sprites of step 4 where there are some. With the imported original data they show the original's artwork, so keep them to yourself; `--free` makes them from the free graphics set, with nothing of the original in them. The command can be run again at any time and overwrites the pictures.
 
 ## Troubleshooting
 

@@ -26,10 +26,12 @@
 #include "rendering/glyphs.hpp"
 #include "resources/ani_file.hpp"
 #include "resources/asset_import.hpp"
+#include "resources/hires_pack.hpp"
 #include "resources/png.hpp"
 #include "resources/scheme_file.hpp"
 #include "resources/bomb_redraw.hpp"
 #include "resources/sprite_refine.hpp"
+#include "resources/steam_art.hpp"
 #include "resources/upscale.hpp"
 
 using namespace ab;
@@ -1637,8 +1639,6 @@ void testTrampoline() {
     CHECK(f.w.tile(c) == Tile::Blank);
 }
 
-void testTeamPlay() {
-    World w{Values::defaults(), 5};
 // A carried or thrown bomb is drawn in front of the player, not behind: it is lifted above
 // the head, and drawn under the player's sprite it looked as if it were behind them.
 void testThrownBombIsDrawnInFront() {
@@ -1669,6 +1669,8 @@ void testThrownBombIsDrawnInFront() {
         CHECK(!bombDrawnOverPlayers(f.w.bombs()[0]));  // landed: under the players again
 }
 
+void testTeamPlay() {
+    World w{Values::defaults(), 5};
     w.startRound(Scheme::pillars(), false);
     w.setTeamPlay(true, {0, 1, 0, 1});
     for (int i = 0; i < 4; ++i) w.addPlayer(i);
@@ -2567,6 +2569,103 @@ void testUpscaleFolders() {
     CHECK(!r.ok && !r.error.empty());
 }
 
+void testHiresPack() {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "ab_hires_pack_test";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "in", ec);
+
+    // Names of the frames.
+    int frame = 0, colour = 0;
+    CHECK(parseHiresFrameName("12", &frame, &colour) && frame == 12 && colour == -1);
+    CHECK(parseHiresFrameName("7_c3", &frame, &colour) && frame == 7 && colour == 3);
+    CHECK(!parseHiresFrameName("", &frame, &colour) && !parseHiresFrameName("x", &frame, &colour) && !parseHiresFrameName("7_c", &frame, &colour) &&
+          !parseHiresFrameName("7_x3", &frame, &colour) && !parseHiresFrameName("7_c3a", &frame, &colour));
+    CHECK(hiresFrameName(12, -1) == "12" && hiresFrameName(7, 3) == "7_c3");
+
+    // Three pictures of different sizes in a folder, put into a container and taken out again.
+    struct Pic { int frame, colour, w, h; };
+    const std::vector<Pic> pics = {{0, -1, 8, 4}, {0, 2, 8, 4}, {5, -1, 3, 9}};
+    std::vector<std::vector<std::uint8_t>> rgba;
+    for (const Pic& p : pics) {
+        std::vector<std::uint8_t> px(static_cast<std::size_t>(p.w * p.h * 4));
+        for (std::size_t i = 0; i < px.size(); ++i) px[i] = static_cast<std::uint8_t>(i * 5 + p.frame * 3 + p.colour);
+        CHECK(writePngFile((root / "in" / (hiresFrameName(p.frame, p.colour) + ".png")).string(), p.w, p.h, px.data(), true));
+        rgba.push_back(std::move(px));
+    }
+    CHECK(writePngFile((root / "in" / "notes.png").string(), 1, 1, rgba[0].data(), true));  // not a frame: left out
+    const std::string pack = (root / "x.hani").string();
+    CHECK(packHiresFolder((root / "in").string(), 4, pack));
+    const auto opened = HiresPack::open(pack);
+    CHECK(opened.has_value());
+    if (!opened) return;
+    CHECK(opened->scale() == 4 && opened->size() == 3);
+    CHECK(opened->has(0, -1) && opened->has(0, 2) && opened->has(5, -1));
+    CHECK(!opened->has(0, 1) && !opened->has(1, -1) && !opened->has(5, 2));
+    for (std::size_t i = 0; i < pics.size(); ++i) {
+        const auto bytes = opened->read(pics[i].frame, pics[i].colour);
+        const auto img = bytes ? decodePng(*bytes) : std::nullopt;
+        CHECK(img.has_value() && img->width == pics[i].w && img->height == pics[i].h && img->rgba == rgba[i]);
+    }
+    CHECK(!opened->read(9, -1).has_value());
+
+    CHECK(unpackHiresPack(pack, (root / "out").string()));
+    for (const Pic& p : pics) {
+        const auto img = loadPngFile((root / "out" / (hiresFrameName(p.frame, p.colour) + ".png")).string());
+        CHECK(img.has_value() && img->width == p.w && img->height == p.h);
+    }
+
+    // An empty container is a container; a missing or damaged file is refused.
+    CHECK(writeHiresPack((root / "empty.hani").string(), 2, {}));
+    CHECK(HiresPack::open((root / "empty.hani").string()).has_value() && HiresPack::open((root / "empty.hani").string())->size() == 0);
+    CHECK(!HiresPack::open((root / "missing.hani").string()).has_value());
+    auto bytes = readFileBytes(pack);
+    CHECK(bytes.has_value());
+    if (!bytes) return;
+    std::vector<std::uint8_t> cut(bytes->begin(), bytes->begin() + static_cast<std::ptrdiff_t>(bytes->size() - 10));
+    {
+        std::ofstream out(root / "cut.hani", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(cut.data()), static_cast<std::streamsize>(cut.size()));
+    }
+    CHECK(!HiresPack::open((root / "cut.hani").string()).has_value());  // the last picture reaches past the end
+    std::vector<std::uint8_t> wrong = *bytes;
+    wrong[0] = 'X';
+    {
+        std::ofstream out(root / "wrong.hani", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(wrong.data()), static_cast<std::streamsize>(wrong.size()));
+    }
+    CHECK(!HiresPack::open((root / "wrong.hani").string()).has_value());
+    fs::remove_all(root, ec);
+}
+
+void testSteamArt() {
+    namespace fs = std::filesystem;
+    const fs::path out = fs::temp_directory_path() / "ab_steam_art_test";
+    std::error_code ec;
+    fs::remove_all(out, ec);
+    SteamArtOptions o;
+    o.free = true;
+    o.outDir = out.string();
+    const SteamArtReport r = makeSteamArt(o);
+    CHECK(r.ok && r.source == "free");
+    struct Want { const char* name; int w, h; bool alpha; };
+    const Want want[] = {{"capsule_600x900.png", 600, 900, false}, {"hero_3840x1240.png", 3840, 1240, false}, {"logo_1280x720.png", 1280, 720, true},
+                         {"wide_capsule_920x430.png", 920, 430, false}, {"icon_256.png", 256, 256, true}};
+    for (const Want& w : want) {
+        const auto img = loadPngFile((out / w.name).string());
+        CHECK(img.has_value() && img->width == w.w && img->height == w.h);
+        if (!img) continue;
+        CHECK(img->rgba[3] == (w.alpha ? 0 : 255));  // the corner: the logo and the icon are transparent there, the rest is not
+        bool drawn = false;
+        for (std::size_t i = 3; i < img->rgba.size() && !drawn; i += 4) drawn = img->rgba[i] == 255;
+        CHECK(drawn);
+    }
+    const auto ico = readFileBytes((out / "icon.ico").string());
+    CHECK(ico.has_value() && ico->size() > 22 && (*ico)[2] == 1 && (*ico)[4] == 1 && (*ico)[22] == 0x89 && (*ico)[23] == 'P');  // one image, a PNG
+    fs::remove_all(out, ec);
+}
+
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"geometry", testGeometry},
@@ -2576,6 +2675,8 @@ int main() {
         {"ani parser", testAniParser},
         {"png", testPng},
         {"upscale folders", testUpscaleFolders},
+        {"hires pack", testHiresPack},
+        {"steam art", testSteamArt},
         {"sprite refine", testSpriteRefine},
         {"bomb redraw", testBombRedraw},
         {"font parser", testFontParser},
@@ -2635,6 +2736,7 @@ int main() {
         {"conveyor is quiet", testConveyorIsQuiet},
         {"warp", testWarp},
         {"trampoline", testTrampoline},
+        {"thrown bomb in front", testThrownBombIsDrawnInFront},
         {"team play", testTeamPlay},
         {"dud", testDud},
         {"events", testEvents},
@@ -2656,4 +2758,3 @@ int main() {
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }
-        {"thrown bomb in front", testThrownBombIsDrawnInFront},

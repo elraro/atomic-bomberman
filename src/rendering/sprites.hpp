@@ -15,6 +15,7 @@
 
 #include "free/free_art.hpp"
 #include "resources/ani_file.hpp"
+#include "resources/hires_pack.hpp"
 #include "resources/png.hpp"
 
 namespace ab {
@@ -77,6 +78,8 @@ private:
     // the logical size w x h (the size the game draws it at); else 0.
     // `post`: changes the enlarged frame before it is uploaded (the sprite's outline is smoothed, a bomb is drawn again); none for a picture.
     unsigned hiresTexture(const std::string& path, int w, int h, const std::function<void(PngImage&)>& post = {}) const;
+    // The same for a decoded picture (from a .hani container); `label` names it in the warning.
+    unsigned hiresTextureFrom(std::optional<PngImage> img, const std::string& label, int w, int h, const std::function<void(PngImage&)>& post) const;
     struct Ref {
         std::size_t file;
         std::size_t seq;
@@ -97,6 +100,7 @@ private:
     std::vector<AniFile> files_;
     std::vector<std::string> fileStems_;  // file name of each of files_ without folder and extension
     std::string hiresDir_;                // empty: no enlarged pictures
+    std::vector<std::optional<HiresPack>> hiresPacks_;  // parallel to files_: hires/ani/<stem>.hani, if there is one
     std::unordered_map<std::string, Ref> sequences_;
     std::map<std::tuple<std::size_t, int, int>, unsigned> textures_;
     unsigned background_ = 0;
