@@ -927,6 +927,80 @@ Next: somebody listening to the LOW-confidence clips and to the lines for single
 - The round-restart key is this implementation's (not the original's). It was R, which is also "up" of the second keyboard set (R, G, F, D, S, A), so the second player restarted the round by walking up. Now F12, which no key set uses by default.
 - Checked with scripted runs into a match: pressing R leaves the match exactly as with no key; pressing F12 starts the round anew.
 
+### Discovery: "Random Each Game" draws a level for every round
+
+- Reported by the user: with "Random Each Game" the first round's level was random, then every later round of the match kept it.
+- Original (static, objdump of `bm95.exe`; Ghidra was not running): the round setup `0x410B6E` sets the current level (`0x46499C`). If `levelno` (`0x464998`) is 0 or more it uses that level. Otherwise it draws one, up to 200 tries, until value `0x47E + level` (1150 + level) allows it. On a network client it takes the level from the host instead. The match loop `0x42A3F7` calls `0x410B6E` before the first round (`0x42A452`) and again before each later round (`0x42AFEC`, `0x42A68B`), and loops back to the round start at `0x42A47C`. So the level is drawn every round.
+- Confidence: HIGH (static: the call sites and the loop back; not watched in a running original).
+- Modern: this implementation drew it once per match, both in the local game and in the network server. Both now draw it at the start of each round (a campaign stage still names its own level). The local log line "Round started" and the server's "Round N started" now name the level.
+- Validation: new net test "random level each round", which fails on the old server code. A scripted local match of four computer players on Random gave levels 4, 7, 8, 9, 10, 3, 9 in its first seven rounds, each with its graphics loaded.
+
+### Confirmed: "Random Start" shuffles once per match (once per stage in a campaign)
+
+- Asked by the user: does each round get new random start positions? No.
+- Original (static, objdump of `bm95.exe`): the match setup `0x410F81` runs once, at `0x42A440`, before the round loop that begins at `0x42A47C`. It loads the scheme's start cells into `0x46460C`/`0x46465C` (`0x4046CC`, called at `0x410FA5`), then calls `0x421793` (at `0x411178`). With `random_start` (`0x464AE8`) on, `0x421793` makes 200 swaps of two of the ten. The round setup `0x410B6E` does not write those arrays. Their other writers are the editor (`0x4028D2`), a network message handler (type `0x35`, `0x40E143`: a client taking the host's positions) and the campaign's next-stage code `0x40133F`. That code loads the stage's scheme (`0x404833`) and makes its own 200 swaps (`0x40141B`-`0x401512`): a campaign shuffles at each stage.
+- So in a match, every round starts from the same shuffled positions, and the next match is shuffled anew. Confidence: HIGH (static; not watched in a running original).
+- Modern: the local game does the same (per match in `newMatch`, per stage in `startCampaignStage`). The network server shuffles per match too, but its campaign uses each stage's start cells without shuffling: a difference, not yet changed.
+
+### Modern: a network campaign shuffles each stage's start cells too
+
+- The network server now shuffles a campaign stage's own start cells with "Random start" on: 200 swaps, each time a stage begins (also when a stage is played again), as the original's next-stage code does (`0x40133F`). Before, a network campaign ignored "Random start". The local game already did this.
+- Validation: the net test "campaign" now plays with "Random start" on. It checks that the first stage's start cells are those of its scheme, in another order. The check fails on the old server code.
+
+### Modern: one macOS failure of the network test "loss from the first packet"
+
+- Seen: once, in the CI run of commit `cde9ecb` on the macOS runner. After the chat part (all five lines arrived), Ann's "start" left the server in its lobby. Both clients were in the lobby, with nothing of Ann's unacknowledged and no refusal in her chat. Not reproduced in 160 runs here.
+- Likely cause (MEDIUM, by reasoning): with 40 % of datagrams lost, Ann's join can take longer than the 1 s the test harness waits before Bob's, so Bob reached the server first and became the administrator. The server ignores a start from anybody but the administrator without a word, which fits what was seen.
+- Change (test only): whoever is the administrator starts, once the other player is ready. If it fails again, the details line now says which client was the administrator.
+
+### Discovery: the in-game "K:" label counts the kills of the whole match
+
+- Reported by the user: the kill count shown during a round went back to 0 every round, while the screen between rounds showed the match total.
+- Original (static, objdump of `bm95.exe`): the label (message 37, "S:%d K:%d", built at `0x4210B4`) prints the player's 16-bit fields +0x6A (round wins) and +0x6C (kills), for players at `0x461BC4` with a stride of 0x98. A kill adds one to +0x6C (`0x41DD43`). A suicide takes one away (`0x41DD33`), unless the flag at `0x46497C` is set. +0x6C is cleared only by the per-match reset (`0x4217DF`) and set by `0x422602`, a setter with a player index and a value. So the label shows the running total of the match. Confidence: HIGH (static).
+- Modern: the label showed the current round's kills (`Player::kills`, reset every round). It now shows the match's kills before this round plus this round's. Locally that is the match score when the round began; on a network client it is the score the round-start message carries. The flat-shapes display counts the same way.
+- Validation: scripted all-computer match; early in round 3, before any death, the labels showed the totals of rounds 1 and 2, including negative counts after suicides. Tests unchanged and passing.
+
+### Modern: the player's shadow moves as smoothly as the player
+
+- Reported by players: when a player walks up or down, the shadow is choppy.
+- Cause: between two simulation steps (50 ms) the player is drawn at a position blended between them. The shadow was drawn at the step's own position, so vertically it jumped once a step while the body glided (horizontally both used the blended x). Now the shadow uses the blended ground position. On a trampoline it stays on the ground under the jumping body, as before.
+
+### Modern: bombs that appeared and vanished in network play
+
+- Reported by players (network play only): a placed bomb sometimes disappears.
+- In the game itself a bomb disappears without exploding only when its carrier dies, or when a closing wall covers it with "Stomped Bombs Detonate" off. Neither fits.
+- Reproduced (new net test "jitter"; test-only UDP delay and jitter, `setTestUdpDelay`): a player walks and taps the bomb key briefly with prediction on. The test counts bombs the player's own picture showed in a cell where the server never placed one. Before: none at 40-80 ms each way, but 16 of 41 at 20-170 ms, 16 of 43 at 60-260 ms, 19 of 43 at 40-160 ms with 20 % loss, 31 of 55 at 100-400 ms with 5 % loss. The server placed about the same number of bombs in every case and almost never skipped a press. So the bombs were not lost: they landed a step or two later, often in the next cell, so the bomb shown vanished and another appeared beside it.
+- Causes found, all in the client's prediction:
+  1. A key change made after its step was guessed was sent as that same step's keys. A tap let go within a step overwrote its own press.
+  2. The step the client guesses to was set anew whenever it drifted two steps from its aim. With a jittery line the server's steps arrive in bursts, so this happened often, and the keys already assumed for later steps were thrown away.
+  3. Steps passed over when the target moved on by more than one had no keys sent for them.
+  4. The lead was the last ping measured (one sample a second) plus one step, with nothing for unevenness.
+- Changes (client only; nothing on the wire changes): a change of keys after its step was guessed counts from the next step. The target catches up by two steps, or waits a step, instead of being set anew (only when far off, or behind the confirmed step), and waits only where no assumed keys change. Passed-over steps get the keys held at the time and are sent. The lead uses the highest round trip seen lately (easing down by about 20 ms a second). A step the server applied with other keys than were sent for it (while the player could act) adds a step of lead, at most one per half second and up to 8; one comes off after 10 s without.
+- After: 0 of 27 at 20-170 ms, 1 of 28 at 60-260 ms, 1 of 28 at 40-160 ms with 20 % loss, 2 of 30 at 100-400 ms with 5 % loss.
+- Signed records still verify: "records: the inputs applied follow the log" now also plays four rounds on the jittery line, with keys changing every 15-65 ms.
+- Not tried: a real internet connection. The delay, jitter and loss are made up in the test.
+
+### Modern: other players move evenly in network play
+
+- Reported by players (network play only): the game is sometimes choppy, where the original is smooth.
+- Measured (new net test "smooth others"; test-only delay and jitter): Bob walks steadily, and every 50 ms Ann's picture is asked how far he moved. With no delay he moves 9-10 px every time. At 40-80 ms each way he stood still in 103 of 539 samples and jumped two steps in 98. At 20-170 ms he stood still in 225. Two causes:
+  1. Other players were drawn as the server last confirmed them. On a line whose delay varies, the confirmed steps arrive in bursts: none for a step, then two.
+  2. Datagrams overtake one another and an older state is not applied after a newer one, so some steps are never seen at all.
+- Changes (client only; nothing on the wire changes):
+  - The picture keeps each other player's confirmed state for the last 64 steps and draws them at a step that moves on by one per local step. It waits only when no confirmed step is left in hand, and then keeps one more step in hand from then on (up to 8; one comes off after 10 s without). It skips ahead only when far more has piled up.
+  - A step that was never seen is drawn part of the way between the steps before and after it (place and walk frame).
+  - The blend between steps is timed from when the step was due, not from when the frame came.
+- After: at 40-80 ms, never standing still and no jumps; at 20-170 ms, 4 still and no jumps in 539 samples. The delay settled at one step: other players are drawn 50 ms behind the newest state the server has sent, on top of the line's own delay. Their bombs and flames are still drawn as soon as they arrive, so a bomb may appear a step before its owner is drawn reaching it.
+- Not tried: a real internet connection, or by eye.
+- Also for a player who does not guess ahead ("Network: Show Own Moves At Once: No") and for anyone watching. Measured the same way, they still saw the old picture: 98 still and 96 jumps at 40-80 ms, 205 still at 20-170 ms. That path no longer paces the server's states one per 50 ms as they are dequeued. It takes them as they arrive and draws the newest, with every player drawn from the recent steps as above. After: no stops or jumps at either line.
+
+### Modern: "roulette prize" failed on macOS a second time
+
+- Seen again in the CI run of commit `76895c7` (which changed only drawing code), on macOS. Same check as before: client and server at the same step with different states.
+- Likely cause (MEDIUM, by reasoning): the check runs as soon as the client is in the new round, and at that moment both step counts are 0. The round-start message and the round's first state come one after the other on the same connection. If they arrive in separate reads (macOS loopback delivers later on the test's made-up clock), the client is briefly in the round with only the round's setup and no state from the server. Its field then differs from the server's while both counts read 0. With datagram delay added here the two still came together (they travel over the connection, not as datagrams), so this was not reproduced.
+- Changes: the check waits until the client has a state of the round (`Client::hasState()`), and prints the step counts and players alive if it still differs. The game's network screen draws an empty frame for that moment instead of the bare arena of the setup.
+- CI, commit `2f99f66`, macOS: "jitter" found more than one bomb not placed where shown (its count was not in the annotation); the next commit's run passed there. On macOS the test's made-up clock and the real one drift apart. The test now asks for under one in ten, against four in ten before the fix, and prints its counts on the failure line.
+
 ### Modern: random scheme and a scheme list with a preview (differs from the original)
 
 - Not in the original: the original's level screen cycles through the scheme files with left and right and has nothing else. This implementation adds two entries before them, "Random (per match)" (one scheme for every round until the match is won) and "Random (per round)" (drawn again before each round, never the same twice in a row). With team play only "per match" is offered, because the teams come from the scheme. The drawn scheme is shown for three seconds at the start of the round. Saved as `scheme_random` in options.ini (0, 1, 2; not an original key); `--scheme random-match` and `--scheme random-round`. Campaigns and network games are not affected.

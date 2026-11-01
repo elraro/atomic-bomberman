@@ -1663,10 +1663,18 @@ void NetUi::drawResult(Renderer& r, SpriteBank& bank) {
 void NetUi::draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int frame, std::uint64_t nowMs) {
     const State state = client_.state();
     if (mode_ == Mode::Session && (state == State::Round || state == State::Result) && client_.world() != nullptr) {
+        if (state == State::Round && !client_.hasState()) {
+            // The round has begun but its first state is still on its way: not the bare arena.
+            r.begin(windowW, windowH);
+            r.end();
+            return;
+        }
         std::array<int, kMaxPlayers> wins = client_.score().wins;
         if (client_.view()->campaign())  // the score boxes show campaign points
             for (int i = 0; i < kMaxPlayers; ++i) wins[static_cast<std::size_t>(i)] = client_.view()->player(i).score;
-        r.draw(*client_.view(), previous_, client_.stepAlpha(nowMs), windowW, windowH, &bank, &wins);
+        // The labels count the kills of the match: those before this round, and this round's.
+        const std::array<int, kMaxPlayers> killsBefore = client_.roundStart().score.kills;
+        r.draw(*client_.view(), previous_, client_.stepAlpha(nowMs), windowW, windowH, &bank, &wins, &killsBefore);
         r.begin(windowW, windowH, false);
         if (state == State::Result) drawResult(r, bank);
         drawChat(r, bank, nowMs);

@@ -144,6 +144,7 @@ public:
     // others (the computer plays this player's seats); this client rejoins at the next one.
     void leaveMatch();
     bool sittingOut() const { return satOut_; }
+    bool hasState() const { return ready_; }  // a state of the round in hand has come from the server
 
     // Client-side prediction (on by default): the picture runs a few steps ahead of what the
     // server has confirmed, with this player's own keys applied at once, so moving does not
@@ -152,8 +153,9 @@ public:
     bool prediction() const { return prediction_; }
     // How many steps ahead to predict; 0 (the default) works it out from the measured ping.
     void setPredictionSteps(int steps) { predictionSteps_ = steps; }
-    // What to draw: the predicted state while this player is in a running round with
-    // prediction on, otherwise the confirmed state. Never used for results or scores.
+    // What to draw: in a running round, the predicted state (with prediction on), or the newest
+    // confirmed one; in both the other players are drawn from their recent confirmed steps, one
+    // step per local step (see showOthers). Otherwise the confirmed state. Never used for results or scores.
     const World* view() const { return predicted_ && predictedValid_ ? predicted_.get() : world_.get(); }
     std::uint32_t viewStep() const { return predicted_ && predictedValid_ ? target_ : applied_; }
 
@@ -278,7 +280,6 @@ private:
     int deltas_ = 0;
     std::size_t largestDelta_ = 0;
     std::uint32_t ackSent_ = 0;
-    std::uint64_t nextStepAt_ = 0;
     std::uint64_t lastStepAt_ = 0;
     std::array<std::uint8_t, kMaxLocalPlayers> input_{};
     bool prediction_ = true;
@@ -302,6 +303,34 @@ private:
     std::array<std::uint8_t, kMaxLocalPlayers> inputSent_{};
     std::uint64_t inputSentAt_ = 0;
     std::uint32_t inputNumber_ = 0;  // input messages sent in this round
+    // Steps of lead beyond the round trip, for a line whose delay varies: one more each time an
+    // input is seen to have reached the server too late, one less after a while without.
+    int extraLead_ = 0;
+    int pingPeak_ = 0;             // the highest round trip lately (ms)
+    // The other players as the server confirmed them at each recent step. The picture shows them
+    // as they were at othersStep_, which moves on by one step per local step and is held a few
+    // steps (othersDelay_) behind the newest confirmed step: the server's steps arrive in bursts
+    // on a line whose delay varies, and drawn as they arrive the others would stand still for
+    // a step and then jump two. The delay grows by one each time the steps ran out, and comes
+    // down after a while without.
+    std::map<std::uint32_t, std::array<Player, kMaxPlayers>> othersSeen_;
+    std::uint32_t othersStep_ = 0;
+    int othersDelay_ = 2;
+    std::uint64_t othersShortAt_ = 0, othersDownAt_ = 0;
+    int othersShort_ = 0;          // (for the tests: times the steps ran out)
+    void showOthers(const std::array<bool, kMaxPlayers>& own);
+    std::uint64_t lateAt_ = 0;     // when an input was last seen to be late
+    std::uint64_t leadDownAt_ = 0; // when the extra lead was last lowered
+    int lateInputs_ = 0;           // (for the tests)
+    int pullBacks_ = 0;            // (for the tests: times the target was set anew)
+
+public:
+    int extraLead() const { return extraLead_; }
+    int lateInputs() const { return lateInputs_; }
+    int pullBacks() const { return pullBacks_; }
+    int othersDelay() const { return othersDelay_; }
+    int othersShort() const { return othersShort_; }
+    std::uint32_t othersStep() const { return othersStep_; }
 };
 
 // Finds servers on the local network, whatever port they play on (UDP broadcast to the discovery port).

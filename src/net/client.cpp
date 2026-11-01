@@ -298,7 +298,6 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     newest_ = 0;
     applied_ = 0;
     ready_ = false;  // until the snapshot that follows the round start
-    nextStepAt_ = nowMs;
     lastStepAt_ = nowMs;
     inputSentAt_ = 0;
     inputNumber_ = 0;
@@ -308,6 +307,8 @@ void Client::beginRound(const RoundStartMsg& m, std::uint64_t nowMs) {
     soundedUpTo_ = 0;
     heard_.clear();
     mine_.clear();
+    othersSeen_.clear();
+    othersStep_ = 0;
     nextLocalAt_ = nowMs;
     // The server's tuning table on top of the built-in one: the rules are the server's.
     Values values = Values::defaults();
@@ -490,14 +491,19 @@ void Client::sendInput(std::uint64_t nowMs) {
     m.haveState = haveState_;
     m.haveStep = newest_;
     if (!mine_.empty() && predictedValid_) {
-        // What was assumed for the step being guessed and the ones before it.
+        // What was assumed for the step being guessed and the ones before it. Keys changed since
+        // that step was guessed count from the next step: a press let go again within a step
+        // keeps its step, and the release follows.
         m.step = mine_.rbegin()->first;
+        if (mine_.rbegin()->second != input_) {
+            if (m.step <= target_) ++m.step;
+            mine_[m.step] = input_;
+        }
         for (int k = 0; k < kInputsPerMessage; ++k) {
             const auto it = mine_.find(m.step - static_cast<std::uint32_t>(k));
             if (it == mine_.end()) break;
             m.inputs.push_back(it->second);
         }
-        m.inputs[0] = input_;  // the keys as they are now
     } else {
         m.step = applied_ + 1;
         m.inputs.push_back(input_);
@@ -693,6 +699,33 @@ bool Client::applyState(const Received& state, const EventSink& events) {
     }
     applied_ = state.step;
     ready_ = true;
+    {
+        std::array<Player, kMaxPlayers>& seen = othersSeen_[applied_];
+        for (int i = 0; i < kMaxPlayers; ++i) seen[static_cast<std::size_t>(i)] = world_->player(i);
+        while (othersSeen_.size() > 64) othersSeen_.erase(othersSeen_.begin());
+    }
+    if (const auto sent = mine_.find(applied_); sent != mine_.end() && prediction_) {
+        // The keys the server applied for this step are not the ones sent for it: they came too
+        // late (the line's delay varies more than the lead allows for). Lead by one step more.
+        const std::array<int, kMaxLocalPlayers> mySeats = seats();
+        bool late = false;
+        // (Only where the player acts on the keys as they come: not frozen at the start of the
+        // round, stunned, dead or in the pause after picking up a bomb.)
+        for (std::size_t l = 0; l < mySeats.size(); ++l) {
+            if (mySeats[l] < 0) continue;
+            const Player& p = world_->player(mySeats[l]);
+            if (p.alive && !world_->startFrozen() && p.stunTicks == 0 && p.action != 3 && packInput(p.lastInput) != sent->second[l]) late = true;
+        }
+        if (late) {
+            ++lateInputs_;
+            if (now_ - lateAt_ >= 500 || lateAt_ == 0) extraLead_ = std::min(extraLead_ + 1, 8);
+            lateAt_ = now_;
+        }
+    }
+    if (extraLead_ > 0 && now_ - lateAt_ >= 10000 && now_ - leadDownAt_ >= 10000) {
+        --extraLead_;
+        leadDownAt_ = now_;
+    }
     std::vector<Event> happened = state.events;
     // An own action that was already heard from the prediction is not heard twice. A
     // prediction that did not come true is forgotten after a second and a half.
@@ -718,20 +751,34 @@ void Client::predict(const EventSink& events) {
     int ahead = predictionSteps_;
     if (ahead <= 0) {
         const ClientInfo* me = lobby_.client(id_);
-        ahead = ((me != nullptr ? me->pingMs : 0) + kStepMs - 1) / kStepMs + 1;  // the round trip, and one step of sampling
+        // The round trip as the highest one measured lately (it eases down by about 20 ms a
+        // second): on an uneven line a single measurement says little.
+        pingPeak_ = std::max(me != nullptr ? me->pingMs : 0, pingPeak_ - 1);
+        ahead = (pingPeak_ + kStepMs - 1) / kStepMs + 1 + extraLead_;  // the round trip, one step of sampling, and the line's unevenness
     }
-    ahead = std::clamp(ahead, 1, 10);
+    ahead = std::clamp(ahead, 1, 16);
     const std::uint32_t wanted = applied_ + static_cast<std::uint32_t>(ahead);
-    // The target moves on by one per local step, steadily, and is pulled back only when it
-    // has drifted from where the confirmed step and the delay say it should be.
-    ++target_;
-    if (target_ + 2 < wanted || target_ > wanted + 2 || target_ <= applied_) target_ = wanted;
+    // The target moves on by one per local step, steadily. When it has drifted from where the
+    // confirmed step and the delay say it should be, it moves on by two, or waits a step, until
+    // it is back: on a line whose delay varies, the confirmed step arrives in bursts, and setting
+    // the target anew each time would shift (or forget) the keys already assumed for steps ahead.
+    // Only far off (a stall, a much longer delay), or once behind the confirmed step, is it set anew.
+    // (It waits only where that changes no keys already assumed: a press would otherwise be
+    // replaced by what is held now.)
+    const auto here = mine_.find(target_);
+    const bool canWait = mine_.upper_bound(target_) == mine_.end() && (here == mine_.end() || here->second == input_);
+    if (target_ + 8 < wanted || target_ > wanted + 8 || target_ < applied_ + 1) target_ = wanted, ++pullBacks_;
+    else if (target_ + 2 < wanted) target_ += 2;
+    else if (target_ < wanted + 2 || !canWait) ++target_;
     logInput();  // whatever is sent for a step is in the log first
     // (When the target has been pulled back, what was remembered for the steps beyond it is
     // forgotten: it would be sent again as those steps' inputs, though the keys have changed since.)
     mine_.erase(mine_.lower_bound(target_), mine_.end());
     mine_[target_] = input_;
     mine_.erase(mine_.begin(), mine_.upper_bound(applied_));
+    // A step passed over (the target moved on by more than one) is assumed to have had the
+    // keys held now, and is sent as such: the server is told every step the picture assumed.
+    for (std::uint32_t s = applied_ + 1; s < target_; ++s) mine_.try_emplace(s, input_);
     if (!predicted_) predicted_ = std::make_unique<World>(*world_);
     else *predicted_ = *world_;
     predicted_->ownRandom(applied_ * 2654435761u + 7u);  // chance cannot be guessed: any numbers will do until the server's arrive
@@ -756,7 +803,52 @@ void Client::predict(const EventSink& events) {
     for (int seat : mySeats)
         if (seat >= 0) own[static_cast<std::size_t>(seat)] = true;
     predicted_->keepToConfirmed(*world_, own);
+    showOthers(own);
     predictedValid_ = true;
+}
+
+void Client::showOthers(const std::array<bool, kMaxPlayers>& own) {
+    if (othersSeen_.empty()) return;
+    const std::uint32_t newest = othersSeen_.rbegin()->first;
+    // On by one step per local step. It waits only when no confirmed step is left in hand (and
+    // keeps one more in hand from then on), and moves on by two only when far more than that
+    // has piled up: the server's steps come in bursts, and aiming at "the newest less the delay"
+    // would make the picture wait and jump with every burst.
+    if (othersStep_ == 0 || othersStep_ + static_cast<std::uint32_t>(othersDelay_) + 12 < newest || othersStep_ > newest)
+        othersStep_ = newest > static_cast<std::uint32_t>(othersDelay_) ? newest - static_cast<std::uint32_t>(othersDelay_) : 1;
+    else if (othersStep_ + static_cast<std::uint32_t>(othersDelay_) + 4 < newest) othersStep_ += 2;
+    else if (othersStep_ < newest) ++othersStep_;
+    else {
+        ++othersShort_;
+        if (now_ - othersShortAt_ >= 500 || othersShortAt_ == 0) othersDelay_ = std::min(othersDelay_ + 1, 8);
+        othersShortAt_ = now_;
+    }
+    if (othersDelay_ > 1 && now_ - othersShortAt_ >= 10000 && now_ - othersDownAt_ >= 10000) {
+        --othersDelay_;
+        othersDownAt_ = now_;
+    }
+    // The one seen at that step. A step the server's word skipped (datagrams overtake one another
+    // on such a line, and an older state is not applied after a newer one) is not there: the one
+    // before it is shown, at a place and walk frame part of the way to the one after.
+    auto after = othersSeen_.upper_bound(othersStep_);
+    if (after == othersSeen_.begin()) return;
+    auto at = std::prev(after);
+    for (int i = 0; i < kMaxPlayers; ++i) {
+        if (own[static_cast<std::size_t>(i)] || !predicted_->player(i).present) continue;
+        Player shown = at->second[static_cast<std::size_t>(i)];
+        if (at->first != othersStep_ && after != othersSeen_.end()) {
+            const Player& next = after->second[static_cast<std::size_t>(i)];
+            const auto part = [&](int a, int b) {
+                return a + (b - a) * static_cast<int>(othersStep_ - at->first) / static_cast<int>(after->first - at->first);
+            };
+            if (shown.alive && next.alive && std::abs(next.x - shown.x) + std::abs(next.y - shown.y) < 40) {
+                shown.x = part(shown.x, next.x);
+                shown.y = part(shown.y, next.y);
+                if (next.animCounter >= shown.animCounter) shown.animCounter = part(shown.animCounter, next.animCounter);
+            }
+        }
+        predicted_->player(i) = shown;
+    }
 }
 
 int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& before, const EventSink& after) {
@@ -783,22 +875,40 @@ int Client::advance(std::uint64_t nowMs, const std::function<void(World&)>& befo
                 while (nowMs >= nextLocalAt_) {
                     if (before) before(predictedValid_ ? *predicted_ : *world_);
                     predict(after);
+                    // The picture is blended from when the step was due, not from when this frame
+                    // came: a late frame would otherwise start the blend again and hitch.
+                    lastStepAt_ = nextLocalAt_;
                     nextLocalAt_ += kStepMs;
-                    lastStepAt_ = nowMs;
                 }
             }
         } else {
-            predictedValid_ = false;
-            while (!queue_.empty() && ran < 400 && (nowMs >= nextStepAt_ || queue_.size() > 20)) {
+            // Nothing guessed (a player who chose not to, or someone watching): the server's states
+            // are taken as soon as they arrive, and the picture is the newest of them with the
+            // players drawn from their recent steps, one step per local step (as showOthers does
+            // for the other players of one who guesses), so that they move evenly on a line whose
+            // delay varies.
+            while (!queue_.empty() && ran < 400) {
                 const Received next = std::move(queue_.front());
                 queue_.pop_front();
-                if (before && ready_) before(*world_);
                 if (!applyState(next, after)) return ran;
                 ++ran;
-                // Behind by more than a few steps: twice the speed until caught up.
-                const std::uint64_t interval = queue_.size() > 3 ? kStepMs / 2 : kStepMs;
-                nextStepAt_ = std::max(nextStepAt_, nowMs > 100 ? nowMs - 100 : 0) + interval;
-                lastStepAt_ = nowMs;
+            }
+            if (!ready_) return ran;
+            if (world_->roundOver() || ended_) {
+                if (predictedValid_ && before) before(*predicted_);
+                predictedValid_ = false;
+            } else {
+                if (nowMs > nextLocalAt_ + 500) nextLocalAt_ = nowMs;  // after a stall: no burst of steps
+                while (nowMs >= nextLocalAt_) {
+                    if (before) before(predictedValid_ ? *predicted_ : *world_);
+                    if (!predicted_) predicted_ = std::make_unique<World>(*world_);
+                    else *predicted_ = *world_;
+                    showOthers({});
+                    predictedValid_ = true;
+                    target_ = othersStep_;
+                    lastStepAt_ = nextLocalAt_;
+                    nextLocalAt_ += kStepMs;
+                }
             }
         }
     } catch (const std::exception& e) {

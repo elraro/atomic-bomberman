@@ -5,8 +5,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <thread>
@@ -782,6 +784,31 @@ void testRound(bool udp) {
     for (const std::string& line : h.log) CHECK(line.rfind("ERROR", 0) != 0);
 }
 
+// "Random Each Game": a level drawn for every round, not once per match (the original's round
+// setup, 0x410B6E, draws it before each round).
+void testRandomLevelEachRound() {
+    Harness h;
+    CHECK(h.start("", 2));
+    Client& ann = h.join("Ann");
+    Client& bob = h.join("Bob");
+    CHECK(h.until([&] { return ann.state() == Client::State::Lobby && bob.state() == Client::State::Lobby && ann.lobby().clients.size() == 2; }));
+    ann.sendOption(Option::Level, -1);
+    for (int i = 0; i < 8; ++i) ann.sendOption(Option::Wins, 1);
+    CHECK(h.until([&] { return ann.lobby().settings.level == -1 && ann.lobby().settings.winsNeeded == 9; }));
+    ann.sendStart();
+    std::vector<int> levels;
+    for (int round = 0; round < 4; ++round) {
+        CHECK(h.until([&] { return ann.state() == Client::State::Round && ann.roundId() == static_cast<std::uint32_t>(round + 1); }));
+        levels.push_back(ann.roundStart().setup.level);
+        CHECK(levels.back() >= 0 && levels.back() <= 10);
+        CHECK(playToResult(h, {&ann, &bob}));
+        ann.sendContinue();
+        bob.sendContinue();
+    }
+    std::sort(levels.begin(), levels.end());
+    CHECK(std::unique(levels.begin(), levels.end()) - levels.begin() > 1);
+}
+
 // A player who leaves in the middle is played by the computer; the others go on.
 // The administrator can start only when every other player has said "ready"; the
 // question is asked again after each match.
@@ -875,8 +902,17 @@ void testLossFromTheStart() {
     setTestUdpLoss(40);
     Client& ann = h.join("Ann", "pass");
     Client& bob = h.join("Bob", "pass");
-    const bool joined = h.until([&] { return ann.state() == Client::State::Lobby && bob.state() == Client::State::Lobby && ann.lobby().clients.size() == 2 && bob.ready(); }, 60000);
+    // At this loss a join can take longer than the harness waits before the next one, so Bob may
+    // reach the server first and be the administrator (seen once on macOS: Ann's "start" was then
+    // ignored, as a start from anybody else is). Whoever it is starts; the other has to be ready.
+    const bool joined = h.until(
+        [&] {
+            return ann.state() == Client::State::Lobby && bob.state() == Client::State::Lobby && ann.lobby().clients.size() == 2 &&
+                   (ann.isAdmin() ? bob.ready() : bob.isAdmin() && ann.ready());
+        },
+        60000);
     CHECK(joined);
+    Client& admin = ann.isAdmin() ? ann : bob;
     // (Not checked: that both are on UDP. With four packets in ten lost a client may hear
     // nothing for two seconds and go on inside TCP, as it is meant to; seen on macOS.)
     // One after the other has arrived (the server takes one chat line per 300 ms from a
@@ -897,7 +933,7 @@ void testLossFromTheStart() {
     for (const ChatLine& line : ann.chat())
         if (!line.fromServer) order = order && line.text == "line " + std::to_string(n++);
     CHECK(order);
-    ann.sendStart();
+    admin.sendStart();
     const bool started = h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }, 60000);
     const bool finished = started && playToResult(h, {&ann, &bob});
     setTestUdpLoss(0);
@@ -905,9 +941,9 @@ void testLossFromTheStart() {
     CHECK(finished);
     if (!started) {
         // What stood where, for a failure that only shows on another machine.
-        std::printf("  FAIL (details) ann: state=%d udp=%d rtt=%d waiting=%zu  bob: state=%d udp=%d rtt=%d waiting=%zu  server: phase=%d players=%d\n",
-                    static_cast<int>(ann.state()), ann.udpActive() ? 1 : 0, ann.linkRttMs(), ann.linkUnacknowledged(), static_cast<int>(bob.state()), bob.udpActive() ? 1 : 0,
-                    bob.linkRttMs(), bob.linkUnacknowledged(), static_cast<int>(h.server.phase()), h.server.players());
+        std::printf("  FAIL (details) ann: state=%d udp=%d rtt=%d waiting=%zu admin=%d  bob: state=%d udp=%d rtt=%d waiting=%zu admin=%d  server: phase=%d players=%d\n",
+                    static_cast<int>(ann.state()), ann.udpActive() ? 1 : 0, ann.linkRttMs(), ann.linkUnacknowledged(), ann.isAdmin() ? 1 : 0, static_cast<int>(bob.state()),
+                    bob.udpActive() ? 1 : 0, bob.linkRttMs(), bob.linkUnacknowledged(), bob.isAdmin() ? 1 : 0, static_cast<int>(h.server.phase()), h.server.players());
         for (const Client* c : {&ann, &bob})
             if (!c->chat().empty()) std::printf("  FAIL (details) last line seen by %s: %s\n", c == &ann ? "ann" : "bob", c->chat().back().text.c_str());
         if (ann.state() == Client::State::Failed || bob.state() == Client::State::Failed)
@@ -1042,6 +1078,227 @@ void testCookie() {
 
 // Client-side prediction: the picture runs ahead of the confirmed state, and is right
 // whenever nobody changes what they are doing.
+// A line with delay and jitter (40-80 ms each way, so datagrams overtake one another), and a
+// player who walks and taps the bomb key briefly now and then, with prediction on: every bomb
+// the player's own picture showed should be one the server placed in the same cell. Also
+// counts how often the server had to skip a press that came only in late messages.
+struct JitterResult {
+    int taps = 0, predicted = 0, placed = 0, vanished = 0, skipped = 0, late = 0, pullBacks = 0, lead = 0;
+};
+JitterResult playWithJitter(int delayMs, int jitterMs, int tapMs, int wantedTaps) {
+    JitterResult out;
+    Harness h;
+    CHECK(h.start("", 0));
+    Client& ann = h.join("Ann");
+    Client& bob = h.join("Bob");
+    CHECK(h.until([&] { return ann.lobby().clients.size() == 2 && bob.state() == Client::State::Lobby; }));
+    for (int i = 0; i < 8; ++i) ann.sendOption(Option::Wins, 1);
+    CHECK(h.until([&] { return bob.lobby().settings.winsNeeded == 9; }));
+    setTestUdpDelay(delayMs, jitterMs, [&h] { return h.now; });
+    ann.sendStart();
+    std::set<std::pair<std::uint32_t, int>> shown, real;  // (round, cell) of Ann's bombs
+    std::map<std::pair<std::uint32_t, int>, std::uint32_t> shownAt;  // the step it was first shown at
+    std::map<std::uint32_t, std::uint32_t> roundEnd;                   // the server's last step of each round
+    int sinceTap = 0, holding = 0, row = 0, east = 1;
+    for (int t = 0; t < 400000 && out.taps < wantedTaps; t += 5) {
+        h.turn();
+        if (ann.state() == Client::State::Result) {
+            ann.sendContinue();
+            bob.sendContinue();
+            row = 0, east = 1;
+            continue;
+        }
+        if (ann.state() != Client::State::Round || ann.view() == nullptr || h.server.world() == nullptr) continue;
+        const std::uint32_t round = ann.roundId();
+        for (const Bomb& b : ann.view()->bombs())
+            if (b.active && b.owner == 0) {
+                const Cell c = pixelToCell(b.x, b.y);
+                shown.insert({round, c.y * 100 + c.x});
+                shownAt.try_emplace({round, c.y * 100 + c.x}, ann.viewStep());
+            }
+        roundEnd[round] = h.server.steps();
+        for (const Bomb& b : h.server.world()->bombs())
+            if (b.active && b.owner == 0) {
+                const Cell c = pixelToCell(b.x, b.y);
+                real.insert({round, c.y * 100 + c.x});
+            }
+        // Along the even rows, east then west, two rows down at each end; a tap now and then,
+        // away from the ends (so the player is not caught by its own flames when turning).
+        const Player& me = ann.view()->player(0);
+        if (!me.alive) {
+            ann.setInput({});
+            continue;
+        }
+        const Cell at = pixelToCell(me.x, me.y);
+        PlayerInput in;
+        if (at.y < row * 2) in.dir[2] = true;
+        else if (east == 1 && at.x < 14) in.dir[1] = true;
+        else if (east == 0 && at.x > 0) in.dir[3] = true;
+        else if (row < 4) ++row, east = 1 - east, in.dir[2] = true;
+        if (holding > 0) {
+            in.button1 = true;
+            holding -= 5;
+        } else if ((sinceTap += 5) >= 1500 && at.y == row * 2 && at.x >= 3 && at.x <= 11) {
+            sinceTap = 0;
+            holding = tapMs;
+            in.button1 = true;
+            ++out.taps;
+        }
+        ann.setInput(in);
+    }
+    h.spin(1000);
+    setTestUdpDelay(0, 0, nullptr);
+    out.predicted = static_cast<int>(shown.size());
+    out.placed = static_cast<int>(real.size());
+    for (const auto& b : shown) {
+        if (real.count(b) != 0) continue;
+        ++out.vanished;
+        if (std::getenv("AB_JITTER_SWEEP")) std::printf("    not placed: round %u cell %d shown at step %u, round's last step %u\n", b.first, b.second, shownAt[b], roundEnd[b.first]);
+    }
+    out.skipped = h.server.skippedPresses();
+    out.late = ann.lateInputs();
+    out.pullBacks = ann.pullBacks();
+    out.lead = ann.extraLead();
+    return out;
+}
+
+void testJitter() {
+    if (const char* sweep = std::getenv("AB_JITTER_SWEEP")) {  // (exploring: DELAY,JITTER,TAP,LOSS)
+        int d = 0, j = 0, tap = 0, loss = 0;
+        std::sscanf(sweep, "%d,%d,%d,%d", &d, &j, &tap, &loss);
+        setTestUdpLoss(loss);
+        const JitterResult x = playWithJitter(d, j, tap, 60);
+        setTestUdpLoss(0);
+        std::printf("  sweep %s: taps=%d shown=%d placed=%d vanished=%d skipped=%d late=%d pullbacks=%d extra lead=%d\n", sweep, x.taps, x.predicted, x.placed,
+                    x.vanished, x.skipped, x.late, x.pullBacks, x.lead);
+        return;
+    }
+    // 20-170 ms each way. Before the client kept taps on their steps and stopped setting its
+    // target anew at every burst, 16 of 41 bombs shown here were never placed where shown.
+    const JitterResult r = playWithJitter(20, 150, 50, 40);
+    std::printf("  taps=%d shown=%d placed=%d shown but never placed there=%d presses skipped by the server=%d late=%d\n", r.taps, r.predicted, r.placed,
+                r.vanished, r.skipped, r.late);
+    CHECK(r.taps >= 40);
+    CHECK(r.placed > 10);
+    // Under one in ten (it was four in ten); not "none": on macOS the made-up clock and the real
+    // one drift apart, and once more than one was seen there.
+    CHECK(r.vanished * 10 < r.predicted);
+    if (r.vanished * 10 >= r.predicted)
+        std::printf("  FAIL (details) shown %d placed %d not placed where shown %d skipped %d late %d\n", r.predicted, r.placed, r.vanished, r.skipped, r.late);
+}
+
+// How evenly another player is seen to move on a line with delay and jitter: Bob walks back
+// and forth along the bottom row, and every 50 ms (one local step) Ann's picture is asked how
+// far he moved. Even motion gives the same distance every time; a picture that waits for the
+// server's bursts shows him standing still for a step and then jumping two.
+struct Smoothness {
+    int samples = 0, still = 0, jumps = 0, typical = 0;
+};
+Smoothness watchOthers(int delayMs, int jitterMs, bool annPredicts = true) {
+    Smoothness out;
+    Harness h;
+    CHECK(h.start("", 0));
+    Client& ann = h.join("Ann");
+    Client& bob = h.join("Bob");
+    CHECK(h.until([&] { return ann.lobby().clients.size() == 2 && bob.state() == Client::State::Lobby; }));
+    for (int i = 0; i < 4; ++i) ann.sendOption(Option::PlayTime, 1);  // (the harness's minute starts the closing walls at once)
+    CHECK(h.until([&] { return bob.lobby().settings.playTime >= 180; }));
+    ann.setPrediction(annPredicts);
+    setTestUdpDelay(delayMs, jitterMs, [&h] { return h.now; });
+    ann.sendStart();
+    CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }));
+    std::map<int, int> moves;  // distance moved in a sample -> how often
+    std::map<int, int> serverMoves;  // the same on the server, per step
+    std::uint32_t serverStep = 0;
+    int serverX = -1;
+    int lastX = -1, west = 1;
+    std::map<int, int> stepMoves, targetMoves;
+    std::uint32_t lastOthersStep = 0, lastTarget = 0;
+    for (int t = 0; t < 30000 && ann.state() == Client::State::Round; t += 5) {
+        h.turn();
+        if (bob.view() == nullptr || ann.view() == nullptr) continue;
+        const Player& b = bob.view()->player(1);
+        const Cell at = pixelToCell(b.x, b.y);
+        if (west == 1 && at.x <= 2) west = 0;
+        if (west == 0 && at.x >= 12) west = 1;
+        PlayerInput in;
+        in.dir[west == 1 ? 3 : 1] = true;
+        bob.setInput(in);
+        if (h.server.world() != nullptr && h.server.steps() != serverStep && t >= 3000) {
+            serverStep = h.server.steps();
+            const int sx = h.server.world()->player(1).x;
+            if (serverX >= 0 && std::abs(sx - serverX) < 40) ++serverMoves[std::abs(sx - serverX)];
+            serverX = sx;
+        }
+        if (t % 50 != 0 || t < 3000) continue;  // (after the start of the round, when he is under way)
+        const int x = ann.view()->player(1).x;
+        if (lastOthersStep != 0) ++stepMoves[static_cast<int>(ann.othersStep()) - static_cast<int>(lastOthersStep)];
+        if (lastTarget != 0) ++targetMoves[static_cast<int>(ann.viewStep()) - static_cast<int>(lastTarget)];
+        lastOthersStep = ann.othersStep();
+        lastTarget = ann.viewStep();
+        if (lastX >= 0) {
+            const int d = std::abs(x - lastX);
+            if (d < 40) ++moves[d];  // (not a turn at the end of the walk)
+        }
+        lastX = x;
+    }
+    setTestUdpDelay(0, 0, nullptr);
+    if (std::getenv("AB_DEBUG_SMOOTH"))
+        std::printf("    end: ann state %d, server phase %d, steps %u, bob alive %d at %d,%d\n", static_cast<int>(ann.state()), static_cast<int>(h.server.phase()), h.server.steps(),
+                    h.server.world() ? h.server.world()->player(1).alive : -1, h.server.world() ? h.server.world()->player(1).x : -1, h.server.world() ? h.server.world()->player(1).y : -1);
+    if (std::getenv("AB_DEBUG_SMOOTH")) {
+        std::printf("    ann: others delay %d, ran out %d; picture moves:", ann.othersDelay(), ann.othersShort());
+        for (const auto& [d, n] : moves) std::printf(" %d:%d", d, n);
+        std::printf("; others step moves:");
+        for (const auto& [d, n] : stepMoves) std::printf(" %d:%d", d, n);
+        std::printf("; target moves:");
+        for (const auto& [d, n] : targetMoves) std::printf(" %d:%d", d, n);
+        std::printf("; server moves:");
+        for (const auto& [d, n] : serverMoves) std::printf(" %d:%d", d, n);
+        std::printf("\n");
+    }
+    if (std::getenv("AB_DEBUG_SMOOTH") && h.server.world()) std::printf("    ann alive %d killed by %d, present players %d\n", h.server.world()->player(0).alive, h.server.world()->player(0).killedBy, h.server.world()->alivePlayers());
+    int most = 0;
+    for (const auto& [d, n] : moves) {
+        out.samples += n;
+        if (n > most) most = n, out.typical = d;
+    }
+    for (const auto& [d, n] : moves) {
+        if (d == 0) out.still += n;
+        if (out.typical > 0 && d >= out.typical * 2) out.jumps += n;
+    }
+    return out;
+}
+
+void testSmoothOthers() {
+    // Before the picture kept other players' recent steps (and drew them a step behind the newest,
+    // filling the steps the line skipped), they stood still and then jumped: in 103 and 98 of 539
+    // samples at 40-80 ms, and stood still in 225 at 20-170 ms.
+    for (const auto& [d, j] : std::vector<std::pair<int, int>>{{0, 0}, {40, 40}, {20, 150}}) {
+        const Smoothness r = watchOthers(d, j);
+        std::printf("  %d-%d ms: %d samples, typical %d px; standing still %d, two steps or more %d\n", d, d + j, r.samples, r.typical, r.still, r.jumps);
+        CHECK(r.samples > 400);
+        CHECK(r.typical > 0);
+        CHECK(r.still <= r.samples / 50);
+        CHECK(r.jumps <= r.samples / 50);
+        if (r.still > r.samples / 50 || r.jumps > r.samples / 50)
+            std::printf("  FAIL (details) %d-%d ms: %d samples, still %d, jumps %d\n", d, d + j, r.samples, r.still, r.jumps);
+    }
+    // A player who does not guess ahead (and anyone watching) sees the same: before, 98 still and
+    // 96 jumps at 40-80 ms, 205 still at 20-170 ms.
+    for (const auto& [d, j] : std::vector<std::pair<int, int>>{{40, 40}, {20, 150}}) {
+        const Smoothness r = watchOthers(d, j, false);
+        std::printf("  no prediction, %d-%d ms: %d samples, typical %d px; standing still %d, two steps or more %d\n", d, d + j, r.samples, r.typical, r.still,
+                    r.jumps);
+        CHECK(r.samples > 400);
+        CHECK(r.typical > 0);
+        CHECK(r.still <= r.samples / 50);
+        CHECK(r.jumps <= r.samples / 50);
+        if (r.still > r.samples / 50 || r.jumps > r.samples / 50)
+            std::printf("  FAIL (details) %d-%d ms: %d samples, still %d, jumps %d\n", d, d + j, r.samples, r.still, r.jumps);
+    }
+}
+
 void testPrediction() {
     Harness h;
     CHECK(h.start("", 0));
@@ -1109,8 +1366,11 @@ void testPrediction() {
     watch(3000);
     const std::uint32_t later = ann.stepsApplied();
     CHECK(wrong(steady + 12, later) == 0);
-    // Bob has prediction off and Ann's guesses never touch what is confirmed: all agree with the server.
-    CHECK(bob.view() == bob.world());
+    // Bob has prediction off: his picture is what is confirmed (the players drawn from their recent
+    // confirmed steps, never ahead of them), and Ann's guesses never touch what is confirmed: all
+    // agree with the server.
+    CHECK(bob.view() != nullptr && bob.othersStep() <= bob.stepsApplied());
+    CHECK(bob.view()->bombs().size() == bob.world()->bombs().size());
     h.spin(50);
     if (ann.state() == Client::State::Round && ann.stepsApplied() == h.server.steps()) CHECK_EQ(ann.world()->stateHash(true), h.server.world()->stateHash(true));
     CHECK_EQ(ann.snapshotsLoaded(), 0);
@@ -1386,7 +1646,15 @@ void testNetRoulette() {
     // One more of it than a player without the prize (compare with the tuning value).
     if (type >= 0 && type != kPowClog) CHECK_EQ(ann.world()->player(winner).inventory[static_cast<std::size_t>(type)], Values::defaults().get(vid::kStartInventory + type) + 1);
     CHECK(ann.world()->player(winner).gold);
-    CHECK_EQ(ann.world()->stateHash(true) == h.server.world()->stateHash(true) || ann.stepsApplied() != h.server.steps(), true);
+    // The round starts before its first state has come (the two may come in separate reads of the
+    // connection: seen as a failure twice on macOS, steps 0 and 0 with different states): the
+    // comparison waits for it.
+    CHECK(h.until([&] { return ann.hasState(); }));
+    const bool same = ann.world()->stateHash(true) == h.server.world()->stateHash(true);
+    if (!same && ann.stepsApplied() == h.server.steps())
+        std::printf("  FAIL (details) has state %d, steps %u and %u, players alive %d and %d\n", ann.hasState() ? 1 : 0, ann.stepsApplied(), h.server.steps(),
+                    ann.world()->alivePlayers(), h.server.world()->alivePlayers());
+    CHECK_EQ(same || ann.stepsApplied() != h.server.steps(), true);
 }
 
 // A campaign played over the network, with the free asset set as the server's game data.
@@ -1412,10 +1680,31 @@ void testNetCampaign() {
     ann.sendOption(Option::Campaign, 1);
     CHECK(h.until([&] { return bob.lobby().settings.campaignTitle == "first-steps"; }));
 
+    // "Random start": the stage's own start cells, shuffled (as the original's next-stage code does).
+    ann.sendOption(Option::RandomStart, 1);
+    CHECK(h.until([&] { return bob.lobby().settings.randomStart; }));
+
     ann.sendStart();
     CHECK(h.until([&] { return ann.state() == Client::State::Round && bob.state() == Client::State::Round; }));
     // Stage 1 of first-steps: one rover, no computer players (the lobby's two stay out), no teams.
     CHECK(ann.setup().campaign);
+    {
+        const auto stages = loadCampaignFile(dir + "/data/res/first-steps.cam");
+        CHECK(stages && !stages->empty());
+        std::optional<SchemeFile> stageScheme;
+        for (const SchemeEntry& entry : listSchemes(dir + "/data/schemes", ""))
+            if (stages && entry.file == stages->front().scheme) stageScheme = loadSchemeFile(entry.path);
+        CHECK(stageScheme.has_value());
+        if (stageScheme) {
+            auto own = stageScheme->scheme.start;
+            auto used = ann.setup().scheme.start;
+            CHECK(used != own);  // shuffled
+            const auto order = [](const auto& a, const auto& b) { return a.y != b.y ? a.y < b.y : a.x < b.x; };
+            std::sort(own.begin(), own.end(), order);
+            std::sort(used.begin(), used.end(), order);
+            CHECK(used == own);  // the same cells
+        }
+    }
     CHECK(ann.roundStart().stageName == "A Lonely Rover");
     CHECK_EQ(ann.roundStart().stage, 1);
     CHECK_EQ(ann.roundStart().stages, 6);
@@ -1913,7 +2202,10 @@ void testPlayerKeysAndCertificate() {
 // names an earlier step for its keys than before, while the server still held what had
 // been guessed, with older keys, for the steps after that one.)
 void testRecordInputOrder() {
-    for (int run = 0; run < 6; ++run) {
+    for (int run = 0; run < 10; ++run) {
+        // The last four on a line with delay and jitter (20-170 ms each way), the lead worked
+        // out by the client, and keys that change faster than a step (15-65 ms).
+        const bool jitter = run >= 6;
         Harness h;
         ServerConfig config;
         config.port = 0;
@@ -1936,7 +2228,7 @@ void testRecordInputOrder() {
         Key key{};
         key.fill(0x33);
         ann.setPlayerKey(key, [key](const Bytes& message) { return standInSign(key, message); });
-        ann.setPredictionSteps(2 + run);  // as on a connection with that much delay: the server holds inputs for that many steps to come
+        ann.setPredictionSteps(jitter ? 0 : 2 + run);  // as on a connection with that much delay: the server holds inputs for that many steps to come
         ann.connect("127.0.0.1:" + std::to_string(h.server.port()), "Ann", "", h.now);
         CHECK(h.until([&] { return ann.state() == Client::State::Lobby; }));
         ann.sendStart();
@@ -1944,6 +2236,7 @@ void testRecordInputOrder() {
         CHECK(ann.recorded());
         const bool bad = run % 2 == 1;  // every other run on a bad connection
         if (bad) setTestUdpLoss(20);
+        if (jitter) setTestUdpDelay(20, 150, [&h] { return h.now; });
         // The keys change every 150 ms or so, going round twelve different combinations: one
         // that came back out of turn would not be found in the log again for a long while.
         std::uint32_t chance = 12345u + static_cast<std::uint32_t>(run) * 977u;
@@ -1952,7 +2245,7 @@ void testRecordInputOrder() {
             chance = chance * 1664525u + 1013904223u;
             if (i >= until) {
                 ++held;
-                until = i + 20 + static_cast<int>((chance >> 16) % 20);
+                until = i + (jitter ? 3 + static_cast<int>((chance >> 16) % 10) : 20 + static_cast<int>((chance >> 16) % 20));
             }
             PlayerInput a;
             a.dir[static_cast<std::size_t>(held % 4)] = true;
@@ -1973,6 +2266,7 @@ void testRecordInputOrder() {
         setTestUdpLoss(0);
         CHECK(ann.state() != Client::State::Round);
         CHECK(h.until([&] { return records.size() == 1; }, 5000));
+        setTestUdpDelay(0, 0, nullptr);
         if (records.empty()) continue;
         const MatchRecord& record = records[0];
         CHECK_EQ(record.players.size(), 1u);
@@ -2506,6 +2800,7 @@ int main(int argc, char** argv) {
         {"ready", testReady},
         {"round over udp", [] { testRound(true); }},
         {"round over tcp only", [] { testRound(false); }},
+        {"random level each round", testRandomLevelEachRound},
         {"leave during round", testLeaveDuringRound},
         {"udp loss", testUdpLoss},
         {"loss from the first packet", testLossFromTheStart},
@@ -2513,6 +2808,8 @@ int main(int argc, char** argv) {
         {"left behind", testLeftBehind},
         {"cookie", testCookie},
         {"prediction", testPrediction},
+        {"jitter", testJitter},
+        {"smooth others", testSmoothOthers},
         {"back to the lobby", testBackToLobby},
         {"two players at one computer", testTwoPlayersOneComputer},
         {"roulette prize", testNetRoulette},

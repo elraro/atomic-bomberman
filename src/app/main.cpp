@@ -970,6 +970,7 @@ int runGame(int argc, char** argv, bool& again) {
         std::vector<std::string> campaignFiles;
         int campaignRow = 0;
         std::array<int, ab::kMaxPlayers>& matchKills = score.kills;  // kills over the rounds of the match
+        std::array<int, ab::kMaxPlayers> killsBeforeRound{};          // matchKills when this round began (for the labels)
         int& matchWinner = score.matchWinner;                        // player or team once the match is decided
         std::array<ab::Cell, ab::kMaxPlayers> startCells = scheme.start;
         ab::Rng appRng(opt.seed * 2654435761u + 99u);
@@ -1034,13 +1035,6 @@ int runGame(int argc, char** argv, bool& again) {
             matchKills = {};
             matchOver = false;
             matchWinner = -1;
-            if (randomLevel) {
-                // "Random Each Game": values 1150-1160 say which levels may come up.
-                for (int tries = 0; tries < 100; ++tries) {
-                    level = appRng.below(11);
-                    if (values.get(1150 + level) != 0) break;
-                }
-            }
             if (teamPlay && schemeRandom == 2) schemeRandom = 1;
             if (schemeRandom != 0 && !campaignMode) drawScheme();
             applySettings();
@@ -1048,12 +1042,23 @@ int runGame(int argc, char** argv, bool& again) {
             matchFresh = true;
         };
         auto beginMatch = [&]() {
+            bool changed = false;
+            if (randomLevel && !campaignMode) {
+                // "Random Each Game": a level drawn for every round, as the original's round setup
+                // does (0x410B6E, run before each round); values 1150-1160 say which may come up.
+                for (int tries = 0; tries < 100; ++tries) {
+                    level = appRng.below(11);
+                    if (values.get(1150 + level) != 0) break;
+                }
+                changed = true;  // its graphics and extras
+            }
             // "Random (per round)": a new scheme for every round after the first.
             if (schemeRandom == 2 && !campaignMode && !matchFresh) {
                 drawScheme();
-                applySettings();
                 shuffleStartCells();
+                changed = true;
             }
+            if (changed) applySettings();
             matchFresh = false;
             if (schemeRandom != 0 && !campaignMode && !schemes.empty()) {
                 schemeShown = "Scheme: " + schemes[static_cast<std::size_t>(schemeIndex)].title;
@@ -1102,10 +1107,11 @@ int runGame(int argc, char** argv, bool& again) {
                 if (setup.present[static_cast<std::size_t>(i)] && (teamPlay ? teams[static_cast<std::size_t>(i)] : i) == prizeWinner)
                     setup.prize[static_cast<std::size_t>(i)] = prizeType;
             ab::applyRoundSetup(world, values, setup);
+            killsBeforeRound = matchKills;
             previous.capture(world);
             roundOverSteps = 0;
             resultKey = false;
-            std::fprintf(stderr, "INFO  Round started players=%d\n", n);
+            std::fprintf(stderr, "INFO  Round started players=%d level=%d\n", n, level);
         };
         // After the roulette the match setup goes on: the player list, or straight into the match.
         auto leaveRoulette = [&]() {
@@ -2178,7 +2184,7 @@ int runGame(int argc, char** argv, bool& again) {
                 if (campaignMode)  // the score boxes show campaign points
                     for (int i = 0; i < ab::kMaxPlayers; ++i)
                         shown[static_cast<std::size_t>(i)] = campaignScore[static_cast<std::size_t>(i)] + world.player(i).score;
-                renderer.draw(world, previous, alpha, w, h, spritesPtr.get(), &shown);
+                renderer.draw(world, previous, alpha, w, h, spritesPtr.get(), &shown, &killsBeforeRound);
                 if (!schemeShown.empty() && spritesPtr->loaded() && !world.roundOver() && SDL_GetTicks() - schemeShownAt < 3000) {
                     // A drawn scheme is announced for three seconds at the start of the round.
                     renderer.begin(w, h);

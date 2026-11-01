@@ -38,7 +38,8 @@ public:
     // alpha in [0,1]: how far the frame is between the previous and the current step.
     // With a loaded SpriteBank the original artwork is used; otherwise flat shapes.
     void draw(const World& world, const RenderSnapshot& previous, float alpha, int windowW, int windowH,
-              SpriteBank* sprites = nullptr, const std::array<int, kMaxPlayers>* wins = nullptr);
+              SpriteBank* sprites = nullptr, const std::array<int, kMaxPlayers>* wins = nullptr,
+              const std::array<int, kMaxPlayers>* killsBefore = nullptr);
 
     // Building blocks for menu screens, in the 640x480 logical screen. With clear off,
     // what follows is drawn over the picture already there (text over the playfield).
@@ -78,7 +79,8 @@ private:
     std::map<int, HeadCut> headCuts_;
     void setTexture(unsigned texture);
     void flush();
-    void drawHud(const World& world, SpriteBank* bank, const std::array<int, kMaxPlayers>* wins);
+    // killsBefore: each player's kills in the earlier rounds of the match (the labels show the match's total).
+    void drawHud(const World& world, SpriteBank* bank, const std::array<int, kMaxPlayers>* wins, const std::array<int, kMaxPlayers>* killsBefore);
     void digit(int value, float x, float y, float r, float g, float b);
     void drawShapes(const World& world, const RenderSnapshot& previous, float alpha);
     void drawSprites(const World& world, const RenderSnapshot& previous, float alpha, SpriteBank& bank);

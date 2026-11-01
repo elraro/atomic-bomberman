@@ -309,6 +309,7 @@ public:
 
     // Skips the start-of-round input freeze (for tests and tools).
     void endStartFreeze() { startFreezeMs_ = 0; }
+    bool startFrozen() const { return startFreezeMs_ > 0; }
 
     // --- campaign mode (original campaign.c / aliens.c) ---
     // Set before the players are added. The last-player-standing rule is off; the stage

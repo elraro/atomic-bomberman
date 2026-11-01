@@ -79,7 +79,7 @@ const char* const kUsage =
     "  --game-dir DIR     imported assets or an original game folder (for schemes, values, level extras)\n"
     "  --schemes-dir DIR  extra schemes (default: the per-user schemes folder of the game)\n"
     "  --scheme NAME      first scheme, e.g. BASIC\n"
-    "  --level N          level 0-10, or -1 for a random level each match (default 0)\n"
+    "  --level N          level 0-10, or -1 for a random level each round (default 0)\n"
     "  --wins N           round wins needed for the match (default 2)\n"
     "  --computers N      computer players (default 1)\n"
     "  --play-time N      seconds per round: 60 90 120 150 180 240 300 600, or 0 for no limit (default 150)\n"

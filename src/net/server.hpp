@@ -84,6 +84,7 @@ public:
     void update(std::uint64_t nowMs);
 
     Phase phase() const { return phase_; }
+    int skippedPresses() const { return skippedPresses_; }  // (for the tests: see applyInput)
     int players() const;  // clients that have joined
     const LobbyState& lobby() const { return lobby_; }
     const World* world() const { return world_.get(); }
@@ -197,6 +198,7 @@ private:
     // Match and round.
     MatchScore score_;
     int level_ = 0;
+    int skippedPresses_ = 0;
     std::array<Cell, kMaxPlayers> startCells_{};
     std::vector<AiPlayer> ai_;
     std::unique_ptr<World> world_;

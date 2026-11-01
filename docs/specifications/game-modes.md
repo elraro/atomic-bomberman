@@ -59,7 +59,7 @@ The original keeps these in `options.ini` and edits them on the Options screen (
 | Play Time (`playtime`) | 1:00, 1:30, 2:00, 2:30, 3:00, 4:00, 5:00, 10:00, Infinite | 2:30 | Round clock |
 | Diseases Can Be Destroyed (`diseases_destroyable`) | No / Yes | Yes | Otherwise a destroyed disease reappears elsewhere |
 | Disable music during gameplay (`disable_game_music`) | No / Yes | No | |
-| Level (`levelno`) | 0-10 or Random Each Game (-1) | 0 | Random picks among levels enabled by values 1150-1160 |
+| Level (`levelno`) | 0-10 or Random Each Game (-1) | 0 | Random draws a new level before every round (not once per match), among levels enabled by values 1150-1160 [S: 0x410B6E] |
 
 Defaults are those of the tuning values and of an options file written by the original; the original's built-in defaults for a missing file were not all read. [M]
 - **Use Enhanced Memory Model** (`smallmemory`, inverted): changing it asks for confirmation, saves and exits, since it applies from the next start (messages 1320-1326). In the normal (small) model the original keeps one sound of each voice series instead of several, one death animation (value 105 forced to 1) and one trapped animation (value 330 forced to 1), and flushes its sound cache every value 9 (100) seconds instead of value 7 (1800). [S]
