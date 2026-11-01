@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "resources/ani_file.hpp"
+#include "resources/hires_pack.hpp"
 #include "resources/png.hpp"
 
 #ifdef _WIN32
@@ -152,6 +153,15 @@ bool replace(const fs::path& from, const fs::path& to) {
     return !ec;
 }
 
+// The pictures of a folder as the container `target` (written beside it first, so that a crash
+// leaves the old file or the new one).
+bool packSprites(const fs::path& dir, int scale, const fs::path& target, const fs::path& work) {
+    std::error_code ec;
+    fs::create_directories(work, ec);
+    const fs::path tmp = work / "pack.hani";
+    return packHiresFolder(dir.string(), scale, tmp.string()) && replace(tmp, target);
+}
+
 struct SpriteEntry {
     std::string name;  // file name without ".png": "12" or "12_c3"
     int width = 0;
@@ -227,21 +237,35 @@ struct Part {
 
 // Is what a part's target holds complete and of the right size? (To take over the pictures of an
 // earlier run whose list was lost; the size of every picture is checked, not the model.)
-bool adoptable(const Part& part, const fs::path& target, int scale, const GamePalette& palette, const std::array<std::vector<std::uint8_t>, 10>& remap, bool clean) {
+// A sprite part's target is a folder of PNGs (older runs) or a container, which is unpacked into `work` to look at.
+bool adoptable(const Part& part, const fs::path& target, int scale, const GamePalette& palette, const std::array<std::vector<std::uint8_t>, 10>& remap, bool clean, const fs::path& work) {
     std::error_code ec;
     if (!part.sprites) {
         const auto pcx = loadPcxFile(part.source.string());
         return pcx && pngHasSize(target, pcx->width * scale, pcx->height * scale);
     }
     const auto file = loadAniFile(part.source.string());
-    if (!file || !fs::is_directory(target, ec)) return false;
+    if (!file) return false;
+    fs::path dir = target;
+    const bool packed = fs::is_regular_file(target, ec);
+    if (packed) {
+        dir = work / "adopt";
+        fs::remove_all(dir, ec);
+        if (!unpackHiresPack(target.string(), dir.string())) {
+            fs::remove_all(dir, ec);
+            return false;
+        }
+    } else if (!fs::is_directory(target, ec)) {
+        return false;
+    }
     const std::vector<SpriteEntry> entries = spriteEntries(*file, palette, remap, clean);
     std::size_t present = 0;
-    for (const auto& e : fs::directory_iterator(target, ec)) present += e.is_regular_file(ec) ? 1 : 0;
-    if (present != entries.size()) return false;
-    for (const SpriteEntry& e : entries)
-        if (!pngHasSize(target / (e.name + ".png"), e.width * scale, e.height * scale)) return false;
-    return true;
+    for (const auto& e : fs::directory_iterator(dir, ec)) present += e.is_regular_file(ec) ? 1 : 0;
+    bool fine = present == entries.size();
+    for (std::size_t i = 0; fine && i < entries.size(); ++i)
+        fine = pngHasSize(dir / (entries[i].name + ".png"), entries[i].width * scale, entries[i].height * scale);
+    if (packed) fs::remove_all(dir, ec);
+    return fine;
 }
 
 // A picture made by the program that is noise, empty or the wrong size (which happens on a
@@ -511,23 +535,50 @@ UpscaleReport upscaleAssets(const UpscaleOptions& opt, const std::function<bool(
         }
         ++state.done;
         const std::string key = hex(fnvFile(base, part.source)) + " " + how;
-        const fs::path target = hires / (part.sprites ? part.name : part.name + ".png");
+        const fs::path target = hires / (part.sprites ? part.name + ".hani" : part.name + ".png");
+        const fs::path legacy = hires / part.name;  // the folder of PNGs that earlier runs made for a sprite part
         const auto found = manifest.find(part.name);
-        if (found != manifest.end() && found->second == key && fs::exists(target, ec)) {
+        const bool known = found != manifest.end() && found->second == key;
+
+        // A folder of an earlier run is put into a container, and the folder removed.
+        if (part.sprites && !fs::exists(target, ec) && fs::is_directory(legacy, ec) && (known || (o.adopt && adoptable(part, legacy, o.scale, *palette, remap, o.cleanEdges, work)))) {
+            const bool packed = packSprites(legacy, o.scale, target, work);
+            fs::remove_all(work, ec);
+            if (packed) {
+                fs::remove_all(legacy, ec);
+                if (!known) {
+                    manifest[part.name] = key;
+                    saveManifest(manifestFile, manifest);
+                    ++report.adopted;
+                    continue;
+                }
+            } else {
+                std::fprintf(stderr, "WARN  %s: cannot put the pictures into %s\n", part.name.c_str(), target.string().c_str());
+            }
+        }
+
+        if (known && fs::exists(target, ec)) {
             if (o.verify) {
                 std::vector<SpriteEntry> items;
                 fs::path dir = target;
+                std::string why;
+                fs::create_directories(work, ec);
                 if (part.sprites) {
                     const auto file = loadAniFile(part.source.string());
                     if (file) items = spriteEntries(*file, *palette, remap, o.cleanEdges);
+                    dir = work / "unpacked";
+                    fs::remove_all(dir, ec);
+                    if (!unpackHiresPack(target.string(), dir.string())) why = "cannot read " + target.string();
                 } else if (auto item = pictureItem(part, target.stem().string())) {
                     items.push_back(std::move(*item));
                     dir = target.parent_path();
                 }
-                std::string why;
                 const int before = report.repaired;
-                fs::create_directories(work, ec);
-                const bool fine = fixItems(o, items, dir, work, report.repaired, report.plain, why);
+                bool fine = why.empty() && fixItems(o, items, dir, work, report.repaired, report.plain, why);
+                if (fine && part.sprites && report.repaired != before) {
+                    fine = packSprites(dir, o.scale, target, work);
+                    if (!fine) why = "cannot write " + target.string();
+                }
                 fs::remove_all(work, ec);
                 if (!fine) {
                     ++report.failed;
@@ -540,11 +591,16 @@ UpscaleReport upscaleAssets(const UpscaleOptions& opt, const std::function<bool(
             continue;
         }
 
-        if (o.adopt && fs::exists(target, ec) && adoptable(part, target, o.scale, *palette, remap, o.cleanEdges)) {
-            manifest[part.name] = key;  // made earlier, the list of what was made is lost
-            saveManifest(manifestFile, manifest);
-            ++report.adopted;
-            continue;
+        if (o.adopt && fs::exists(target, ec)) {
+            fs::create_directories(work, ec);
+            const bool whole = adoptable(part, target, o.scale, *palette, remap, o.cleanEdges, work);
+            fs::remove_all(work, ec);
+            if (whole) {
+                manifest[part.name] = key;  // made earlier, the list of what was made is lost
+                saveManifest(manifestFile, manifest);
+                ++report.adopted;
+                continue;
+            }
         }
 
         fs::remove_all(work, ec);
@@ -576,7 +632,8 @@ UpscaleReport upscaleAssets(const UpscaleOptions& opt, const std::function<bool(
                     int again = 0;
                     ok = fixItems(o, entries, work / "out", work, again, report.plain, why);
                 }
-                if (ok) ok = replace(work / "out", target);
+                if (ok) ok = packSprites(work / "out", o.scale, target, work);
+                if (ok) fs::remove_all(legacy, ec);  // a folder an earlier run made is out of date now
                 if (!ok && why.empty()) why = "cannot write " + target.string();
             }
         } else {

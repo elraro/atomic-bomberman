@@ -37,6 +37,7 @@
 #include "resources/mve_file.hpp"
 #include "resources/scheme_file.hpp"
 #include "resources/settings.hpp"
+#include "resources/steam_art.hpp"
 #include "resources/upscale.hpp"
 
 namespace {
@@ -55,6 +56,8 @@ struct Options {
     std::string importFolder; // --import-folder: a folder looked at on every start for a copy of the original game to convert
     std::string importShot;   // automated: save pictures of the import screens as PREFIX-<screen>.ppm
     bool allSounds = false;   // --all-sounds: import also the sounds the game never plays (for the sound test)
+    bool steamArt = false;    // --steam-art: make the pictures Steam asks for (capsules, background, logo, icon), then exit
+    std::string steamOut;     // --steam-out DIR: where they go (default: "steam" beside the asset folder)
     bool upscale = false;     // --upscale-assets: make enlarged copies of the imported graphics with Real-ESRGAN, then exit
     std::string esrgan;       // --esrgan PATH: the realesrgan-ncnn-vulkan program (or the ATOMIC_ESRGAN variable, or a "realesrgan" folder)
     std::string esrganModel = "realesrgan-x4plus";  // --esrgan-model NAME
@@ -132,6 +135,10 @@ Options parseArgs(int argc, char** argv) {
                       "  --esrgan-gpu N       Vulkan device of the upscaling program (see its list at the start of a run; a weak one can give noise)\n"
                       "  --esrgan-tile N      tile size of the upscaling program (smaller: less load on the graphics chip)\n"
                       "  --upscale-only A,B   with --upscale-assets: only these parts (bombs, walk, res/mainmenu, ...)\n"
+                      "  --steam-art          make the pictures Steam asks for when the game is added as a non-Steam game (main capsule,\n"
+                      "                       wide capsule, background, logo) and an icon from the game's graphics, then exit;\n"
+                      "                       with --free from the free set (nothing of the original in them)\n"
+                      "  --steam-out DIR      with --steam-art: where they go (default: the folder \"steam\" beside the asset folder)\n"
                       "  --window WxH         size of the window at the start (default 960x720)\n"
                       "  --hires-raw-edges    draw enlarged sprites with the outline the model made, not the smoothed one\n"
                       "  --hires-clean-edges  replace dark dither pixels at the edge of sprites before enlarging (little gain, and every part is then made again)\n"
@@ -179,6 +186,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--import-shot") o.importShot = next();
         else if (a == "--all-sounds") o.allSounds = true;
         else if (a == "--upscale-assets") o.upscale = true;
+        else if (a == "--steam-art") o.steamArt = true;
+        else if (a == "--steam-out") o.steamOut = next();
         else if (a == "--esrgan") o.esrgan = next();
         else if (a == "--esrgan-model") o.esrganModel = next();
         else if (a == "--hires-scale") o.hiresScale = std::clamp(std::atoi(next().c_str()), 2, 4);
@@ -484,6 +493,24 @@ int runGame(int argc, char** argv, bool& again) {
     Options opt = parseArgs(argc, argv);
     ab::SpriteBank::setHiresEnabled(!opt.noHires);
     ab::SpriteBank::setHiresSmoothEdges(!opt.rawEdges);
+    if (opt.steamArt) {
+        ab::SteamArtOptions sa;
+        sa.assetsDir = opt.assetsDir.empty() ? findGameDir(opt.gameDir) : opt.assetsDir;
+        sa.outDir = opt.steamOut;
+        sa.free = opt.freeAssets;
+        sa.useHires = !opt.noHires;
+        const ab::SteamArtReport r = ab::makeSteamArt(sa);
+        if (!r.ok) {
+            std::printf("Steam pictures not made: %s\n", r.error.c_str());
+            return 1;
+        }
+        std::printf("Made from the %s graphics, in %s:\n", r.source.c_str(), r.outDir.c_str());
+        static const char* const kUse[] = {"main capsule (Hauptkapsel)", "background (Hintergrund)", "logo (Logo)", "wide main capsule (Weite Hauptkapsel)", "icon of the shortcut", "icon of the shortcut (.ico)"};
+        for (std::size_t i = 0; i < r.files.size(); ++i) std::printf("  %-26s %s\n", r.files[i].c_str(), i < 6 ? kUse[i] : "");
+        std::printf("In Steam: right click the game -> Manage -> Customize artwork (and Properties -> the icon).\n");
+        if (r.source == "original") std::printf("They show the original's artwork: for your own library, not to be shared.\n");
+        return 0;
+    }
     if (opt.upscale) {
         ab::UpscaleOptions up;
         up.assetsDir = opt.assetsDir.empty() ? findGameDir(opt.gameDir) : opt.assetsDir;

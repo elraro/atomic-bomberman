@@ -49,9 +49,12 @@ unsigned SpriteBank::hiresTexture(const std::string& path, int w, int h, const s
     if (hiresDir_.empty() || w < 1 || h < 1) return 0;
     std::error_code ec;
     if (!std::filesystem::exists(path, ec)) return 0;
-    const auto img = loadPngFile(path);
+    return hiresTextureFrom(loadPngFile(path), path, w, h, post);
+}
+
+unsigned SpriteBank::hiresTextureFrom(std::optional<PngImage> img, const std::string& label, int w, int h, const std::function<void(PngImage&)>& post) const {
     if (!img || img->width % w != 0 || img->height % h != 0 || img->width / w != img->height / h) {
-        std::fprintf(stderr, "WARN  enlarged picture does not fit, the original is used: %s\n", path.c_str());
+        std::fprintf(stderr, "WARN  enlarged picture does not fit, the original is used: %s\n", label.c_str());
         return 0;
     }
     PngImage big = std::move(*img);
@@ -133,6 +136,7 @@ bool SpriteBank::addAni(const std::string& path) {
     files_.push_back(std::move(*file));
     std::string stem = std::filesystem::path(path).stem().string();
     std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    hiresPacks_.push_back(hiresDir_.empty() ? std::nullopt : HiresPack::open(hiresDir_ + "/ani/" + stem + ".hani"));
     fileStems_.push_back(std::move(stem));
     return true;
 }
@@ -303,8 +307,16 @@ std::optional<Sprite> SpriteBank::sprite(const std::string& sequence, int index,
                 refineSilhouette(big, f.width, f.height, plain);
                 if (bomb) redrawBomb(big, f, palette_, table);
             };
-            if (colour >= 0) texture = hiresTexture(base + "_c" + std::to_string(colour) + ".png", f.width, f.height, post);
-            if (texture == 0) texture = hiresTexture(base + ".png", f.width, f.height, post);
+            // The container of the file first, then the folder of PNGs that older runs made.
+            const auto& pack = hiresPacks_[it->second.file];
+            const auto enlarged = [&](int c) -> unsigned {
+                if (pack)
+                    if (const auto bytes = pack->read(step.frame, c))
+                        if (const unsigned t = hiresTextureFrom(decodePng(*bytes), stem + ".hani/" + hiresFrameName(step.frame, c), f.width, f.height, post)) return t;
+                return hiresTexture(base + (c >= 0 ? "_c" + std::to_string(c) : std::string()) + ".png", f.width, f.height, post);
+            };
+            if (colour >= 0) texture = enlarged(colour);
+            if (texture == 0) texture = enlarged(-1);
         }
         if (texture == 0) texture = makeTexture(f, colour);
         tex = textures_.emplace(key, texture).first;
