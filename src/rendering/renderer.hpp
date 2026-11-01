@@ -56,7 +56,8 @@ public:
     // Part of a picture: the source rectangle (in pixels of a texW x texH picture) at (x, y), unscaled.
     void pictureRegion(unsigned texture, int texW, int texH, int sx, int sy, int sw, int sh, float x, float y);
     void text(const SpriteBank& bank, const std::string& s, float x, float y, float r, float g, float b);
-    bool sprite(SpriteBank& bank, const std::string& sequence, int index, int colour, float x, float y);
+    // scale: the sprite's size and its reference point scaled about (x, y), for small previews.
+    bool sprite(SpriteBank& bank, const std::string& sequence, int index, int colour, float x, float y, float scale = 1.0f);
     void quad(float x, float y, float w, float h, float r, float g, float b, float a = 1.0f);
 
 private:
