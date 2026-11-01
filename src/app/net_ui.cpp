@@ -1655,6 +1655,12 @@ void NetUi::drawResult(Renderer& r, SpriteBank& bank) {
 void NetUi::draw(Renderer& r, SpriteBank& bank, int windowW, int windowH, int frame, std::uint64_t nowMs) {
     const State state = client_.state();
     if (mode_ == Mode::Session && (state == State::Round || state == State::Result) && client_.world() != nullptr) {
+        if (state == State::Round && !client_.hasState()) {
+            // The round has begun but its first state is still on its way: not the bare arena.
+            r.begin(windowW, windowH);
+            r.end();
+            return;
+        }
         std::array<int, kMaxPlayers> wins = client_.score().wins;
         if (client_.view()->campaign())  // the score boxes show campaign points
             for (int i = 0; i < kMaxPlayers; ++i) wins[static_cast<std::size_t>(i)] = client_.view()->player(i).score;

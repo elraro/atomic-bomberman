@@ -1638,7 +1638,15 @@ void testNetRoulette() {
     // One more of it than a player without the prize (compare with the tuning value).
     if (type >= 0 && type != kPowClog) CHECK_EQ(ann.world()->player(winner).inventory[static_cast<std::size_t>(type)], Values::defaults().get(vid::kStartInventory + type) + 1);
     CHECK(ann.world()->player(winner).gold);
-    CHECK_EQ(ann.world()->stateHash(true) == h.server.world()->stateHash(true) || ann.stepsApplied() != h.server.steps(), true);
+    // The round starts before its first state has come (the two may come in separate reads of the
+    // connection: seen as a failure twice on macOS, steps 0 and 0 with different states): the
+    // comparison waits for it.
+    CHECK(h.until([&] { return ann.hasState(); }));
+    const bool same = ann.world()->stateHash(true) == h.server.world()->stateHash(true);
+    if (!same && ann.stepsApplied() == h.server.steps())
+        std::printf("  FAIL (details) has state %d, steps %u and %u, players alive %d and %d\n", ann.hasState() ? 1 : 0, ann.stepsApplied(), h.server.steps(),
+                    ann.world()->alivePlayers(), h.server.world()->alivePlayers());
+    CHECK_EQ(same || ann.stepsApplied() != h.server.steps(), true);
 }
 
 // A campaign played over the network, with the free asset set as the server's game data.

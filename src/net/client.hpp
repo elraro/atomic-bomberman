@@ -144,6 +144,7 @@ public:
     // others (the computer plays this player's seats); this client rejoins at the next one.
     void leaveMatch();
     bool sittingOut() const { return satOut_; }
+    bool hasState() const { return ready_; }  // a state of the round in hand has come from the server
 
     // Client-side prediction (on by default): the picture runs a few steps ahead of what the
     // server has confirmed, with this player's own keys applied at once, so moving does not
