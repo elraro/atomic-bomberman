@@ -1,4 +1,5 @@
 #include "rendering/renderer.hpp"
+#include "rendering/draw_order.hpp"
 
 #include "rendering/gl.hpp"
 #include "rendering/glyphs.hpp"
@@ -458,7 +459,7 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
         for (const Bomb& b : world.bombs()) {
             const std::size_t idx = bi++;
             if (!b.active) continue;
-            if ((b.mode == BombMode::Flying || b.mode == BombMode::Held) != airborne) continue;
+            if (bombDrawnOverPlayers(b) != airborne) continue;
             const RenderSnapshot::Pos was = prev.from(b, idx);
             const float bx = lerpBomb(was.x, b.x, alpha);
             const float by = lerpBomb(was.y, b.y, alpha) - bombLift(b);
