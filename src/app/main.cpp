@@ -2051,14 +2051,18 @@ int runGame(int argc, char** argv, bool& again) {
                     } else if (matchOver) {
                         renderer.image(spritesPtr->picture("victory" + std::to_string(matchWinner)));
                         const std::string line = "PLAYER " + std::to_string(matchWinner + 1) + " WINS THE MATCH!";  // message 36
-                        renderer.text(*spritesPtr, line, 211, 441, 0, 0, 0);  // below the artwork's own title
-                        renderer.text(*spritesPtr, line, 210, 440, 1.0f, 0.95f, 0.3f);
+                        renderer.playerHead(*spritesPtr, world.displayColour(matchWinner), 212, 438);
+                        renderer.text(*spritesPtr, line, 241, 441, 0, 0, 0);  // below the artwork's own title
+                        renderer.text(*spritesPtr, line, 240, 440, 1.0f, 0.95f, 0.3f);
                     } else {
                         renderer.image(spritesPtr->picture("results"));
                         // Messages 30, 31 and 120/121 at the original's positions (values 780, 785, 800).
                         const std::string head = "Game Winner was Player " + std::to_string(win + 1) + " !";
-                        renderer.text(*spritesPtr, head, 151, 141, 0, 0, 0);
-                        renderer.text(*spritesPtr, head, 150, 140, 1, 1, 1);
+                        // Modern addition: the player's robot head in front of each name, so the colour tells who is who.
+                        constexpr float kHeadSlot = 30.0f;
+                        renderer.playerHead(*spritesPtr, world.displayColour(win), 150, 139);
+                        renderer.text(*spritesPtr, head, 151 + kHeadSlot, 141, 0, 0, 0);
+                        renderer.text(*spritesPtr, head, 150 + kHeadSlot, 140, 1, 1, 1);
                         const std::string need = "(Match winner must score " + std::to_string(winsNeeded) +
                                                  (cfg.winByKills ? " kills)" : " victories)");
                         renderer.text(*spritesPtr, need, 151, 95, 0, 0, 0);
@@ -2070,8 +2074,9 @@ int runGame(int argc, char** argv, bool& again) {
                                                      std::to_string(wins[static_cast<std::size_t>(i)]) + " (kills: " +
                                                      std::to_string(matchKills[static_cast<std::size_t>(i)]) + ")";
                             const float y = 210.0f + 20.0f * static_cast<float>(row++);
-                            renderer.text(*spritesPtr, line, 151, y + 1, 0, 0, 0);
-                            renderer.text(*spritesPtr, line, 150, y, i == win ? 1.0f : 0.8f, i == win ? 0.95f : 0.8f, i == win ? 0.3f : 0.8f);
+                            renderer.playerHead(*spritesPtr, world.displayColour(i), 150, y - 2);
+                            renderer.text(*spritesPtr, line, 151 + kHeadSlot, y + 1, 0, 0, 0);
+                            renderer.text(*spritesPtr, line, 150 + kHeadSlot, y, i == win ? 1.0f : 0.8f, i == win ? 0.95f : 0.8f, i == win ? 0.3f : 0.8f);
                         }
                     }
                     renderer.end();
