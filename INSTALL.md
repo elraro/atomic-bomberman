@@ -165,7 +165,7 @@ To add the game to Steam as a non-Steam game (Library → Add a game), `atomic -
 | `wide_capsule_920x430.png` | wide main capsule (*Weite Hauptkapsel*) |
 | `icon_256.png`, `icon.ico` | icon of the shortcut (*Properties → Shortcut*, click the icon) |
 
-They go into a folder `steam` beside the asset folder (`--steam-out DIR` names another). They are drawn from the game's own graphics (the level background, the players, a bomb, the font) and use the enlarged sprites of step 4 where there are some. With the imported original data they show the original's artwork, so keep them to yourself; `--free` makes them from the free graphics set, with nothing of the original in them. The command can be run again at any time and overwrites the pictures.
+They go into a folder `steam` beside the asset folder (`--steam-out DIR` names another). With the imported original data they are cut from the picture of the title screen (`title`, the enlarged one of step 4 if there is one): the lettering, the green Bomberman with his bombs on the grass, on a starry sky; the icon is his helmet, in blue. They show the original's artwork, so keep them to yourself. `--free` makes them from the free graphics set instead (level background, players, a bomb and the game's font), with nothing of the original in them. The command can be run again at any time and overwrites the pictures.
 
 ## Troubleshooting
 
