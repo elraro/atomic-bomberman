@@ -141,6 +141,7 @@ struct Font {
 struct Source {
     std::string label;
     Img field;
+    Img title;                 // the picture of the title screen (original data only): logo, the green Bomberman, bombs, grass
     std::vector<Img> players;  // standing, facing the viewer, in different colours
     Img bomb;
     Font font;
@@ -238,6 +239,11 @@ bool loadOriginal(const std::string& dir, bool useHires, Source& out, std::strin
             out.font.glyph.push_back(std::move(i));
         }
     }
+    // The title picture, enlarged if --upscale-assets made it.
+    if (useHires)
+        if (auto big = loadPngFile(hires + "/res/title.png")) out.title = fromPng(*big);
+    if (out.title.empty())
+        if (auto pcx = loadPcxFile(dir + "/data/res/title.pcx")) out.title = pcxPicture(*pcx);
     out.label = "original";
     return true;
 }
@@ -439,7 +445,187 @@ struct Picture {
     bool alpha;
 };
 
+// ---- From the title picture (original data): its lettering, the green Bomberman and the bombs. ----
+// Coordinates are those of the picture at 2000 x 1500; the picture is cut at the same places at any size.
+
+Img titleRegion(const Img& t, double x0, double y0, double x1, double y1) {
+    const double k = t.w / 2000.0;
+    const int ix = static_cast<int>(x0 * k), iy = static_cast<int>(y0 * k);
+    Img o = blank(std::min(t.w - ix, static_cast<int>((x1 - x0) * k)), std::min(t.h - iy, static_cast<int>((y1 - y0) * k)));
+    for (int y = 0; y < o.h; ++y) std::copy_n(t.at(ix, iy + y), static_cast<std::size_t>(o.w) * 4, o.at(0, y));
+    return o;
+}
+
+double smoothRamp(double d, double width) {
+    const double t = std::clamp(d / width, 0.0, 1.0);
+    return t * t * (3 - 2 * t);
+}
+
+// The edges of a cut-out fade to transparent over `f` pixels. `grassFrom` (a fraction of the height, or 2 for none):
+// from there down the left and right edges stay, where the picture ends in grass that reaches the border of the capsule.
+void feather(Img& img, int f, double grassFrom) {
+    for (int y = 0; y < img.h; ++y)
+        for (int x = 0; x < img.w; ++x) {
+            const bool grass = static_cast<double>(y) / img.h >= grassFrom;
+            double a = std::min(smoothRamp(y + 0.5, f), grass ? 1.0 : 1.0);
+            if (!grass) a = std::min({a, smoothRamp(x + 0.5, f), smoothRamp(img.w - x - 0.5, f)});
+            a = std::min(a, smoothRamp(img.h - y - 0.5, grass ? 1.0 : f));
+            std::uint8_t* p = img.at(x, y);
+            p[3] = static_cast<std::uint8_t>(p[3] * a);
+        }
+}
+
+// The lettering "Atomic Bomberman" with the glow around it, faded out at its borders.
+Img titleLogo(const Source& s, int width) {
+    Img r = titleRegion(s.title, 250, 50, 1780, 580);
+    // The top of the helmet reaches into the lettering's lower edge: its green is cut away.
+    const double k = s.title.w / 2000.0;
+    for (int y = 0; y < r.h; ++y)
+        for (int x = 0; x < r.w; ++x) {
+            const double sx = 250 + (x + 0.5) / k, sy = 50 + (y + 0.5) / k;
+            if (sy < 430 || sx < 700 || sx > 1110) continue;
+            std::uint8_t* p = r.at(x, y);
+            const bool green = p[1] > p[0] + 12 && p[1] > p[2] + 12;
+            const bool dark = p[0] + p[1] + p[2] < 150;
+            if (green || dark) p[3] = 0;
+        }
+    feather(r, std::max(2, r.w / 22), 2.0);
+    return resized(r, width, std::max(1, r.h * width / r.w), true);
+}
+
+// Pixels of the lettering's colours (magenta, yellow, orange glow: red above green) are made transparent in the
+// rows above `fade1`, fully above `fade0`; what is left there is the helmet, which sits in front of the lettering.
+void isolateHelmet(Img& img, double x0, double y0, double k) {
+    for (int y = 0; y < img.h; ++y) {
+        const double sy = y0 + (y + 0.5) / k;
+        if (sy >= 600) break;
+        const double rowKeep = std::clamp((sy - 530) / 70.0, 0.0, 1.0);  // above the picture's lettering: nothing, from there on: everything
+        for (int x = 0; x < img.w; ++x) {
+            const double sx = x0 + (x + 0.5) / k;
+            // Above the dome only the antenna's ball is wanted; from the dome on, the whole helmet.
+            const double left = sy < 535 ? 850 : 700, right = sy < 535 ? 970 : 1100;
+            const double dist = sx < left ? left - sx : (sx > right ? sx - right : 0.0);
+            const double inside = 1.0 - std::clamp(dist / 25.0, 0.0, 1.0);
+            std::uint8_t* p = img.at(x, y);
+            const bool lettering = p[0] > p[1] + 22 || (p[0] > p[2] + 40 && p[1] > p[2] + 40);  // magenta, yellow, orange
+            const double keep = lettering ? rowKeep : std::max(rowKeep, inside);
+            p[3] = static_cast<std::uint8_t>(p[3] * keep);
+        }
+    }
+}
+
+// The green Bomberman with his bombs and the grass, scaled to `height`.
+Img titleHero(const Source& s, int height, bool keepGrassSides) {
+    Img r = titleRegion(s.title, 540, 430, 1560, 1500);
+    const double k = s.title.w / 2000.0;
+    isolateHelmet(r, 540, 430, k);
+    feather(r, std::max(2, r.w / 8), keepGrassSides ? 0.78 : 2.0);
+    return resized(r, std::max(1, r.w * height / r.h), height, true);
+}
+
+// A dark sky with stars, to match the one of the picture; the same for every call with the same size.
+Img starfield(int W, int H) {
+    Img o = blank(W, H, 0, 0, 0, 255);
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
+            std::uint8_t* p = o.at(x, y);
+            const double t = static_cast<double>(y) / H;
+            p[0] = static_cast<std::uint8_t>(1 + 3 * t);
+            p[1] = static_cast<std::uint8_t>(1 + 3 * t);
+            p[2] = static_cast<std::uint8_t>(6 + 8 * t);
+        }
+    std::uint32_t seed = 2463534242u;
+    auto next = [&]() {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        return seed;
+    };
+    const int big = W >= 2000 ? 2 : 1;
+    const int count = W * H / 1800;
+    for (int i = 0; i < count; ++i) {
+        const int x = static_cast<int>(next() % static_cast<std::uint32_t>(W)), y = static_cast<int>(next() % static_cast<std::uint32_t>(H));
+        const int v = 70 + static_cast<int>(next() % 186);
+        const int size = next() % 9 == 0 ? big + 1 : big;
+        for (int dy = 0; dy < size; ++dy)
+            for (int dx = 0; dx < size; ++dx)
+                if (x + dx < W && y + dy < H) {
+                    std::uint8_t* p = o.at(x + dx, y + dy);
+                    p[0] = static_cast<std::uint8_t>(std::max<int>(p[0], v * 9 / 10));
+                    p[1] = static_cast<std::uint8_t>(std::max<int>(p[1], v * 9 / 10));
+                    p[2] = static_cast<std::uint8_t>(std::max<int>(p[2], v));
+                }
+    }
+    return o;
+}
+
+Img capsuleFromTitle(const Source& s) {
+    Img img = starfield(600, 900);
+    const Img hero = titleHero(s, 640, true);
+    over(img, hero, (600 - hero.w) / 2, 900 - hero.h);
+    const Img logo = titleLogo(s, 600);
+    over(img, logo, 0, 30);
+    return img;
+}
+
+Img wideFromTitle(const Source& s) {
+    Img img = starfield(920, 430);
+    const Img hero = titleHero(s, 430, false);
+    over(img, hero, 920 - hero.w - 10, 0);
+    const Img logo = titleLogo(s, 470);
+    over(img, logo, 12, (430 - logo.h) / 2);
+    return img;
+}
+
+Img heroFromTitle(const Source& s) {
+    Img img = starfield(3840, 1240);
+    const Img hero = titleHero(s, 1180, false);
+    over(img, hero, 3840 - hero.w - 330, 1240 - hero.h);
+    return img;
+}
+
+Img logoFromTitle(const Source& s) {
+    const Img logo = titleLogo(s, 1280);
+    Img img = blank(1280, 720);
+    over(img, logo, 0, (720 - logo.h) / 2);
+    return img;
+}
+
+Img iconFromTitle(const Source& s) {
+    // The helmet with the face and the antenna, in blue (the green of the suit becomes blue), on the blue of the other icon.
+    Img head = titleRegion(s.title, 700, 430, 1100, 830);
+    const double k = s.title.w / 2000.0;
+    isolateHelmet(head, 700, 430, k);
+    for (int y = 0; y < head.h; ++y)
+        for (int x = 0; x < head.w; ++x) {
+            std::uint8_t* p = head.at(x, y);
+            // Only an oval around the helmet: the glow of the picture's background is left out.
+            const double dx = (700 + (x + 0.5) / k - 900) / 205.0, dy = (430 + (y + 0.5) / k - 640) / 215.0;
+            p[3] = static_cast<std::uint8_t>(p[3] * (1.0 - std::clamp((std::hypot(dx, dy) - 0.88) / 0.12, 0.0, 1.0)));
+            if (p[1] > p[0] + 10 && p[1] > p[2] + 10) std::swap(p[1], p[2]);
+        }
+    Img img = blank(256, 256);
+    const int radius = 52;
+    for (int y = 0; y < 256; ++y)
+        for (int x = 0; x < 256; ++x) {
+            const int cx = x < radius ? radius : (x >= 256 - radius ? 255 - radius : x);
+            const int cy = y < radius ? radius : (y >= 256 - radius ? 255 - radius : y);
+            const double d = std::hypot(x - cx, y - cy);
+            if (d > radius + 0.5) continue;
+            const double t = y / 255.0;
+            std::uint8_t* p = img.at(x, y);
+            p[0] = static_cast<std::uint8_t>(30 - 14 * t);
+            p[1] = static_cast<std::uint8_t>(70 - 34 * t);
+            p[2] = static_cast<std::uint8_t>(130 - 60 * t);
+            p[3] = static_cast<std::uint8_t>(d > radius - 0.5 ? 255 * (radius + 0.5 - d) : 255);
+        }
+    const Img scaled = resized(head, 236, 236, true);
+    over(img, scaled, 10, 14);
+    return img;
+}
+
 Img makeCapsule(const Source& s) {
+    if (!s.title.empty()) return capsuleFromTitle(s);
     Img img = backdrop(s, 600, 900, 0.0);
     const Img title = titleBlock(s.font, 540);
     over(img, title, (600 - title.w) / 2, 60);
@@ -450,6 +636,7 @@ Img makeCapsule(const Source& s) {
 }
 
 Img makeWide(const Source& s) {
+    if (!s.title.empty()) return wideFromTitle(s);
     Img img = backdrop(s, 920, 430, 0.35);
     const Img title = titleBlock(s.font, 400);
     over(img, title, 36, (430 - title.h) / 2);
@@ -460,6 +647,7 @@ Img makeWide(const Source& s) {
 }
 
 Img makeHero(const Source& s) {
+    if (!s.title.empty()) return heroFromTitle(s);
     Img img = backdrop(s, 3840, 1240, 0.55);
     place(img, s.bomb, s, 2150, 900, 520);
     const int x[4] = {2500, 2900, 3300, 3650};
@@ -468,6 +656,7 @@ Img makeHero(const Source& s) {
 }
 
 Img makeLogo(const Source& s) {
+    if (!s.title.empty()) return logoFromTitle(s);
     const Img title = titleBlock(s.font, 1240);
     Img img = blank(1280, 720);
     over(img, title, (1280 - title.w) / 2, (720 - title.h) / 2);
@@ -475,6 +664,7 @@ Img makeLogo(const Source& s) {
 }
 
 Img makeIcon(const Source& s) {
+    if (!s.title.empty()) return iconFromTitle(s);
     Img img = blank(256, 256);
     const int radius = 52;
     for (int y = 0; y < 256; ++y)
