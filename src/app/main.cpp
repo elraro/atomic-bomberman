@@ -772,6 +772,8 @@ int runGame(int argc, char** argv, bool& again) {
         bool schemePopup = false;
         int popupRow = 0, popupTop = 0;
         std::vector<int> popupChoices;
+        int popupPreviewFor = -1;  // the scheme whose grid popupPreview holds
+        ab::Scheme popupPreview;
         constexpr int kRandomMatch = -1, kRandomRound = -2, kPopupRows = 7;
         auto schemeChoices = [&]() {
             std::vector<int> c{kRandomMatch};
@@ -1943,6 +1945,7 @@ int runGame(int argc, char** argv, bool& again) {
                         // Enter on the scheme line opens the list; the other lines start the match.
                         popupChoices = schemeChoices();
                         popupRow = 0;
+                        popupPreviewFor = -1;
                         for (int i = 0; i < static_cast<int>(popupChoices.size()); ++i)
                             if (popupChoices[static_cast<std::size_t>(i)] == currentChoice()) popupRow = i;
                         popupTop = std::clamp(popupRow - kPopupRows / 2, 0, std::max(0, static_cast<int>(popupChoices.size()) - kPopupRows));
@@ -2546,7 +2549,7 @@ int runGame(int argc, char** argv, bool& again) {
                               60, 440, 0.4f, 1.0f, 1.0f);
                 if (schemePopup) {
                     // The scheme list in the style of the original's campaign file box.
-                    const float bx = 150, by = 110, bw = 340, bh = 250;
+                    const float bx = 150, by = 14, bw = 340, bh = 412;
                     const float lx = bx + 10, ly = by + 36, lw = bw - 52, rowH = 22;
                     const int n = static_cast<int>(popupChoices.size());
                     renderer.quad(0, 0, 640, 480, 0.0f, 0.0f, 0.0f, 0.45f);
@@ -2575,11 +2578,31 @@ int runGame(int argc, char** argv, bool& again) {
                     const float span = static_cast<float>(std::max(1, n - kPopupRows));
                     const float thumbY = trackY + (trackH - thumbH) * (n > kPopupRows ? static_cast<float>(popupTop) / span : 0.0f);
                     renderer.quad(sx, thumbY, sw, thumbH, 0.56f, 0.54f, 0.50f, 1.0f);
-                    // "Done" only shows what Enter does; the list is worked with the cursor.
-                    const float dw = 110, dx = bx + bw / 2 - dw / 2, dy = ly + rowH * kPopupRows + 18;
-                    renderer.quad(dx - 1, dy - 1, dw + 2, 28, 0.62f, 0.60f, 0.56f, 1.0f);
-                    renderer.quad(dx, dy, dw, 26, 0.42f, 0.40f, 0.37f, 1.0f);
-                    renderer.text(*spritesPtr, "Done", dx + dw / 2 - renderer.textWidth(*spritesPtr, "Done") / 2.0f, dy + 6, 0.9f, 0.9f, 0.9f);
+                    // The marked scheme in the classic theme (level 0), at half size: 15 x 11 cells of 20 x 18.
+                    const int shownChoice = n > 0 ? popupChoices[static_cast<std::size_t>(popupRow)] : kRandomMatch;
+                    if (shownChoice >= 0 && shownChoice != popupPreviewFor) {
+                        popupPreviewFor = shownChoice;
+                        popupPreview = ab::Scheme{};
+                        if (auto sf = ab::loadSchemeFile(schemes[static_cast<std::size_t>(shownChoice)].path)) popupPreview = sf->scheme;
+                    }
+                    const float mx = bx + bw / 2 - 150.0f, my = ly + rowH * kPopupRows + 14;
+                    renderer.quad(mx - 2, my - 2, 304, 202, 0.62f, 0.60f, 0.56f, 1.0f);
+                    renderer.quad(mx, my, 300, 198, 0.10f, 0.22f, 0.12f, 1.0f);
+                    if (shownChoice >= 0) {
+                        spritesPtr->ensureTiles(0);
+                        for (int y = 0; y < ab::kGridH; ++y)
+                            for (int x = 0; x < ab::kGridW; ++x) {
+                                const ab::Tile t = popupPreview.tiles[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)];
+                                if (t == ab::Tile::Blank) continue;
+                                // A tile's reference point is the bottom centre of its cell (40 x 36 in the game).
+                                renderer.sprite(*spritesPtr, t == ab::Tile::Solid ? "tile 0 solid" : "tile 0 brick", 0, -1,
+                                                mx + 20.0f * static_cast<float>(x) + 10.0f, my + 18.0f * static_cast<float>(y) + 17.5f, 0.5f);
+                            }
+                    } else {
+                        const std::string note[2] = {"The scheme is drawn", shownChoice == kRandomMatch ? "when the match starts" : "before every round"};
+                        for (int r = 0; r < 2; ++r)
+                            renderer.text(*spritesPtr, note[r], mx + 150.0f - renderer.textWidth(*spritesPtr, note[r]) / 2.0f, my + 80.0f + 22.0f * static_cast<float>(r), 0.85f, 0.85f, 0.85f);
+                    }
                 }
                 renderer.end();
             } else if (screen == Screen::MainMenu) {
