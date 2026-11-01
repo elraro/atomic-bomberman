@@ -85,6 +85,11 @@ private:
         std::size_t seq;
     };
     bool addAni(const std::string& path);
+    // Makes the sequence "menu bomb": the trigger bomb's largest picture in the sizes of the regular bomb's animation.
+    void addMenuBomb();
+    std::size_t menuBombFile_ = 0;  // the trigger bomb's file and frame whose enlarged picture "menu bomb" uses
+    int menuBombFrame_ = 0;
+    int menuBombX_ = 0, menuBombY_ = 0, menuBombWindow_ = 0;  // the window around the ball's centre, in pixels of that frame
     bool loadFree(int level);
 
     bool free_ = false;  // the free asset set: frames from art_ instead of files_
