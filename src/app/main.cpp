@@ -1487,14 +1487,27 @@ int runGame(int argc, char** argv, bool& again) {
                     if (key == SDLK_LEFT) c = Control::Off;
                     if (key == SDLK_RIGHT)  // AI -> KEY 0 -> KEY 1 -> OFF -> AI, as observed on the original
                     {
-                        // then any connected gamepads before OFF
-                        const int k = static_cast<int>(c);
-                        if (c == Control::Ai) c = Control::Key0;
-                        else if (c == Control::Key0) c = Control::Key1;
-                        else if (c == Control::Key1) c = padCount > 0 ? Control::Pad0 : Control::Off;
-                        else if (k >= static_cast<int>(Control::Pad0))
-                            c = k - static_cast<int>(Control::Pad0) + 1 < padCount ? static_cast<Control>(k + 1) : Control::Off;
-                        else c = Control::Ai;
+                        // then any connected gamepads before OFF; a device that another
+                        // seat already uses is skipped
+                        std::vector<Control> order{Control::Ai, Control::Key0, Control::Key1};
+                        for (int j = 0; j < padCount; ++j) order.push_back(static_cast<Control>(static_cast<int>(Control::Pad0) + j));
+                        order.push_back(Control::Off);
+                        auto takenElsewhere = [&](Control d) {
+                            if (d == Control::Ai || d == Control::Off) return false;
+                            for (int i = 0; i < ab::kMaxPlayers; ++i)
+                                if (i != listRow && control[static_cast<std::size_t>(i)] == d) return true;
+                            return false;
+                        };
+                        std::size_t at = order.size() - 1;  // a gamepad that is gone counts as OFF
+                        for (std::size_t o = 0; o < order.size(); ++o)
+                            if (order[o] == c) at = o;
+                        for (std::size_t hop = 1; hop <= order.size(); ++hop) {
+                            const Control next = order[(at + hop) % order.size()];
+                            if (!takenElsewhere(next)) {
+                                c = next;
+                                break;
+                            }
+                        }
                     }
                     if (key == SDLK_ESCAPE) {
                         screen = Screen::MainMenu;
@@ -2410,15 +2423,24 @@ int runGame(int argc, char** argv, bool& again) {
                     renderer.text(*spritesPtr, line, 71, y + 1, 0, 0, 0);
                     renderer.text(*spritesPtr, line, 70, y, colour[i][0], colour[i][1], colour[i][2]);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 56.0f, 185.0f + 24.0f * static_cast<float>(listRow));
+                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 46.0f, 185.0f + 24.0f * static_cast<float>(listRow));
                 // Messages 40-42 at the original's positions (values 715, 720).
                 renderer.text(*spritesPtr, "Available Joysticks:", 301, 141, 0, 0, 0);
                 renderer.text(*spritesPtr, "Available Joysticks:", 300, 140, 1, 1, 1);
                 if (padCount == 0) renderer.text(*spritesPtr, "None Detected", 320, 170, 0.85f, 0.85f, 0.85f);
                 for (int j = 0; j < padCount; ++j) {
                     const char* name = pads[static_cast<std::size_t>(j)] != nullptr ? SDL_GetGamepadName(pads[static_cast<std::size_t>(j)]) : nullptr;
-                    renderer.text(*spritesPtr, "Joy " + std::to_string(j) + " - " + (name != nullptr ? name : "?"), 320,
-                                  170.0f + 24.0f * static_cast<float>(j), 0.85f, 0.85f, 0.85f);
+                    // A gamepad that a player uses is shown with that player's number and colour.
+                    int seat = -1;
+                    for (int i = 0; i < ab::kMaxPlayers && seat < 0; ++i)
+                        if (control[static_cast<std::size_t>(i)] == static_cast<Control>(static_cast<int>(Control::Pad0) + j)) seat = i;
+                    const float y = 170.0f + 24.0f * static_cast<float>(j);
+                    std::string line = "Joy " + std::to_string(j) + " - " + (name != nullptr ? name : "?");
+                    if (seat >= 0) line = "P" + std::to_string(seat + 1) + "  " + line;
+                    const float cr = seat >= 0 ? colour[seat][0] : 0.85f, cg = seat >= 0 ? colour[seat][1] : 0.85f,
+                                cb = seat >= 0 ? colour[seat][2] : 0.85f;
+                    renderer.text(*spritesPtr, line, 301, y + 1, 0, 0, 0);
+                    renderer.text(*spritesPtr, line, 300, y, cr, cg, cb);
                 }
                 renderer.text(*spritesPtr, teamPlay ? "Up/Down: select   Left: off   Right: change   T: team   Enter: start" : "Up/Down: select   Left: off   Right: change   Enter: start", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
