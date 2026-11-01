@@ -477,7 +477,7 @@ std::string controlName(Control c) {
     }
 }
 
-constexpr int kOptionRows = 19;  // the original's, and this implementation's: sound test, original game data, which data to use, screen
+constexpr int kOptionRows = 20;  // the original's, and this implementation's: sound test, original game data, which data to use, screen
 enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor, AudioAdjust, Movie, Net, SoundTest };
 
 using ab::SchemeEntry;
@@ -1354,6 +1354,12 @@ int runGame(int argc, char** argv, bool& again) {
                     SDL_GetWindowSize(window, &ww, &wh);
                     touch.handle(e, ww, wh);
                 }
+                // Outside a match the menus listen to Joy 0 only, unless Options says all.
+                auto padIgnored = [&](SDL_JoystickID id) {
+                    return !cfg.menuAllPads && !padsPlaying() && (pads[0] == nullptr || SDL_GetGamepadID(pads[0]) != id);
+                };
+                if ((e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) && padIgnored(e.gbutton.which)) continue;
+                if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && padIgnored(e.gaxis.which)) continue;
                 if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
                     if (const ab::PadKeys::Button b = padButton(e.gbutton.button); b != ab::PadKeys::Button::Count)
                         padKeys.button(b, e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GetTicks());
@@ -1778,6 +1784,7 @@ int runGame(int argc, char** argv, bool& again) {
                                 saveSettings();
 #endif
                                 break;
+                            case 19: cfg.menuAllPads = !cfg.menuAllPads; break;
                         }
                     }
                     if (key == SDLK_ESCAPE) {
@@ -2324,7 +2331,8 @@ int runGame(int argc, char** argv, bool& again) {
                     "Sound Test",
                     "Original Game Data: " + (folderShown.empty() ? std::string("Choose Folder") : folderShown),
                     std::string("Graphics And Sound: ") + (ab::isFreeAssetDir(opt.gameDir) ? "Free" : "Original"),
-                    std::string("Screen: ") + ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0 ? "Full Screen" : "Windowed")};
+                    std::string("Screen: ") + ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0 ? "Full Screen" : "Windowed"),
+                    std::string("Menus: ") + (cfg.menuAllPads ? "All Joysticks" : "Joy 0 Only")};
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
                 for (int r = 0; r < kOptionRows; ++r) {
@@ -2333,7 +2341,7 @@ int runGame(int argc, char** argv, bool& again) {
                     renderer.text(*spritesPtr, rows[r], 55, y, r == optionRow ? 1.0f : 0.85f, r == optionRow ? 0.95f : 0.85f, r == optionRow ? 0.3f : 0.85f);
                 }
                 renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 41.0f, 55.0f + 21.0f * static_cast<float>(optionRow));
-                renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 440, 0.4f, 1.0f, 1.0f);
+                renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 462, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::LevelSetup) {
                 const int shownLevel = randomLevel ? -1 : level;

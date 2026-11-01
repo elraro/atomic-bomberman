@@ -26,7 +26,8 @@ struct Settings {
     int soundVolume = 100;            // "Adjust Audio" screen was never made)
     bool unusedVoices = false;        // unused_voices: also play the voice clips of the disc that the original never plays (not in the original)
     bool assignKeyboards = true;      // assign_keyboards: a keyboard player in the default player list
-    bool freeAssets = false;          // free_assets: play with the free graphics and sounds although original data is there (not in the original)
+    bool menuAllPads = false;         // menu_all_pads: every gamepad works the menus, not only Joy 0 (not in the original)
+    bool freeAssets = false;        // free_assets: play with the free graphics and sounds although original data is there (not in the original)
     bool fullscreen = false;          // fullscreen: the game fills the screen instead of a window (not in the original, which always fills it)
     // Network play (this implementation's client-server mode; not the original's keys).
     std::string netName;              // net_name: the player's name; empty until first set
