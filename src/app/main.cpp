@@ -1354,9 +1354,11 @@ int runGame(int argc, char** argv, bool& again) {
                     SDL_GetWindowSize(window, &ww, &wh);
                     touch.handle(e, ww, wh);
                 }
-                // Outside a match the menus listen to Joy 0 only, unless Options says all.
+                // Outside a match the menus listen to Joy 0 only, unless Options says all. The result screen
+                // after a round or match (win or draw) is the exception: every gamepad may go on there.
                 auto padIgnored = [&](SDL_JoystickID id) {
-                    return !cfg.menuAllPads && !padsPlaying() && (pads[0] == nullptr || SDL_GetGamepadID(pads[0]) != id);
+                    const bool resultScreen = screen == Screen::Match && !attract && world.roundOver();
+                    return !cfg.menuAllPads && !padsPlaying() && !resultScreen && (pads[0] == nullptr || SDL_GetGamepadID(pads[0]) != id);
                 };
                 if ((e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) && padIgnored(e.gbutton.which)) continue;
                 if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && padIgnored(e.gaxis.which)) continue;
