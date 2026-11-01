@@ -8,7 +8,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <string>
-#include <cstdio>
 
 namespace ab {
 
@@ -182,6 +181,46 @@ bool Renderer::sprite(SpriteBank& bank, const std::string& sequence, int index, 
     textured(s->texture, x - static_cast<float>(s->hotX), y - static_cast<float>(s->hotY),
              static_cast<float>(s->width), static_cast<float>(s->height));
     return true;
+}
+
+float Renderer::playerHead(SpriteBank& bank, int colour, float x, float y) {
+    const auto s = bank.sprite("stand south", 0, colour);
+    if (!s || s->width < 4 || s->height < 4) return 0.0f;
+    // Where the head is in the frame: the upper part of the figure's opaque pixels, as wide as its rows are.
+    // Found once per colour from the pixels (the original frame is 110 x 110 with a small figure, the free one 48 x 64).
+    HeadCut& cut = headCuts_[colour];
+    if (cut.texture != s->texture) {
+        cut = HeadCut{s->texture, 0, 0, 0, 0};
+        int w = 0, h = 0;
+        std::vector<std::uint8_t> px;
+        if (bank.spriteRgba("stand south", 0, colour, &w, &h, &px) && w == s->width && h == s->height) {
+            const auto opaque = [&](int cx, int cy) { return px[(static_cast<std::size_t>(cy) * static_cast<std::size_t>(w) + static_cast<std::size_t>(cx)) * 4 + 3] != 0; };
+            int top = h, bottom = -1;
+            for (int cy = 0; cy < h; ++cy)
+                for (int cx = 0; cx < w; ++cx)
+                    if (opaque(cx, cy)) top = std::min(top, cy), bottom = std::max(bottom, cy);
+            if (bottom >= top) {
+                const int rows = std::max(1, (bottom - top + 1) * 57 / 100);
+                int left = w, right = -1;
+                for (int cy = top; cy < top + rows; ++cy)
+                    for (int cx = 0; cx < w; ++cx)
+                        if (opaque(cx, cy)) left = std::min(left, cx), right = std::max(right, cx);
+                if (right >= left) cut = HeadCut{s->texture, left, top, right - left + 1, rows};
+            }
+        }
+    }
+    if (cut.w <= 0) return 0.0f;
+    constexpr float kHeight = 20.0f;  // as tall as a line of text
+    const float scale = kHeight / static_cast<float>(cut.h);
+    const float dw = static_cast<float>(cut.w) * scale;
+    setTexture(s->texture);
+    const auto tw = static_cast<float>(s->width), th = static_cast<float>(s->height);
+    const float u0 = static_cast<float>(cut.x) / tw, u1 = static_cast<float>(cut.x + cut.w) / tw;
+    const float v0 = static_cast<float>(cut.y) / th, v1 = static_cast<float>(cut.y + cut.h) / th;
+    const Vertex v[6] = {{x, y, u0, v0, 1, 1, 1, 1},      {x + dw, y, u1, v0, 1, 1, 1, 1},      {x + dw, y + kHeight, u1, v1, 1, 1, 1, 1},
+                         {x, y, u0, v0, 1, 1, 1, 1},      {x + dw, y + kHeight, u1, v1, 1, 1, 1, 1}, {x, y + kHeight, u0, v1, 1, 1, 1, 1}};
+    batch_.insert(batch_.end(), v, v + 6);
+    return dw;
 }
 
 void Renderer::flush() {
