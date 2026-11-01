@@ -464,7 +464,8 @@ std::string findEsrgan(const std::string& requested) {
 
 // How each player slot is controlled, as on the original's player list.
 // The pads are Pad0 up to Pad0 + kMaxPads - 1 (one per seat).
-enum class Control { Off, Key0, Key1, Ai, Pad0 };
+// PadWait: the seat waits for a button on the gamepad that is meant for it.
+enum class Control { Off, Key0, Key1, Ai, PadWait, Pad0 };
 constexpr int kMaxPads = ab::PadKeys::kMaxPads;
 
 std::string controlName(Control c) {
@@ -473,6 +474,7 @@ std::string controlName(Control c) {
         case Control::Key1: return "KEY 1";
         case Control::Ai: return "AI";
         case Control::Off: return "OFF";
+        case Control::PadWait: return "JOY - PRESS BUTTON";
         default: return "JOY " + std::to_string(static_cast<int>(c) - static_cast<int>(Control::Pad0));
     }
 }
@@ -879,6 +881,7 @@ int runGame(int argc, char** argv, bool& again) {
         };
         int optionsGlue = 2;
         int listRow = 0;
+        std::array<std::uint64_t, kMaxPads> padFlashUntil{};  // the pad was pressed: its line in the joystick list lights up
         if (opt.menuShot == 2) screen = Screen::PlayerList;
         if (opt.menuShot == 3) screen = Screen::LevelSetup;
         if (opt.menuShot == 4) screen = Screen::Options;
@@ -1306,6 +1309,10 @@ int runGame(int argc, char** argv, bool& again) {
         double accumulatorMs = 0.0;
 
         while (running) {
+            // Pictures that move by themselves (pointers, the editor's cursor) run on the clock, 60 steps a second,
+            // whatever the display's refresh rate or the window's size make of the number of drawn frames.
+            // Automated runs count drawn frames, so that their pictures are the same every time.
+            const int animFrame = opt.frames > 0 || opt.menuShot > 0 ? frame : static_cast<int>(SDL_GetTicks() * 60 / 1000);
             // Scripted key presses for automated checks of the menu screens.
             if (!opt.script.empty() && frame % 10 == 5 && static_cast<std::size_t>(frame / 10) < opt.script.size()) {
                 const std::string& k = opt.script[static_cast<std::size_t>(frame / 10)];
@@ -1354,6 +1361,27 @@ int runGame(int argc, char** argv, bool& again) {
                     SDL_GetWindowSize(window, &ww, &wh);
                     touch.handle(e, ww, wh);
                 }
+                // Player list: a button on any gamepad lights its line in the joystick list, and a seat that
+                // waits for one takes that gamepad (another seat that had it goes OFF). The menus are not
+                // steered by it, so this works with the gamepads that may not steer them.
+                bool padTaken = false;
+                if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && screen == Screen::PlayerList) {
+                    for (std::size_t j = 0; j < pads.size() && !padTaken; ++j) {
+                        if (pads[j] == nullptr || SDL_GetGamepadID(pads[j]) != e.gbutton.which) continue;
+                        padFlashUntil[j] = SDL_GetTicks() + 600;
+                        Control& waiting = control[static_cast<std::size_t>(listRow)];
+                        if (waiting == Control::PadWait) {
+                            const Control mine = static_cast<Control>(static_cast<int>(Control::Pad0) + static_cast<int>(j));
+                            for (Control& other : control)
+                                if (other == mine) other = Control::Off;
+                            waiting = mine;
+                            SDL_RumbleGamepad(pads[j], 0x7000, 0x7000, 250);
+                            if (sound) audio.playRange(20, 20);
+                            padTaken = true;
+                        }
+                    }
+                }
+                if (padTaken) continue;
                 // Outside a match the menus listen to Joy 0 only, unless Options says all. The result screen
                 // after a round or match (win or draw) is the exception: every gamepad may go on there.
                 auto padIgnored = [&](SDL_JoystickID id) {
@@ -1493,29 +1521,20 @@ int runGame(int argc, char** argv, bool& again) {
                     if (key == SDLK_LEFT) c = Control::Off;
                     if (key == SDLK_RIGHT)  // AI -> KEY 0 -> KEY 1 -> OFF -> AI, as observed on the original
                     {
-                        // then any connected gamepads before OFF; a device that another
-                        // seat already uses is skipped
+                        // then, with gamepads connected, "press a button" (the gamepad that answers is
+                        // taken; another seat that had it goes OFF), then OFF
                         std::vector<Control> order{Control::Ai, Control::Key0, Control::Key1};
-                        for (int j = 0; j < padCount; ++j) order.push_back(static_cast<Control>(static_cast<int>(Control::Pad0) + j));
+                        if (padCount > 0) order.push_back(Control::PadWait);
                         order.push_back(Control::Off);
-                        auto takenElsewhere = [&](Control d) {
-                            if (d == Control::Ai || d == Control::Off) return false;
-                            for (int i = 0; i < ab::kMaxPlayers; ++i)
-                                if (i != listRow && control[static_cast<std::size_t>(i)] == d) return true;
-                            return false;
-                        };
-                        std::size_t at = order.size() - 1;  // a gamepad that is gone counts as OFF
+                        const Control at = c >= Control::Pad0 ? Control::PadWait : c;
                         for (std::size_t o = 0; o < order.size(); ++o)
-                            if (order[o] == c) at = o;
-                        for (std::size_t hop = 1; hop <= order.size(); ++hop) {
-                            const Control next = order[(at + hop) % order.size()];
-                            if (!takenElsewhere(next)) {
-                                c = next;
+                            if (order[o] == at) {
+                                c = order[(o + 1) % order.size()];
                                 break;
                             }
-                        }
                     }
                     if (key == SDLK_ESCAPE) {
+                        for (Control& seatCtl : control) seatCtl = seatCtl == Control::PadWait ? Control::Off : seatCtl;
                         screen = Screen::MainMenu;
                         if (sound) audio.playMusic(1010);
                     }
@@ -1545,6 +1564,7 @@ int runGame(int argc, char** argv, bool& again) {
                     }
                     if (key == SDLK_0) c = Control::Off;  // original key '0'
                     if (key == SDLK_RETURN) {
+                        for (Control& seatCtl : control) seatCtl = seatCtl == Control::PadWait ? Control::Off : seatCtl;  // nobody pressed a button
                         int n = 0, humans = 0;
                         std::array<int, 2> perTeam{};
                         bool shared = false;
@@ -1570,6 +1590,7 @@ int runGame(int argc, char** argv, bool& again) {
                             showMessage({"Problem!!", "Must have at least one player on each team!"}, back);  // message 48
                         } else {
                             screen = Screen::LevelSetup;
+                            if (sound) audio.playRange(10, 10);  // as when the main menu is confirmed
                         }
                     }
                 } else if (screen == Screen::Roulette && roulette) {
@@ -1820,9 +1841,10 @@ int runGame(int argc, char** argv, bool& again) {
                     }
                     if (d != 0 && setupRow == 1 && !schemes.empty())
                         schemeIndex = (schemeIndex + d + static_cast<int>(schemes.size())) % static_cast<int>(schemes.size());
-                    if (d != 0 && setupRow == 2) winsNeeded = std::clamp(winsNeeded + d, 1, 9);
+                    if (d != 0 && setupRow == 2) winsNeeded = std::clamp(winsNeeded + d, 1, 10);
                     if (key == SDLK_ESCAPE) screen = Screen::PlayerList;
                     if (key == SDLK_RETURN) {
+                        if (sound) audio.playRange(10, 10);
                         newMatch();
                         saveSettings();
                         screen = Screen::Match;
@@ -2103,7 +2125,7 @@ int runGame(int argc, char** argv, bool& again) {
                     renderer.end();
                 }
             } else if (screen == Screen::Net) {
-                net.draw(renderer, *spritesPtr, w, h, frame, ab::net::clockMs());
+                net.draw(renderer, *spritesPtr, w, h, animFrame, ab::net::clockMs());
             } else if (screen == Screen::Roulette && roulette) {
                 static const char* const kPower[ab::kPowTypeCount] = {"bomb", "flame", "disease", "kicker", "skate", "punch", "grab",
                                                                     "spooge", "goldflame", "trigger", "jelly", "disease3", "random", "clog"};
@@ -2187,7 +2209,7 @@ int runGame(int argc, char** argv, bool& again) {
                     const bool on = static_cast<int>(r) == campaignRow;
                     renderer.text(*spritesPtr, campaignFiles[r], 80, 92.0f + 22.0f * static_cast<float>(r), on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, 107.0f + 22.0f * static_cast<float>(campaignRow));
+                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 62.0f, 107.0f + 22.0f * static_cast<float>(campaignRow));
                 renderer.text(*spritesPtr, "Up/Down: select   Enter: play   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::Help) {
@@ -2233,12 +2255,12 @@ int runGame(int argc, char** argv, bool& again) {
                     const bool on = static_cast<int>(r) == helpRow;
                     renderer.text(*spritesPtr, helpFiles[r], 80, 92.0f + 22.0f * static_cast<float>(r), on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, 107.0f + 22.0f * static_cast<float>(helpRow));
+                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 62.0f, 107.0f + 22.0f * static_cast<float>(helpRow));
                 renderer.text(*spritesPtr, "Up/Down: select   Enter: read   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::Editor) {
                 renderer.begin(w, h);
-                editor.draw(renderer, *spritesPtr, level, frame);
+                editor.draw(renderer, *spritesPtr, level, animFrame);
                 renderer.end();
             } else if (screen == Screen::SoundTest) {
                 const auto shown = shownSounds();
@@ -2267,7 +2289,7 @@ int runGame(int argc, char** argv, bool& again) {
                     char length[24];
                     std::snprintf(length, sizeof length, "%.1f s", item.seconds);
                     renderer.text(*spritesPtr, length, 540, y, cr, cg, cb);
-                    if (on) renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 52.0f, y + 15.0f);
+                    if (on) renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 52.0f, y + 15.0f);
                 }
                 if (unused == 0 && !soundList.empty() && !ab::isFreeAssetDir(opt.gameDir))
                     renderer.text(*spritesPtr, "For the disc's other sounds: atomic --import-assets PATH --all-sounds", 45, 398, 0.7f, 0.7f, 0.7f);
@@ -2292,7 +2314,7 @@ int runGame(int argc, char** argv, bool& again) {
                     const bool on = r == audioRow;
                     renderer.text(*spritesPtr, rows[r], 80, 100.0f + 24.0f * static_cast<float>(r), on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, 115.0f + 24.0f * static_cast<float>(audioRow));
+                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 62.0f, 115.0f + 24.0f * static_cast<float>(audioRow));
                 renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::Keys) {
@@ -2311,7 +2333,7 @@ int runGame(int argc, char** argv, bool& again) {
                     const bool on = r == keyRow;
                     const float y = 70.0f + 22.0f * static_cast<float>(r) + (r >= 6 ? 12.0f : 0.0f) + (r >= 12 ? 12.0f : 0.0f);
                     renderer.text(*spritesPtr, line, 80, y, on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
-                    if (on) renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, y + 15.0f);
+                    if (on) renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 62.0f, y + 15.0f);
                 }
                 if (keyCapture) {
                     const std::string ask = std::string("Press key for '") + kAction[keyRow % 6] + "'";  // message 1105
@@ -2355,7 +2377,7 @@ int runGame(int argc, char** argv, bool& again) {
                     renderer.text(*spritesPtr, rows[r], 56, y + 1, 0, 0, 0);
                     renderer.text(*spritesPtr, rows[r], 55, y, r == optionRow ? 1.0f : 0.85f, r == optionRow ? 0.95f : 0.85f, r == optionRow ? 0.3f : 0.85f);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 41.0f, 55.0f + 21.0f * static_cast<float>(optionRow));
+                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 41.0f, 55.0f + 21.0f * static_cast<float>(optionRow));
                 renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 462, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::LevelSetup) {
@@ -2406,15 +2428,21 @@ int runGame(int argc, char** argv, bool& again) {
                     renderer.text(*spritesPtr, lines[r], 56, y + 1, 0, 0, 0);
                     renderer.text(*spritesPtr, lines[r], 55, y, 1, 1, 1);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 41.0f, 185.0f + 24.0f * static_cast<float>(setupRow));
+                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 36.0f, 185.0f + 24.0f * static_cast<float>(setupRow));
                 renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Enter: start", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::MainMenu) {
+                // Vertical centres of the seven lines of lettering in mainmenu.pcx (measured in the picture).
+                static constexpr float kMenuRowCentre[7] = {126.0f, 162.5f, 199.0f, 236.0f, 273.0f, 310.0f, 347.0f};
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("mainmenu"));
                 // The picture carries the item texts; the game draws only the cursor
                 // (original value 700: first item at x 332, y 140, 38 px apart).
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 332.0f, 140.0f + 38.0f * static_cast<float>(menuItem));
+                // The original's pointer here is its regular trigger bomb, pulsing; the free set keeps its own pointer.
+                if (ab::isFreeAssetDir(opt.gameDir))
+                    renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 332.0f, 140.0f + 38.0f * static_cast<float>(menuItem));
+                else
+                    renderer.sprite(*spritesPtr, "menu bomb", animFrame * 143 / 400, -1, 332.0f, kMenuRowCentre[menuItem]);
                 // The release, top left, where the original shows its "V1.0".
                 renderer.text(*spritesPtr, "V" AB_VERSION " Modern", 9, 7, 0, 0, 0);
                 renderer.text(*spritesPtr, "V" AB_VERSION " Modern", 8, 6, 1, 1, 1);
@@ -2434,7 +2462,7 @@ int runGame(int argc, char** argv, bool& again) {
                     renderer.text(*spritesPtr, line, 71, y + 1, 0, 0, 0);
                     renderer.text(*spritesPtr, line, 70, y, colour[i][0], colour[i][1], colour[i][2]);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 46.0f, 185.0f + 24.0f * static_cast<float>(listRow));
+                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 46.0f, 185.0f + 24.0f * static_cast<float>(listRow));
                 // Messages 40-42 at the original's positions (values 715, 720).
                 renderer.text(*spritesPtr, "Available Joysticks:", 301, 141, 0, 0, 0);
                 renderer.text(*spritesPtr, "Available Joysticks:", 300, 140, 1, 1, 1);
@@ -2447,11 +2475,18 @@ int runGame(int argc, char** argv, bool& again) {
                         if (control[static_cast<std::size_t>(i)] == static_cast<Control>(static_cast<int>(Control::Pad0) + j)) seat = i;
                     const float y = 170.0f + 24.0f * static_cast<float>(j);
                     std::string line = "Joy " + std::to_string(j) + " - " + (name != nullptr ? name : "?");
-                    if (seat >= 0) line = "P" + std::to_string(seat + 1) + "  " + line;
                     const float cr = seat >= 0 ? colour[seat][0] : 0.85f, cg = seat >= 0 ? colour[seat][1] : 0.85f,
                                 cb = seat >= 0 ? colour[seat][2] : 0.85f;
-                    renderer.text(*spritesPtr, line, 301, y + 1, 0, 0, 0);
-                    renderer.text(*spritesPtr, line, 300, y, cr, cg, cb);
+                    // The seat's tag keeps its colour; only the gamepad's own text lights up when it is pressed.
+                    const bool flash = SDL_GetTicks() < padFlashUntil[static_cast<std::size_t>(j)];
+                    const float lineX = 300.0f + renderer.textWidth(*spritesPtr, "P10 ");
+                    if (seat >= 0) {
+                        const std::string tag = "P" + std::to_string(seat + 1);
+                        renderer.text(*spritesPtr, tag, 301, y + 1, 0, 0, 0);
+                        renderer.text(*spritesPtr, tag, 300, y, cr, cg, cb);
+                    }
+                    renderer.text(*spritesPtr, line, lineX + 1, y + 1, 0, 0, 0);
+                    renderer.text(*spritesPtr, line, lineX, y, flash ? 1.0f : 0.85f, flash ? 1.0f : 0.85f, flash ? 0.3f : 0.85f);
                 }
                 renderer.text(*spritesPtr, teamPlay ? "Up/Down: select   Left: off   Right: change   T: team   Enter: start" : "Up/Down: select   Left: off   Right: change   Enter: start", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
