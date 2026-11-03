@@ -37,6 +37,8 @@
 #include "resources/mve_file.hpp"
 #include "resources/scheme_file.hpp"
 #include "resources/settings.hpp"
+#include "resources/steam_art.hpp"
+#include "resources/upscale.hpp"
 
 namespace {
 
@@ -54,6 +56,21 @@ struct Options {
     std::string importFolder; // --import-folder: a folder looked at on every start for a copy of the original game to convert
     std::string importShot;   // automated: save pictures of the import screens as PREFIX-<screen>.ppm
     bool allSounds = false;   // --all-sounds: import also the sounds the game never plays (for the sound test)
+    bool steamArt = false;    // --steam-art: make the pictures Steam asks for (capsules, background, logo, icon), then exit
+    std::string steamOut;     // --steam-out DIR: where they go (default: "steam" beside the asset folder)
+    bool upscale = false;     // --upscale-assets: make enlarged copies of the imported graphics with Real-ESRGAN, then exit
+    std::string esrgan;       // --esrgan PATH: the realesrgan-ncnn-vulkan program (or the ATOMIC_ESRGAN variable, or a "realesrgan" folder)
+    std::string esrganModel = "realesrgan-x4plus";  // --esrgan-model NAME
+    int hiresScale = 4;       // --hires-scale N
+    int esrganGpu = -1;       // --esrgan-gpu N: Vulkan device of the upscaling program (its own choice when absent)
+    int esrganTile = 0;       // --esrgan-tile N
+    bool verifyHires = false; // --hires-verify: check the enlarged pictures that exist and make bad ones again
+    int windowW = 0, windowH = 0;  // --window WxH: size of the window at the start (for tests and screenshots)
+    bool rawEdges = false;    // --hires-raw-edges: draw enlarged sprites with the outline the model made, not the smoothed one
+    bool cleanEdges = false;  // --hires-clean-edges: replace dark dither pixels at the edge of sprites by their neighbours before enlarging (little gain; changes what a part is made from)
+    std::string upscaleOnly;  // --upscale-only a,b: only these parts
+    bool adoptHires = false;  // --hires-adopt: take over complete enlarged pictures the manifest lost (after a crash)
+    bool noHires = false;     // --no-hires: draw the original-size graphics even if enlarged ones exist
     int menuShot = 0;         // automated: 1 = capture the main menu, 2 = the player list, ... 10-13 the network screens
     bool resultShot = false;  // automated: capture the result screen of the first decided round and exit
     std::vector<std::string> script;  // automated: key names pressed one after another (see --script)
@@ -110,6 +127,24 @@ Options parseArgs(int argc, char** argv) {
                       "                       when it is new or was converted by another release (what the Android app does)\n"
                       "  --all-sounds         with --import-assets: also the sounds on the disc that the game never plays\n"
                       "                       (about 180 MB more; hear them under Options, Sound Test)\n"
+                      "  --upscale-assets     make enlarged copies of the imported graphics (AI upscaling with Real-ESRGAN), then exit;\n"
+                      "                       only what is missing or changed is made, so it can be run again at any time\n"
+                      "  --esrgan PATH        the realesrgan-ncnn-vulkan program (or ATOMIC_ESRGAN, or a folder \"realesrgan\" next to the game)\n"
+                      "  --esrgan-model NAME  model of its models folder (default realesrgan-x4plus)\n"
+                      "  --hires-scale N      enlargement the model makes (default 4)\n"
+                      "  --esrgan-gpu N       Vulkan device of the upscaling program (see its list at the start of a run; a weak one can give noise)\n"
+                      "  --esrgan-tile N      tile size of the upscaling program (smaller: less load on the graphics chip)\n"
+                      "  --upscale-only A,B   with --upscale-assets: only these parts (bombs, walk, res/mainmenu, ...)\n"
+                      "  --steam-art          make the pictures Steam asks for when the game is added as a non-Steam game (main capsule,\n"
+                      "                       wide capsule, background, logo) and an icon from the game's graphics, then exit;\n"
+                      "                       with --free from the free set (nothing of the original in them)\n"
+                      "  --steam-out DIR      with --steam-art: where they go (default: the folder \"steam\" beside the asset folder)\n"
+                      "  --window WxH         size of the window at the start (default 960x720)\n"
+                      "  --hires-raw-edges    draw enlarged sprites with the outline the model made, not the smoothed one\n"
+                      "  --hires-clean-edges  replace dark dither pixels at the edge of sprites before enlarging (little gain, and every part is then made again)\n"
+                      "  --hires-verify       with --upscale-assets: also check the pictures that exist and make noise or empty ones again\n"
+                      "  --hires-adopt        with --upscale-assets: keep complete, correctly sized pictures of an earlier run whose list was lost\n"
+                      "  --no-hires           do not use enlarged graphics, if there are some\n"
                       "  --game-dir DIR       imported assets or an original game folder to play from\n"
                       "  --free               play with the free asset set even if original game data is found\n"
                       "  --start              skip the menu and start a match at once\n"
@@ -150,6 +185,27 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--import-folder") o.importFolder = next();
         else if (a == "--import-shot") o.importShot = next();
         else if (a == "--all-sounds") o.allSounds = true;
+        else if (a == "--upscale-assets") o.upscale = true;
+        else if (a == "--steam-art") o.steamArt = true;
+        else if (a == "--steam-out") o.steamOut = next();
+        else if (a == "--esrgan") o.esrgan = next();
+        else if (a == "--esrgan-model") o.esrganModel = next();
+        else if (a == "--hires-scale") o.hiresScale = std::clamp(std::atoi(next().c_str()), 2, 4);
+        else if (a == "--hires-adopt") o.adoptHires = true;
+        else if (a == "--hires-verify") o.verifyHires = true;
+        else if (a == "--hires-clean-edges") o.cleanEdges = true;
+        else if (a == "--hires-raw-edges") o.rawEdges = true;
+        else if (a == "--window") {
+            int w = 0, h = 0;
+            if (std::sscanf(next().c_str(), "%dx%d", &w, &h) == 2 && w >= 320 && h >= 240) {
+                o.windowW = w;
+                o.windowH = h;
+            }
+        }
+        else if (a == "--upscale-only") o.upscaleOnly = next();
+        else if (a == "--esrgan-gpu") o.esrganGpu = std::max(0, std::atoi(next().c_str()));
+        else if (a == "--esrgan-tile") o.esrganTile = std::max(0, std::atoi(next().c_str()));
+        else if (a == "--no-hires") o.noHires = true;
         else if (a == "--result-shot") o.resultShot = true;
         else if (a == "--script") {
             // Comma-separated keys: up, down, left, right, enter, esc, space, backspace, t, r, f2, f3, f12,
@@ -377,23 +433,51 @@ std::string findGameDir(const std::string& requested) {
     return "";
 }
 
-// How each player slot is controlled, as on the original's player list.
-enum class Control { Off, Key0, Key1, Ai, Pad0, Pad1, Pad2, Pad3 };
+// The Real-ESRGAN program: --esrgan, then the ATOMIC_ESRGAN environment variable, then a
+// "realesrgan" folder (current folder, next to the program, or one or two levels above it).
+std::string findEsrgan(const std::string& requested) {
+#ifdef _WIN32
+    const char* const name = "realesrgan-ncnn-vulkan.exe";
+#else
+    const char* const name = "realesrgan-ncnn-vulkan";
+#endif
+    std::vector<std::filesystem::path> candidates;
+    if (!requested.empty()) candidates.emplace_back(requested);
+    if (const char* env = std::getenv("ATOMIC_ESRGAN")) candidates.emplace_back(env);
+    candidates.emplace_back(std::filesystem::path("realesrgan") / name);
+    if (const char* base = SDL_GetBasePath()) {
+        const std::filesystem::path b(base);
+        candidates.push_back(b / "realesrgan" / name);
+        candidates.push_back(b / ".." / "realesrgan" / name);
+        candidates.push_back(b / ".." / ".." / "realesrgan" / name);
+    }
+    for (const auto& c : candidates) {
+        std::error_code ec;
+        if (std::filesystem::is_directory(c, ec)) {
+            if (std::filesystem::exists(c / name, ec)) return (c / name).string();
+        } else if (std::filesystem::exists(c, ec)) {
+            return c.string();
+        }
+    }
+    return "";
+}
 
-const char* controlName(Control c) {
+// How each player slot is controlled, as on the original's player list.
+// The pads are Pad0 up to Pad0 + kMaxPads - 1 (one per seat).
+enum class Control { Off, Key0, Key1, Ai, Pad0 };
+constexpr int kMaxPads = ab::PadKeys::kMaxPads;
+
+std::string controlName(Control c) {
     switch (c) {
         case Control::Key0: return "KEY 0";
         case Control::Key1: return "KEY 1";
         case Control::Ai: return "AI";
-        case Control::Pad0: return "JOY 0";
-        case Control::Pad1: return "JOY 1";
-        case Control::Pad2: return "JOY 2";
-        case Control::Pad3: return "JOY 3";
-        default: return "OFF";
+        case Control::Off: return "OFF";
+        default: return "JOY " + std::to_string(static_cast<int>(c) - static_cast<int>(Control::Pad0));
     }
 }
 
-constexpr int kOptionRows = 19;  // the original's, and this implementation's: sound test, original game data, which data to use, screen
+constexpr int kOptionRows = 20;  // the original's, and this implementation's: sound test, original game data, which data to use, screen
 enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor, AudioAdjust, Movie, Net, SoundTest };
 
 using ab::SchemeEntry;
@@ -406,6 +490,63 @@ int g_runs = 0;
 int runGame(int argc, char** argv, bool& again) {
     ++g_runs;
     Options opt = parseArgs(argc, argv);
+    ab::SpriteBank::setHiresEnabled(!opt.noHires);
+    ab::SpriteBank::setHiresSmoothEdges(!opt.rawEdges);
+    if (opt.steamArt) {
+        ab::SteamArtOptions sa;
+        sa.assetsDir = opt.assetsDir.empty() ? findGameDir(opt.gameDir) : opt.assetsDir;
+        sa.outDir = opt.steamOut;
+        sa.free = opt.freeAssets;
+        sa.useHires = !opt.noHires;
+        const ab::SteamArtReport r = ab::makeSteamArt(sa);
+        if (!r.ok) {
+            std::printf("Steam pictures not made: %s\n", r.error.c_str());
+            return 1;
+        }
+        std::printf("Made from the %s graphics, in %s:\n", r.source.c_str(), r.outDir.c_str());
+        static const char* const kUse[] = {"main capsule (Hauptkapsel)", "background (Hintergrund)", "logo (Logo)", "wide main capsule (Weite Hauptkapsel)", "icon of the shortcut", "icon of the shortcut (.ico)"};
+        for (std::size_t i = 0; i < r.files.size(); ++i) std::printf("  %-26s %s\n", r.files[i].c_str(), i < 6 ? kUse[i] : "");
+        std::printf("In Steam: right click the game -> Manage -> Customize artwork (and Properties -> the icon).\n");
+        if (r.source == "original") std::printf("They show the original's artwork: for your own library, not to be shared.\n");
+        return 0;
+    }
+    if (opt.upscale) {
+        ab::UpscaleOptions up;
+        up.assetsDir = opt.assetsDir.empty() ? findGameDir(opt.gameDir) : opt.assetsDir;
+        up.esrganExe = findEsrgan(opt.esrgan);
+        up.model = opt.esrganModel;
+        up.scale = opt.hiresScale;
+        up.adopt = opt.adoptHires;
+        up.verify = opt.verifyHires;
+        up.cleanEdges = opt.cleanEdges;
+        for (std::size_t from = 0; from <= opt.upscaleOnly.size();) {
+            std::size_t to = opt.upscaleOnly.find(',', from);
+            if (to == std::string::npos) to = opt.upscaleOnly.size();
+            if (to > from) up.only.push_back(opt.upscaleOnly.substr(from, to - from));
+            from = to + 1;
+        }
+        up.gpu = opt.esrganGpu;
+        up.tile = opt.esrganTile;
+        if (up.assetsDir.empty()) {
+            std::printf("No imported game data found. Import it first (--import-assets), or name the folder with --assets-dir.\n");
+            return 1;
+        }
+        std::printf("Enlarging the graphics\n  from:  %s\n  to:    %s\n  model: %s x%d\n  with:  %s\n", up.assetsDir.c_str(), ab::hiresDirFor(up.assetsDir).c_str(),
+                    up.model.c_str(), up.scale, up.esrganExe.c_str());
+        std::fflush(stdout);
+        const ab::UpscaleReport r = ab::upscaleAssets(up, [](const ab::UpscaleProgress& p) {
+            std::printf("[%3d/%d] %s\n", p.done + 1, p.total, p.item.c_str());
+            std::fflush(stdout);
+            return true;
+        });
+        std::printf("%d parts made, %d taken over, %d were up to date, %d pictures made again (%d of them without the model), %d failed.\n", r.made, r.adopted, r.current, r.repaired, r.plain, r.failed);
+        if (!r.ok) {
+            std::printf("Not finished: %s\n", r.error.c_str());
+            return 1;
+        }
+        std::printf("Done. Start the game to see them (--no-hires switches them off).\n");
+        return 0;
+    }
     if (!opt.importFrom.empty()) {
         const std::string to = opt.assetsDir.empty() ? userAssetsDir() : opt.assetsDir;
         std::printf("Importing game data\n  from: %s\n  to:   %s\n", opt.importFrom.c_str(), to.c_str());
@@ -450,7 +591,7 @@ int runGame(int argc, char** argv, bool& again) {
     const bool unattended = opt.frames > 0 || opt.menuShot > 0 || !opt.script.empty() || opt.demo;
     ab::Settings early;
     const bool earlyLoaded = !unattended && early.load(userFile("options.ini"));
-    SDL_Window* window = SDL_CreateWindow("Atomic Bomberman (modern)", opt.native ? 640 : 960, opt.native ? 480 : 720,
+    SDL_Window* window = SDL_CreateWindow("Atomic Bomberman (modern)", opt.windowW > 0 ? opt.windowW : opt.native ? 640 : 960, opt.windowH > 0 ? opt.windowH : opt.native ? 480 : 720,
 #ifdef __ANDROID__
                                           SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN);
 #else
@@ -654,11 +795,11 @@ int runGame(int argc, char** argv, bool& again) {
         ab::Audio audio;
         const bool sound = !opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir, cfg.smallMemory, cfg.unusedVoices);
         audio.setVolumes(cfg.musicVolume, cfg.soundVolume);
-        // Up to four gamepads, opened once at start.
-        std::array<SDL_Gamepad*, 4> pads{};
+        // Up to one gamepad per seat, opened once at start.
+        std::array<SDL_Gamepad*, kMaxPads> pads{};
         int padCount = 0;
         if (SDL_JoystickID* ids = SDL_GetGamepads(&padCount)) {
-            padCount = std::min(padCount, 4);
+            padCount = std::min(padCount, kMaxPads);
             for (int i = 0; i < padCount; ++i) pads[static_cast<std::size_t>(i)] = SDL_OpenGamepad(ids[i]);
             SDL_free(ids);
         } else {
@@ -1213,6 +1354,14 @@ int runGame(int argc, char** argv, bool& again) {
                     SDL_GetWindowSize(window, &ww, &wh);
                     touch.handle(e, ww, wh);
                 }
+                // Outside a match the menus listen to Joy 0 only, unless Options says all. The result screen
+                // after a round or match (win or draw) is the exception: every gamepad may go on there.
+                auto padIgnored = [&](SDL_JoystickID id) {
+                    const bool resultScreen = screen == Screen::Match && !attract && world.roundOver();
+                    return !cfg.menuAllPads && !padsPlaying() && !resultScreen && (pads[0] == nullptr || SDL_GetGamepadID(pads[0]) != id);
+                };
+                if ((e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) && padIgnored(e.gbutton.which)) continue;
+                if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && padIgnored(e.gaxis.which)) continue;
                 if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
                     if (const ab::PadKeys::Button b = padButton(e.gbutton.button); b != ab::PadKeys::Button::Count)
                         padKeys.button(b, e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GetTicks());
@@ -1236,7 +1385,7 @@ int runGame(int argc, char** argv, bool& again) {
                             pads[i] = SDL_OpenGamepad(e.gdevice.which);
                             known = true;
                         }
-                    for (padCount = 4; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
+                    for (padCount = kMaxPads; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
                     continue;
                 }
                 if (e.type == SDL_EVENT_GAMEPAD_REMOVED) {
@@ -1246,7 +1395,7 @@ int runGame(int argc, char** argv, bool& again) {
                             pads[i] = nullptr;
                             padKeys.stick(static_cast<int>(i), 0, 0, SDL_GetTicks());
                         }
-                    for (padCount = 4; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
+                    for (padCount = kMaxPads; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
                     continue;
                 }
                 // A phone's back key is Esc.
@@ -1344,14 +1493,27 @@ int runGame(int argc, char** argv, bool& again) {
                     if (key == SDLK_LEFT) c = Control::Off;
                     if (key == SDLK_RIGHT)  // AI -> KEY 0 -> KEY 1 -> OFF -> AI, as observed on the original
                     {
-                        // then any connected gamepads before OFF
-                        const int k = static_cast<int>(c);
-                        if (c == Control::Ai) c = Control::Key0;
-                        else if (c == Control::Key0) c = Control::Key1;
-                        else if (c == Control::Key1) c = padCount > 0 ? Control::Pad0 : Control::Off;
-                        else if (k >= static_cast<int>(Control::Pad0))
-                            c = k - static_cast<int>(Control::Pad0) + 1 < padCount ? static_cast<Control>(k + 1) : Control::Off;
-                        else c = Control::Ai;
+                        // then any connected gamepads before OFF; a device that another
+                        // seat already uses is skipped
+                        std::vector<Control> order{Control::Ai, Control::Key0, Control::Key1};
+                        for (int j = 0; j < padCount; ++j) order.push_back(static_cast<Control>(static_cast<int>(Control::Pad0) + j));
+                        order.push_back(Control::Off);
+                        auto takenElsewhere = [&](Control d) {
+                            if (d == Control::Ai || d == Control::Off) return false;
+                            for (int i = 0; i < ab::kMaxPlayers; ++i)
+                                if (i != listRow && control[static_cast<std::size_t>(i)] == d) return true;
+                            return false;
+                        };
+                        std::size_t at = order.size() - 1;  // a gamepad that is gone counts as OFF
+                        for (std::size_t o = 0; o < order.size(); ++o)
+                            if (order[o] == c) at = o;
+                        for (std::size_t hop = 1; hop <= order.size(); ++hop) {
+                            const Control next = order[(at + hop) % order.size()];
+                            if (!takenElsewhere(next)) {
+                                c = next;
+                                break;
+                            }
+                        }
                     }
                     if (key == SDLK_ESCAPE) {
                         screen = Screen::MainMenu;
@@ -1637,6 +1799,7 @@ int runGame(int argc, char** argv, bool& again) {
                                 saveSettings();
 #endif
                                 break;
+                            case 19: cfg.menuAllPads = !cfg.menuAllPads; break;
                         }
                     }
                     if (key == SDLK_ESCAPE) {
@@ -1909,14 +2072,18 @@ int runGame(int argc, char** argv, bool& again) {
                     } else if (matchOver) {
                         renderer.image(spritesPtr->picture("victory" + std::to_string(matchWinner)));
                         const std::string line = "PLAYER " + std::to_string(matchWinner + 1) + " WINS THE MATCH!";  // message 36
-                        renderer.text(*spritesPtr, line, 211, 441, 0, 0, 0);  // below the artwork's own title
-                        renderer.text(*spritesPtr, line, 210, 440, 1.0f, 0.95f, 0.3f);
+                        renderer.playerHead(*spritesPtr, world.displayColour(matchWinner), 212, 438);
+                        renderer.text(*spritesPtr, line, 241, 441, 0, 0, 0);  // below the artwork's own title
+                        renderer.text(*spritesPtr, line, 240, 440, 1.0f, 0.95f, 0.3f);
                     } else {
                         renderer.image(spritesPtr->picture("results"));
                         // Messages 30, 31 and 120/121 at the original's positions (values 780, 785, 800).
                         const std::string head = "Game Winner was Player " + std::to_string(win + 1) + " !";
-                        renderer.text(*spritesPtr, head, 151, 141, 0, 0, 0);
-                        renderer.text(*spritesPtr, head, 150, 140, 1, 1, 1);
+                        // Modern addition: the player's robot head in front of each name, so the colour tells who is who.
+                        constexpr float kHeadSlot = 30.0f;
+                        renderer.playerHead(*spritesPtr, world.displayColour(win), 150, 139);
+                        renderer.text(*spritesPtr, head, 151 + kHeadSlot, 141, 0, 0, 0);
+                        renderer.text(*spritesPtr, head, 150 + kHeadSlot, 140, 1, 1, 1);
                         const std::string need = "(Match winner must score " + std::to_string(winsNeeded) +
                                                  (cfg.winByKills ? " kills)" : " victories)");
                         renderer.text(*spritesPtr, need, 151, 95, 0, 0, 0);
@@ -1928,8 +2095,9 @@ int runGame(int argc, char** argv, bool& again) {
                                                      std::to_string(wins[static_cast<std::size_t>(i)]) + " (kills: " +
                                                      std::to_string(matchKills[static_cast<std::size_t>(i)]) + ")";
                             const float y = 210.0f + 20.0f * static_cast<float>(row++);
-                            renderer.text(*spritesPtr, line, 151, y + 1, 0, 0, 0);
-                            renderer.text(*spritesPtr, line, 150, y, i == win ? 1.0f : 0.8f, i == win ? 0.95f : 0.8f, i == win ? 0.3f : 0.8f);
+                            renderer.playerHead(*spritesPtr, world.displayColour(i), 150, y - 2);
+                            renderer.text(*spritesPtr, line, 151 + kHeadSlot, y + 1, 0, 0, 0);
+                            renderer.text(*spritesPtr, line, 150 + kHeadSlot, y, i == win ? 1.0f : 0.8f, i == win ? 0.95f : 0.8f, i == win ? 0.3f : 0.8f);
                         }
                     }
                     renderer.end();
@@ -2178,7 +2346,8 @@ int runGame(int argc, char** argv, bool& again) {
                     "Sound Test",
                     "Original Game Data: " + (folderShown.empty() ? std::string("Choose Folder") : folderShown),
                     std::string("Graphics And Sound: ") + (ab::isFreeAssetDir(opt.gameDir) ? "Free" : "Original"),
-                    std::string("Screen: ") + ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0 ? "Full Screen" : "Windowed")};
+                    std::string("Screen: ") + ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0 ? "Full Screen" : "Windowed"),
+                    std::string("Menus: ") + (cfg.menuAllPads ? "All Joysticks" : "Joy 0 Only")};
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
                 for (int r = 0; r < kOptionRows; ++r) {
@@ -2187,7 +2356,7 @@ int runGame(int argc, char** argv, bool& again) {
                     renderer.text(*spritesPtr, rows[r], 55, y, r == optionRow ? 1.0f : 0.85f, r == optionRow ? 0.95f : 0.85f, r == optionRow ? 0.3f : 0.85f);
                 }
                 renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 41.0f, 55.0f + 21.0f * static_cast<float>(optionRow));
-                renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 440, 0.4f, 1.0f, 1.0f);
+                renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 462, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::LevelSetup) {
                 const int shownLevel = randomLevel ? -1 : level;
@@ -2265,15 +2434,24 @@ int runGame(int argc, char** argv, bool& again) {
                     renderer.text(*spritesPtr, line, 71, y + 1, 0, 0, 0);
                     renderer.text(*spritesPtr, line, 70, y, colour[i][0], colour[i][1], colour[i][2]);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 56.0f, 185.0f + 24.0f * static_cast<float>(listRow));
+                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 46.0f, 185.0f + 24.0f * static_cast<float>(listRow));
                 // Messages 40-42 at the original's positions (values 715, 720).
                 renderer.text(*spritesPtr, "Available Joysticks:", 301, 141, 0, 0, 0);
                 renderer.text(*spritesPtr, "Available Joysticks:", 300, 140, 1, 1, 1);
                 if (padCount == 0) renderer.text(*spritesPtr, "None Detected", 320, 170, 0.85f, 0.85f, 0.85f);
                 for (int j = 0; j < padCount; ++j) {
                     const char* name = pads[static_cast<std::size_t>(j)] != nullptr ? SDL_GetGamepadName(pads[static_cast<std::size_t>(j)]) : nullptr;
-                    renderer.text(*spritesPtr, "Joy " + std::to_string(j) + " - " + (name != nullptr ? name : "?"), 320,
-                                  170.0f + 24.0f * static_cast<float>(j), 0.85f, 0.85f, 0.85f);
+                    // A gamepad that a player uses is shown with that player's number and colour.
+                    int seat = -1;
+                    for (int i = 0; i < ab::kMaxPlayers && seat < 0; ++i)
+                        if (control[static_cast<std::size_t>(i)] == static_cast<Control>(static_cast<int>(Control::Pad0) + j)) seat = i;
+                    const float y = 170.0f + 24.0f * static_cast<float>(j);
+                    std::string line = "Joy " + std::to_string(j) + " - " + (name != nullptr ? name : "?");
+                    if (seat >= 0) line = "P" + std::to_string(seat + 1) + "  " + line;
+                    const float cr = seat >= 0 ? colour[seat][0] : 0.85f, cg = seat >= 0 ? colour[seat][1] : 0.85f,
+                                cb = seat >= 0 ? colour[seat][2] : 0.85f;
+                    renderer.text(*spritesPtr, line, 301, y + 1, 0, 0, 0);
+                    renderer.text(*spritesPtr, line, 300, y, cr, cg, cb);
                 }
                 renderer.text(*spritesPtr, teamPlay ? "Up/Down: select   Left: off   Right: change   T: team   Enter: start" : "Up/Down: select   Left: off   Right: change   Enter: start", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();

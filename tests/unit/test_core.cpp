@@ -22,10 +22,17 @@
 #include "resources/mve_file.hpp"
 #include "resources/unused_voices.hpp"
 #include "resources/settings.hpp"
+#include "rendering/draw_order.hpp"
 #include "rendering/glyphs.hpp"
 #include "resources/ani_file.hpp"
 #include "resources/asset_import.hpp"
+#include "resources/hires_pack.hpp"
+#include "resources/png.hpp"
 #include "resources/scheme_file.hpp"
+#include "resources/bomb_redraw.hpp"
+#include "resources/sprite_refine.hpp"
+#include "resources/steam_art.hpp"
+#include "resources/upscale.hpp"
 
 using namespace ab;
 
@@ -1632,6 +1639,36 @@ void testTrampoline() {
     CHECK(f.w.tile(c) == Tile::Blank);
 }
 
+// A carried or thrown bomb is drawn in front of the player, not behind: it is lifted above
+// the head, and drawn under the player's sprite it looked as if it were behind them.
+void testThrownBombIsDrawnInFront() {
+    Fixture f;
+    f.w.player(0).inventory[kPowGrab] = 1;
+    f.place(0, {6, 2});
+    f.place(1, {14, 10});
+    f.press1(0);                            // drop: lies on the ground
+    f.run(1);
+    CHECK(!bombDrawnOverPlayers(f.w.bombs()[0]));
+    f.in[0].button1 = true;                 // pick it up
+    f.run(1);
+    CHECK(f.w.bombs()[0].mode == BombMode::Held);
+    CHECK(bombDrawnOverPlayers(f.w.bombs()[0]));
+    f.run(12);
+    f.hold(0, 1);
+    f.run(6);
+    f.hold(0, kNoDir);
+    f.in[0].button1 = false;                // throw
+    f.run(1);
+    CHECK(f.w.bombs()[0].mode == BombMode::Flying);
+    CHECK(bombDrawnOverPlayers(f.w.bombs()[0]));
+    for (int i = 0; i < 200 && f.w.bombs()[0].active && f.w.bombs()[0].mode == BombMode::Flying; ++i) {
+        CHECK(bombDrawnOverPlayers(f.w.bombs()[0]));
+        f.run(1);
+    }
+    if (f.w.bombs()[0].active && f.w.bombs()[0].mode == BombMode::Resting)
+        CHECK(!bombDrawnOverPlayers(f.w.bombs()[0]));  // landed: under the players again
+}
+
 void testTeamPlay() {
     World w{Values::defaults(), 5};
     w.startRound(Scheme::pillars(), false);
@@ -2355,6 +2392,280 @@ void testAssetImport() {
     fs::remove_all(root);
 }
 
+// A 16x10 RGBA picture written by zlib (compressed, every PNG line filter in use): the reader must give back its
+// pixels, and a picture written by encodePng must read back unchanged.
+const unsigned char kSamplePng[] = {
+    0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x10,0x00,
+    0x00,0x00,0x0a,0x08,0x06,0x00,0x00,0x00,0xbd,0xbe,0xde,0x9c,0x00,0x00,0x01,0x3e,0x49,0x44,0x41,0x54,0x78,
+    0xda,0xa5,0x90,0x2f,0x48,0x03,0x61,0x00,0xc5,0xdf,0xe7,0x79,0x83,0x1b,0x7a,0x37,0xe6,0x86,0x1e,0xca,0xe1,
+    0x98,0x7f,0x86,0x7a,0x30,0x0e,0x86,0x20,0x06,0x17,0x66,0x59,0xb1,0x58,0xc5,0xa0,0x5d,0x83,0x98,0x06,0x03,
+    0x51,0x10,0x04,0x45,0xd8,0x10,0x04,0x51,0x50,0x04,0x8b,0x16,0xb1,0x5a,0x04,0xa3,0xc5,0xae,0xc1,0x6e,0xb1,
+    0x58,0x9e,0x6f,0xe2,0x74,0x41,0x61,0xe0,0x07,0x3f,0x78,0xdf,0x2f,0x7c,0xdf,0xe3,0x01,0x3a,0x09,0x0b,0x1c,
+    0x8c,0x81,0x79,0x07,0x9c,0xe9,0x02,0xe7,0x3c,0x60,0x31,0x09,0xae,0xa4,0xc1,0x6a,0x1f,0xb8,0xd7,0x0f,0x1e,
+    0x07,0xc0,0x55,0x06,0xbc,0x1d,0x02,0x1f,0x46,0xc1,0xa7,0x31,0xf0,0x35,0x04,0x8c,0xf1,0xc1,0x84,0x65,0xa3,
+    0x05,0x23,0xda,0x76,0x1d,0x7a,0x00,0xc6,0xb7,0x45,0x5c,0x78,0x7a,0x30,0x45,0xe3,0xfb,0xca,0x81,0xc8,0x8a,
+    0x9c,0x5c,0x28,0x17,0x29,0x4f,0x8a,0x69,0x51,0x94,0x9b,0x95,0x2b,0xc3,0xea,0x88,0x50,0x75,0xdc,0x38,0x1c,
+    0xb7,0xdb,0x38,0xae,0x47,0xc7,0x4d,0x2a,0xa7,0x44,0xaf,0xf0,0xe5,0x06,0xe4,0x02,0xe5,0x8c,0xc8,0x8a,0x11,
+    0xb9,0x9c,0xdc,0xb8,0x72,0x88,0xce,0xcf,0x06,0xaa,0x63,0xac,0x38,0x8d,0xe5,0x29,0xa7,0x9a,0xc8,0xa9,0xcd,
+    0xcf,0xfd,0x57,0x07,0xbb,0x02,0xa4,0xab,0x3e,0x87,0x37,0x22,0x16,0xb6,0xca,0x2c,0x6d,0x2f,0x71,0x7e,0xa7,
+    0x82,0xe5,0xdd,0x3a,0xd7,0xf6,0x2f,0xb9,0x59,0xbb,0x67,0xed,0xe0,0x99,0x67,0x87,0xef,0xb8,0x3e,0xea,0xe1,
+    0xdd,0xc9,0x04,0x1f,0x4f,0x4b,0x7c,0x39,0x5f,0xe0,0xdb,0xc5,0x3a,0x4c,0xac,0xde,0x18,0x31,0x40,0x0b,0x1a,
+    0x27,0x68,0xdb,0xfd,0x7f,0x44,0x7b,0xb5,0x31,0x62,0x7b,0x83,0x39,0x6e,0x5e,0x44,0x72,0x05,0xb9,0x1b,0xe5,
+    0xa9,0xbf,0x46,0x54,0x03,0x55,0x34,0x96,0x7e,0xb6,0x72,0xca,0x61,0x93,0x2f,0x57,0xfc,0x76,0x1f,0xf6,0xe3,
+    0x6c,0x2f,0x78,0x14,0xd3,0x7c,0x00,0x00,0x00,0x00,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82,
+};
+
+void samplePixel(int x, int y, unsigned char out[4]) {
+    out[0] = static_cast<unsigned char>((x * 16 + y) & 255);
+    out[1] = static_cast<unsigned char>((y * 25 + x * 3) & 255);
+    out[2] = static_cast<unsigned char>((x * y * 5) & 255);
+    out[3] = (x + y) % 5 != 0 ? 255 : 0;
+}
+
+void testPng() {
+    const auto img = decodePng(std::vector<std::uint8_t>(std::begin(kSamplePng), std::end(kSamplePng)));
+    CHECK(img.has_value());
+    if (!img) return;
+    CHECK(img->width == 16 && img->height == 10);
+    bool same = img->rgba.size() == 16u * 10u * 4u;
+    for (int y = 0; y < 10 && same; ++y)
+        for (int x = 0; x < 16 && same; ++x) {
+            unsigned char want[4];
+            samplePixel(x, y, want);
+            for (int k = 0; k < 4; ++k) same = same && img->rgba[static_cast<std::size_t>((y * 16 + x) * 4 + k)] == want[k];
+        }
+    CHECK(same);
+
+    // Written and read again, with and without alpha (and wider than one stored block).
+    const int w = 300, h = 120;
+    std::vector<std::uint8_t> big(static_cast<std::size_t>(w * h * 4));
+    for (std::size_t i = 0; i < big.size(); ++i) big[i] = static_cast<std::uint8_t>((i * 7 + i / 13) & 255);
+    for (std::size_t i = 3; i < big.size(); i += 4) big[i] = 255;
+    const auto opaque = decodePng(encodePng(w, h, big.data(), false));
+    CHECK(opaque.has_value() && opaque->rgba == big);
+    for (std::size_t i = 3; i < big.size(); i += 4) big[i] = static_cast<std::uint8_t>(i & 255);
+    const auto alpha = decodePng(encodePng(w, h, big.data(), true));
+    CHECK(alpha.has_value() && alpha->rgba == big);
+
+    // Damaged data is refused, not read.
+    std::vector<std::uint8_t> bad(std::begin(kSamplePng), std::end(kSamplePng));
+    bad.resize(bad.size() / 2);
+    CHECK(!decodePng(bad).has_value());
+    CHECK(!decodePng({}).has_value());
+}
+
+void testSpriteRefine() {
+    // An original of 6x6 with a solid 4x4 block in the middle; its enlargement (x4) has a dark
+    // rim of 2 pixels around the block and the model's alpha leaking out by 2 pixels.
+    const int w = 6, h = 6, s = 4;
+    std::vector<std::uint8_t> source(static_cast<std::size_t>(w * h * 4), 0);
+    for (int y = 1; y < 5; ++y)
+        for (int x = 1; x < 5; ++x) {
+            std::uint8_t* p = &source[static_cast<std::size_t>((y * w + x) * 4)];
+            p[0] = 200; p[1] = 100; p[2] = 50; p[3] = 255;
+        }
+    ab::PngImage big;
+    big.width = w * s;
+    big.height = h * s;
+    big.rgba.assign(static_cast<std::size_t>(big.width * big.height * 4), 0);
+    for (int y = 2; y < 22; ++y)
+        for (int x = 2; x < 22; ++x) {
+            std::uint8_t* p = &big.rgba[static_cast<std::size_t>((y * big.width + x) * 4)];
+            const bool rim = x < 6 || y < 6 || x >= 18 || y >= 18;
+            p[0] = rim ? 10 : 200; p[1] = rim ? 10 : 100; p[2] = rim ? 10 : 50; p[3] = 255;
+        }
+    ab::refineSilhouette(big, w, h, source);
+    auto at = [&](int x, int y) { return &big.rgba[static_cast<std::size_t>((y * big.width + x) * 4)]; };
+    CHECK(at(0, 0)[3] == 0);              // far outside stays empty
+    CHECK(at(12, 12)[3] == 255);          // inside stays solid
+    CHECK(at(12, 12)[0] == 200);
+    CHECK(at(3, 12)[3] < 255);            // the edge is soft, not a hard step
+    int dark = 0;
+    for (int y = 0; y < big.height; ++y)
+        for (int x = 0; x < big.width; ++x)
+            if (at(x, y)[3] > 0 && at(x, y)[0] < 100) ++dark;
+    CHECK(dark == 0);                     // no dark rim is left
+    // A frame that does not fit is left alone.
+    ab::PngImage odd;
+    odd.width = 7;
+    odd.height = 7;
+    odd.rgba.assign(7 * 7 * 4, 9);
+    ab::refineSilhouette(odd, w, h, source);
+    CHECK(odd.rgba[0] == 9);
+}
+
+void testBombRedraw() {
+    // A palette in which RGB555 value 1 is a green (index 5), 2 a light green (index 6, a lit
+    // area), 3 a red (index 7, the "cap"), and everything else index 0 (transparent).
+    ab::GamePalette palette;
+    palette.rgb6.assign(768, 0);
+    palette.lookup.assign(32768, 0);
+    auto setColour = [&](int idx, int r, int g, int b) {
+        palette.rgb6[static_cast<std::size_t>(idx * 3)] = static_cast<std::uint8_t>(r);
+        palette.rgb6[static_cast<std::size_t>(idx * 3 + 1)] = static_cast<std::uint8_t>(g);
+        palette.rgb6[static_cast<std::size_t>(idx * 3 + 2)] = static_cast<std::uint8_t>(b);
+    };
+    setColour(5, 0, 40, 0);
+    setColour(6, 0, 62, 0);
+    setColour(7, 60, 5, 0);
+    palette.lookup[1] = 5;
+    palette.lookup[2] = 6;
+    palette.lookup[3] = 7;
+    // A ball of the given size: lit green with a darker crescent at the lower right, and a red cap top left.
+    auto ball = [&](int size) {
+        ab::AniFrame f;
+        f.width = f.height = size;
+        f.hasKey = true;
+        f.key = 0;
+        f.pixels.assign(static_cast<std::size_t>(size * size), 0);
+        const double c = size / 2.0, r = size / 2.0 - 0.5;
+        for (int y = 0; y < size; ++y)
+            for (int x = 0; x < size; ++x) {
+                const double dx = x + 0.5 - c, dy = y + 0.5 - c;
+                if (dx * dx + dy * dy > r * r) continue;
+                const double lx = x + 0.5 - (c - 0.25 * size), ly = y + 0.5 - (c - 0.25 * size);
+                f.pixels[static_cast<std::size_t>(y * size + x)] = lx * lx + ly * ly > 0.55 * size * size ? 1 : 2;
+            }
+        for (int y = 0; y < 3; ++y)
+            for (int x = 0; x < 3; ++x) f.pixels[static_cast<std::size_t>(y * size + x)] = 3;
+        return f;
+    };
+    auto enlarged = [&](const ab::AniFrame& f, int s) {
+        ab::PngImage big;
+        big.width = f.width * s;
+        big.height = f.height * s;
+        big.rgba.assign(static_cast<std::size_t>(big.width * big.height * 4), 128);
+        return big;
+    };
+    ab::PngImage a = enlarged(ball(24), 4), b = enlarged(ball(30), 4);
+    CHECK(ab::redrawBomb(a, ball(24), palette, nullptr));
+    CHECK(ab::redrawBomb(b, ball(30), palette, nullptr));
+    auto centre = [](const ab::PngImage& im) { return &im.rgba[static_cast<std::size_t>((im.height / 2 * im.width + im.width / 2 - 6) * 4)]; };
+    CHECK(centre(a)[3] == 255);
+    CHECK(centre(a)[1] == 248 && centre(a)[0] == 0 && centre(a)[2] == 0);  // the lit colour (62*4), not an average
+    CHECK(centre(a)[0] == centre(b)[0] && centre(a)[1] == centre(b)[1] && centre(a)[2] == centre(b)[2]);  // the same in every frame size
+    CHECK(a.rgba[(a.width * (a.height - 1) + a.width - 1) * 4 + 3] == 0);  // the corner outside the ball is empty
+    // A frame without a ball is left alone.
+    ab::AniFrame cap;
+    cap.width = cap.height = 24;
+    cap.hasKey = true;
+    cap.key = 0;
+    cap.pixels.assign(24 * 24, 3);
+    ab::PngImage c = enlarged(cap, 4);
+    CHECK(!ab::redrawBomb(c, cap, palette, nullptr));
+    CHECK(c.rgba[0] == 128);
+}
+
+void testUpscaleFolders() {
+    // The enlarged pictures sit next to the asset folder, so that an import (which replaces the asset
+    // folder) leaves them alone.
+    CHECK(std::filesystem::path(hiresDirFor("some/where/assets")) == std::filesystem::path("some/where/hires"));
+    CHECK(std::filesystem::path(hiresDirFor("some/where/assets/")) == std::filesystem::path("some/where/hires"));
+    CHECK(std::filesystem::path(hiresDirFor("assets")) == std::filesystem::path("hires"));
+    UpscaleOptions o;
+    o.assetsDir = "no/such/folder";
+    o.esrganExe = "no-such-program";
+    const UpscaleReport r = upscaleAssets(o);
+    CHECK(!r.ok && !r.error.empty());
+}
+
+void testHiresPack() {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "ab_hires_pack_test";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "in", ec);
+
+    // Names of the frames.
+    int frame = 0, colour = 0;
+    CHECK(parseHiresFrameName("12", &frame, &colour) && frame == 12 && colour == -1);
+    CHECK(parseHiresFrameName("7_c3", &frame, &colour) && frame == 7 && colour == 3);
+    CHECK(!parseHiresFrameName("", &frame, &colour) && !parseHiresFrameName("x", &frame, &colour) && !parseHiresFrameName("7_c", &frame, &colour) &&
+          !parseHiresFrameName("7_x3", &frame, &colour) && !parseHiresFrameName("7_c3a", &frame, &colour));
+    CHECK(hiresFrameName(12, -1) == "12" && hiresFrameName(7, 3) == "7_c3");
+
+    // Three pictures of different sizes in a folder, put into a container and taken out again.
+    struct Pic { int frame, colour, w, h; };
+    const std::vector<Pic> pics = {{0, -1, 8, 4}, {0, 2, 8, 4}, {5, -1, 3, 9}};
+    std::vector<std::vector<std::uint8_t>> rgba;
+    for (const Pic& p : pics) {
+        std::vector<std::uint8_t> px(static_cast<std::size_t>(p.w * p.h * 4));
+        for (std::size_t i = 0; i < px.size(); ++i) px[i] = static_cast<std::uint8_t>(i * 5 + p.frame * 3 + p.colour);
+        CHECK(writePngFile((root / "in" / (hiresFrameName(p.frame, p.colour) + ".png")).string(), p.w, p.h, px.data(), true));
+        rgba.push_back(std::move(px));
+    }
+    CHECK(writePngFile((root / "in" / "notes.png").string(), 1, 1, rgba[0].data(), true));  // not a frame: left out
+    const std::string pack = (root / "x.hani").string();
+    CHECK(packHiresFolder((root / "in").string(), 4, pack));
+    const auto opened = HiresPack::open(pack);
+    CHECK(opened.has_value());
+    if (!opened) return;
+    CHECK(opened->scale() == 4 && opened->size() == 3);
+    CHECK(opened->has(0, -1) && opened->has(0, 2) && opened->has(5, -1));
+    CHECK(!opened->has(0, 1) && !opened->has(1, -1) && !opened->has(5, 2));
+    for (std::size_t i = 0; i < pics.size(); ++i) {
+        const auto bytes = opened->read(pics[i].frame, pics[i].colour);
+        const auto img = bytes ? decodePng(*bytes) : std::nullopt;
+        CHECK(img.has_value() && img->width == pics[i].w && img->height == pics[i].h && img->rgba == rgba[i]);
+    }
+    CHECK(!opened->read(9, -1).has_value());
+
+    CHECK(unpackHiresPack(pack, (root / "out").string()));
+    for (const Pic& p : pics) {
+        const auto img = loadPngFile((root / "out" / (hiresFrameName(p.frame, p.colour) + ".png")).string());
+        CHECK(img.has_value() && img->width == p.w && img->height == p.h);
+    }
+
+    // An empty container is a container; a missing or damaged file is refused.
+    CHECK(writeHiresPack((root / "empty.hani").string(), 2, {}));
+    CHECK(HiresPack::open((root / "empty.hani").string()).has_value() && HiresPack::open((root / "empty.hani").string())->size() == 0);
+    CHECK(!HiresPack::open((root / "missing.hani").string()).has_value());
+    auto bytes = readFileBytes(pack);
+    CHECK(bytes.has_value());
+    if (!bytes) return;
+    std::vector<std::uint8_t> cut(bytes->begin(), bytes->begin() + static_cast<std::ptrdiff_t>(bytes->size() - 10));
+    {
+        std::ofstream out(root / "cut.hani", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(cut.data()), static_cast<std::streamsize>(cut.size()));
+    }
+    CHECK(!HiresPack::open((root / "cut.hani").string()).has_value());  // the last picture reaches past the end
+    std::vector<std::uint8_t> wrong = *bytes;
+    wrong[0] = 'X';
+    {
+        std::ofstream out(root / "wrong.hani", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(wrong.data()), static_cast<std::streamsize>(wrong.size()));
+    }
+    CHECK(!HiresPack::open((root / "wrong.hani").string()).has_value());
+    fs::remove_all(root, ec);
+}
+
+void testSteamArt() {
+    namespace fs = std::filesystem;
+    const fs::path out = fs::temp_directory_path() / "ab_steam_art_test";
+    std::error_code ec;
+    fs::remove_all(out, ec);
+    SteamArtOptions o;
+    o.free = true;
+    o.outDir = out.string();
+    const SteamArtReport r = makeSteamArt(o);
+    CHECK(r.ok && r.source == "free");
+    struct Want { const char* name; int w, h; bool alpha; };
+    const Want want[] = {{"capsule_600x900.png", 600, 900, false}, {"hero_3840x1240.png", 3840, 1240, false}, {"logo_1280x720.png", 1280, 720, true},
+                         {"wide_capsule_920x430.png", 920, 430, false}, {"icon_256.png", 256, 256, true}};
+    for (const Want& w : want) {
+        const auto img = loadPngFile((out / w.name).string());
+        CHECK(img.has_value() && img->width == w.w && img->height == w.h);
+        if (!img) continue;
+        CHECK(img->rgba[3] == (w.alpha ? 0 : 255));  // the corner: the logo and the icon are transparent there, the rest is not
+        bool drawn = false;
+        for (std::size_t i = 3; i < img->rgba.size() && !drawn; i += 4) drawn = img->rgba[i] == 255;
+        CHECK(drawn);
+    }
+    const auto ico = readFileBytes((out / "icon.ico").string());
+    CHECK(ico.has_value() && ico->size() > 22 && (*ico)[2] == 1 && (*ico)[4] == 1 && (*ico)[22] == 0x89 && (*ico)[23] == 'P');  // one image, a PNG
+    fs::remove_all(out, ec);
+}
+
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"geometry", testGeometry},
@@ -2362,6 +2673,12 @@ int main() {
         {"values parser", testValuesParser},
         {"scheme file", testSchemeFile},
         {"ani parser", testAniParser},
+        {"png", testPng},
+        {"upscale folders", testUpscaleFolders},
+        {"hires pack", testHiresPack},
+        {"steam art", testSteamArt},
+        {"sprite refine", testSpriteRefine},
+        {"bomb redraw", testBombRedraw},
         {"font parser", testFontParser},
         {"start freeze", testStartFreeze},
         {"speed", testSpeed},
@@ -2419,6 +2736,7 @@ int main() {
         {"conveyor is quiet", testConveyorIsQuiet},
         {"warp", testWarp},
         {"trampoline", testTrampoline},
+        {"thrown bomb in front", testThrownBombIsDrawnInFront},
         {"team play", testTeamPlay},
         {"dud", testDud},
         {"events", testEvents},

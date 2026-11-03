@@ -20,7 +20,9 @@ public:
     // A match is being played with the pads: only Start is passed on.
     void setPlaying(bool on);
     void button(Button b, bool down, std::uint64_t nowMs);
-    // The left stick of pad `pad` (0-3), each axis -32768..32767.
+    // The most gamepads at once: one per seat of a match.
+    static constexpr int kMaxPads = 10;
+    // The left stick of pad `pad` (0 to kMaxPads - 1), each axis -32768..32767.
     void stick(int pad, int x, int y, std::uint64_t nowMs);
     // Once per frame: a held direction repeats.
     void update(std::uint64_t nowMs);
@@ -31,10 +33,14 @@ private:
     void setDirection(int source, int dir, std::uint64_t nowMs);
     int heldDirection() const;
 
-    static constexpr int kSources = 5;  // the d-pads (taken together), then four sticks
+    static constexpr int kSources = 1 + kMaxPads;  // the d-pads (taken together), then one stick per pad
     bool playing_ = false;
     std::array<bool, 4> dpad_{};
-    std::array<int, kSources> dir_{-1, -1, -1, -1, -1};
+    std::array<int, kSources> dir_ = [] {
+        std::array<int, kSources> d{};
+        d.fill(-1);
+        return d;
+    }();
     int held_ = -1;               // the direction that repeats
     std::uint64_t repeatAt_ = 0;
     std::vector<PadKey> out_;
