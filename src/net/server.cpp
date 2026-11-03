@@ -479,7 +479,7 @@ void Server::changeOption(Option option, int direction) {
                 loadScheme();
             }
             break;
-        case Option::Wins: s.winsNeeded = std::clamp(s.winsNeeded + d, 1, 9); break;
+        case Option::Wins: s.winsNeeded = std::clamp(s.winsNeeded + d, 1, 10); break;
         case Option::TeamPlay: s.teamPlay = !s.teamPlay; break;
         case Option::PlayTime: s.playTime = Settings::nextPlayTime(s.playTime, d); break;
         case Option::Enclosement: s.enclosementDepth = (s.enclosementDepth + d + 4) % 4; break;

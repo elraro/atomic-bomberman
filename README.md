@@ -44,6 +44,7 @@ The original is then run side by side (under Wine, driven by scripted key presse
 | ⏱️ **The endgame** | Round clock, "hurry", closing walls, draws, match victories |
 | 🆓 **Playable without the original** | A free set of graphics, sounds, music and arenas, made by the program's own code |
 | 🎨 **Original look and sound** | Graphics, HUD fonts, sound effects and music loaded from your own copy of the game, if you have one |
+| 🔍 **Sharper graphics (optional)** | `atomic --upscale-assets` enlarges the imported graphics four times with Real-ESRGAN, on your computer and repeatable (`--esrgan-gpu`, `--hires-verify`); the game then draws them in a large window, with smooth outlines and redrawn bombs ([`INSTALL.md`](INSTALL.md#4-sharper-graphics-at-a-large-window-optional)) |
 | 🧪 **Tested** | Automated tests of the game rules run on every push (67 tests at the time of writing); 33 mechanics confirmed against the running original |
 
 ## 📸 Screenshots

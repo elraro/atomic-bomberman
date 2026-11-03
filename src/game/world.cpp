@@ -1,5 +1,6 @@
 #include "game/world.hpp"
 
+#include <cmath>
 #include <algorithm>
 #include <cstdlib>
 
