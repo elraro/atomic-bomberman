@@ -1,5 +1,6 @@
 #include "app/pad_keys.hpp"
 
+#include <cmath>
 #include <cstdlib>
 
 namespace ab {
