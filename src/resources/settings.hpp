@@ -18,6 +18,7 @@ struct Settings {
     bool winByKills = false;          // win_by_kills
     bool goldman = false;             // goldman (the roulette)
     std::string scheme = "BASIC";     // schemefilename, stored with .SCH
+    int schemeRandom = 0;             // scheme_random: 0 the chosen scheme, 1 a random one per match, 2 a random one per round (not in the original)
     int playTime = 150;               // playtime in seconds; kInfiniteTime = no limit
     bool diseasesDestroyable = true;  // diseases_destroyable
     bool disableGameMusic = false;    // disable_game_music
@@ -26,7 +27,8 @@ struct Settings {
     int soundVolume = 100;            // "Adjust Audio" screen was never made)
     bool unusedVoices = false;        // unused_voices: also play the voice clips of the disc that the original never plays (not in the original)
     bool assignKeyboards = true;      // assign_keyboards: a keyboard player in the default player list
-    bool freeAssets = false;          // free_assets: play with the free graphics and sounds although original data is there (not in the original)
+    bool menuAllPads = false;         // menu_all_pads: every gamepad works the menus, not only Joy 0 (not in the original)
+    bool freeAssets = false;        // free_assets: play with the free graphics and sounds although original data is there (not in the original)
     bool fullscreen = false;          // fullscreen: the game fills the screen instead of a window (not in the original, which always fills it)
     // Network play (this implementation's client-server mode; not the original's keys).
     std::string netName;              // net_name: the player's name; empty until first set

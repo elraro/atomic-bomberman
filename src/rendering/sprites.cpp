@@ -1,26 +1,38 @@
 #include "rendering/sprites.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cctype>
 
 #include "free/free_data.hpp"
 #include "rendering/gl.hpp"
 
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
+
+#include "resources/png.hpp"
+#include "resources/bomb_redraw.hpp"
+#include "resources/sprite_refine.hpp"
+#include "resources/upscale.hpp"
 
 namespace ab {
 
 namespace {
 
 std::size_t gTextureBytes = 0;  // pixels uploaded so far, for the debug window
+bool gHiresEnabled = true;
+bool gHiresSmoothEdges = true;
 
-unsigned uploadRgba(int w, int h, const std::vector<std::uint8_t>& rgba) {
+// `smooth`: enlarged pictures are drawn smaller than they are, so they are filtered; the
+// original's small pictures are drawn as they are, with hard pixels.
+unsigned uploadRgba(int w, int h, const std::vector<std::uint8_t>& rgba, bool smooth = false) {
     gTextureBytes += rgba.size();
     unsigned tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, smooth ? GL_LINEAR : GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, smooth ? GL_LINEAR : GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -29,6 +41,27 @@ unsigned uploadRgba(int w, int h, const std::vector<std::uint8_t>& rgba) {
 }
 
 }  // namespace
+
+void SpriteBank::setHiresEnabled(bool on) { gHiresEnabled = on; }
+
+void SpriteBank::setHiresSmoothEdges(bool on) { gHiresSmoothEdges = on; }
+
+unsigned SpriteBank::hiresTexture(const std::string& path, int w, int h, const std::function<void(PngImage&)>& post) const {
+    if (hiresDir_.empty() || w < 1 || h < 1) return 0;
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) return 0;
+    return hiresTextureFrom(loadPngFile(path), path, w, h, post);
+}
+
+unsigned SpriteBank::hiresTextureFrom(std::optional<PngImage> img, const std::string& label, int w, int h, const std::function<void(PngImage&)>& post) const {
+    if (!img || img->width % w != 0 || img->height % h != 0 || img->width / w != img->height / h) {
+        std::fprintf(stderr, "WARN  enlarged picture does not fit, the original is used: %s\n", label.c_str());
+        return 0;
+    }
+    PngImage big = std::move(*img);
+    if (post && gHiresSmoothEdges) post(big);
+    return uploadRgba(big.width, big.height, big.rgba, true);
+}
 
 unsigned SpriteBank::picture(const std::string& name) {
     const auto it = pictures_.find(name);
@@ -40,15 +73,18 @@ unsigned SpriteBank::picture(const std::string& name) {
             pictureSizes_[name] = {pic->width, pic->height};
         }
     } else if (auto pcx = loadPcxFile(gameDir_ + "/data/res/" + name + ".pcx")) {
-        std::vector<std::uint8_t> rgba(pcx->indices.size() * 4);
-        for (std::size_t i = 0; i < pcx->indices.size(); ++i) {
-            const std::uint8_t* c = &pcx->palette[static_cast<std::size_t>(pcx->indices[i]) * 3];
-            rgba[i * 4] = c[0];
-            rgba[i * 4 + 1] = c[1];
-            rgba[i * 4 + 2] = c[2];
-            rgba[i * 4 + 3] = 255;
+        tex = hiresTexture(hiresDir_ + "/res/" + name + ".png", pcx->width, pcx->height);
+        if (tex == 0) {
+            std::vector<std::uint8_t> rgba(pcx->indices.size() * 4);
+            for (std::size_t i = 0; i < pcx->indices.size(); ++i) {
+                const std::uint8_t* c = &pcx->palette[static_cast<std::size_t>(pcx->indices[i]) * 3];
+                rgba[i * 4] = c[0];
+                rgba[i * 4 + 1] = c[1];
+                rgba[i * 4 + 2] = c[2];
+                rgba[i * 4 + 3] = 255;
+            }
+            tex = uploadRgba(pcx->width, pcx->height, rgba);
         }
-        tex = uploadRgba(pcx->width, pcx->height, rgba);
         pictureSizes_[name] = {pcx->width, pcx->height};
     }
     pictures_[name] = tex;
@@ -99,7 +135,108 @@ bool SpriteBank::addAni(const std::string& path) {
     const std::size_t fi = files_.size();
     for (std::size_t s = 0; s < file->sequences.size(); ++s) sequences_[file->sequences[s].name] = {fi, s};
     files_.push_back(std::move(*file));
+    std::string stem = std::filesystem::path(path).stem().string();
+    std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    hiresPacks_.push_back(hiresDir_.empty() ? std::nullopt : HiresPack::open(hiresDir_ + "/ani/" + stem + ".hani"));
+    fileStems_.push_back(std::move(stem));
     return true;
+}
+
+void SpriteBank::addMenuBomb() {
+    const auto trig = sequences_.find("bomb trigger green");
+    const auto reg = sequences_.find("bomb regular green");
+    if (trig == sequences_.end() || reg == sequences_.end() || palette_.lookup.size() < 32768 || palette_.rgb6.size() < 768) return;
+    const AniFile& tf = files_[trig->second.file];
+    const AniFile& rf = files_[reg->second.file];
+    const AniSequence& ts = tf.sequences[trig->second.seq];
+    const AniSequence& rs = rf.sequences[reg->second.seq];
+    if (ts.steps.empty() || rs.steps.empty()) return;
+    const AniFrame& big = tf.frames[static_cast<std::size_t>(ts.steps[0].frame)];  // the largest: "BOOM" can be read
+    if (big.pixels.empty() || !big.hasKey) return;
+    int widest = 1;
+    for (const AniStep& st : rs.steps) widest = std::max(widest, rf.frames[static_cast<std::size_t>(st.frame)].width);
+
+    // The ball (the green of the original's palette) gives the centre the bomb swells and shrinks around;
+    // the fuse cap sticks out of it, so the window around that centre is as large as the picture needs.
+    auto opaque = [&](int x, int y) { return big.pixels[static_cast<std::size_t>(y * big.width + x)] != big.key; };
+    int bx0 = big.width, by0 = big.height, bx1 = -1, by1 = -1;
+    for (int y = 0; y < big.height; ++y)
+        for (int x = 0; x < big.width; ++x) {
+            if (!opaque(x, y)) continue;
+            const std::uint8_t idx = palette_.lookup[big.pixels[static_cast<std::size_t>(y * big.width + x)] & 0x7FFF];
+            if (idx == 0) continue;
+            const std::uint8_t* c = &palette_.rgb6[static_cast<std::size_t>(idx) * 3];
+            if (!(c[1] > 1.25f * c[0] && c[1] > 1.5f * c[2])) continue;
+            bx0 = std::min(bx0, x);
+            by0 = std::min(by0, y);
+            bx1 = std::max(bx1, x);
+            by1 = std::max(by1, y);
+        }
+    if (bx1 < bx0) return;
+    const int ax = (bx0 + bx1 + 1) / 2, ay = (by0 + by1 + 1) / 2;  // the centre, on a whole pixel
+    int half = 1;
+    for (int y = 0; y < big.height; ++y)
+        for (int x = 0; x < big.width; ++x)
+            if (opaque(x, y)) half = std::max(half, std::max(std::max(ax - x, x + 1 - ax), std::max(ay - y, y + 1 - ay)));
+    const int window = 2 * half;
+    menuBombFile_ = trig->second.file;
+    menuBombFrame_ = ts.steps[0].frame;
+    menuBombX_ = ax - half;
+    menuBombY_ = ay - half;
+    menuBombWindow_ = window;
+
+    AniFile out;
+    AniSequence seq;
+    seq.name = "menu bomb";
+    std::map<int, int> made;  // target width -> frame index
+    for (const AniStep& st : rs.steps) {
+        const int target = rf.frames[static_cast<std::size_t>(st.frame)].width;
+        auto it = made.find(target);
+        if (it == made.end()) {
+            // Always an even number of pixels, the hot spot in the middle: the ball keeps its centre in every step.
+            const int size = std::max(2, 2 * static_cast<int>(std::lround(static_cast<float>(window) * static_cast<float>(target) / static_cast<float>(widest) / 2.0f)));
+            AniFrame f;
+            f.width = f.height = size;
+            f.hotX = f.hotY = size / 2;
+            f.hasKey = true;
+            f.key = big.key;
+            f.pixels.assign(static_cast<std::size_t>(size * size), big.key);
+            const float step = static_cast<float>(window) / static_cast<float>(size);  // source pixels per new pixel
+            // Each new pixel is the mean of the source area it covers; mostly empty areas stay transparent.
+            for (int y = 0; y < size; ++y)
+                for (int x = 0; x < size; ++x) {
+                    const float x0 = static_cast<float>(x) * step + static_cast<float>(menuBombX_), x1 = x0 + step;
+                    const float y0 = static_cast<float>(y) * step + static_cast<float>(menuBombY_), y1 = y0 + step;
+                    float sum[3] = {0, 0, 0}, solid = 0, area = 0;
+                    for (int sy = static_cast<int>(std::floor(y0)); sy < static_cast<int>(std::ceil(y1)); ++sy)
+                        for (int sx = static_cast<int>(std::floor(x0)); sx < static_cast<int>(std::ceil(x1)); ++sx) {
+                            const float w = (std::min(x1, static_cast<float>(sx + 1)) - std::max(x0, static_cast<float>(sx))) *
+                                            (std::min(y1, static_cast<float>(sy + 1)) - std::max(y0, static_cast<float>(sy)));
+                            area += w;
+                            if (sx < 0 || sy < 0 || sx >= big.width || sy >= big.height) continue;
+                            const std::uint16_t c = big.pixels[static_cast<std::size_t>(sy * big.width + sx)];
+                            if (c == big.key) continue;
+                            solid += w;
+                            sum[0] += w * static_cast<float>((c >> 10) & 31);
+                            sum[1] += w * static_cast<float>((c >> 5) & 31);
+                            sum[2] += w * static_cast<float>(c & 31);
+                        }
+                    if (area <= 0 || solid * 2.0f < area) continue;
+                    auto c = static_cast<std::uint16_t>((std::lround(sum[0] / solid) << 10) | (std::lround(sum[1] / solid) << 5) | std::lround(sum[2] / solid));
+                    if (c == big.key) c ^= 1;  // never equal to the key colour
+                    f.pixels[static_cast<std::size_t>(y * size + x)] = c;
+                }
+            it = made.emplace(target, static_cast<int>(out.frames.size())).first;
+            out.frames.push_back(std::move(f));
+        }
+        seq.steps.push_back({it->second, 0, 0});
+    }
+    out.sequences.push_back(seq);
+    const std::size_t fi = files_.size();
+    sequences_[seq.name] = {fi, 0};
+    files_.push_back(std::move(out));
+    hiresPacks_.push_back(std::nullopt);
+    fileStems_.push_back("menubomb");
 }
 
 bool SpriteBank::loadFree(int level) {
@@ -131,6 +268,15 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
     }
     palette_ = std::move(*pal);
     gameDir_ = gameDir;
+    hiresDir_.clear();
+    if (gHiresEnabled) {
+        const std::string dir = hiresDirFor(gameDir);
+        std::error_code ec;
+        if (std::filesystem::is_directory(dir, ec)) {
+            hiresDir_ = dir;
+            std::fprintf(stderr, "INFO  Enlarged graphics: %s\n", dir.c_str());
+        }
+    }
     for (int i = 0; i < 10; ++i)
         if (auto r = readFileBytes(gameDir + "/" + std::to_string(i) + ".rmp"); r && r->size() >= 256)
             remap_[static_cast<std::size_t>(i)].assign(r->begin(), r->begin() + 256);
@@ -154,6 +300,7 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
     addAni(ani + "hurry.ani");
     addAni(ani + "conveyor.ani");
     addAni(ani + "aliens1.ani");
+    addMenuBomb();
     for (int n = 1; n <= 4; ++n) {
         addAni(ani + "punbomb" + std::to_string(n) + ".ani");
         addAni(ani + "bwalk" + std::to_string(n) + ".ani");
@@ -163,15 +310,18 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
     for (int n = 1; n <= 17; ++n) addAni(ani + "xplode" + std::to_string(n) + ".ani");
 
     if (auto pcx = loadPcxFile(gameDir + "/data/res/field" + lv + ".pcx")) {
-        std::vector<std::uint8_t> rgba(pcx->indices.size() * 4);
-        for (std::size_t i = 0; i < pcx->indices.size(); ++i) {
-            const std::uint8_t* c = &pcx->palette[static_cast<std::size_t>(pcx->indices[i]) * 3];
-            rgba[i * 4] = c[0];
-            rgba[i * 4 + 1] = c[1];
-            rgba[i * 4 + 2] = c[2];
-            rgba[i * 4 + 3] = 255;
+        background_ = hiresTexture(hiresDir_ + "/res/field" + lv + ".png", pcx->width, pcx->height);
+        if (background_ == 0) {
+            std::vector<std::uint8_t> rgba(pcx->indices.size() * 4);
+            for (std::size_t i = 0; i < pcx->indices.size(); ++i) {
+                const std::uint8_t* c = &pcx->palette[static_cast<std::size_t>(pcx->indices[i]) * 3];
+                rgba[i * 4] = c[0];
+                rgba[i * 4 + 1] = c[1];
+                rgba[i * 4 + 2] = c[2];
+                rgba[i * 4 + 3] = 255;
+            }
+            background_ = uploadRgba(pcx->width, pcx->height, rgba);
         }
-        background_ = uploadRgba(pcx->width, pcx->height, rgba);
     } else {
         std::fprintf(stderr, "WARN  cannot read field%s.pcx\n", lv.c_str());
     }
@@ -213,25 +363,35 @@ int SpriteBank::sequenceLength(const std::string& name) const {
 }
 
 unsigned SpriteBank::makeTexture(const AniFrame& f, int colour) {
-    std::vector<std::uint8_t> rgba(f.pixels.size() * 4);
     const std::vector<std::uint8_t>* remap =
         (colour >= 0 && colour < 10 && !remap_[static_cast<std::size_t>(colour)].empty())
             ? &remap_[static_cast<std::size_t>(colour)]
             : nullptr;
-    for (std::size_t i = 0; i < f.pixels.size(); ++i) {
-        const std::uint16_t px = f.pixels[i];
-        if (f.hasKey && px == f.key) continue;  // transparent
-        // As in the original: RGB555 -> palette index, optional player remap, palette colour.
-        std::uint8_t idx = palette_.lookup[px & 0x7FFF];
-        if (idx == 0) continue;  // index 0 is the transparent colour on screen
-        if (remap != nullptr && (*remap)[idx] != 0) idx = (*remap)[idx];
-        const std::uint8_t* c = &palette_.rgb6[static_cast<std::size_t>(idx) * 3];
-        rgba[i * 4] = static_cast<std::uint8_t>(c[0] * 4 > 255 ? 255 : c[0] * 4);
-        rgba[i * 4 + 1] = static_cast<std::uint8_t>(c[1] * 4 > 255 ? 255 : c[1] * 4);
-        rgba[i * 4 + 2] = static_cast<std::uint8_t>(c[2] * 4 > 255 ? 255 : c[2] * 4);
-        rgba[i * 4 + 3] = 255;
+    return uploadRgba(f.width, f.height, aniFrameRgba(f, palette_, remap));
+}
+
+bool SpriteBank::spriteRgba(const std::string& sequence, int index, int colour, int* width, int* height, std::vector<std::uint8_t>* rgba) {
+    if (free_) {
+        const auto found = art_.sequences.find(sequence);
+        if (found == art_.sequences.end() || found->second.empty()) return false;
+        const FreeFrame& f = art_.frames[static_cast<std::size_t>(found->second[static_cast<std::size_t>(index) % found->second.size()])];
+        *width = f.width, *height = f.height;
+        *rgba = colouredFrame(f, colour);
+        return true;
     }
-    return uploadRgba(f.width, f.height, rgba);
+    const auto it = sequences_.find(sequence);
+    if (it == sequences_.end()) return false;
+    const AniSequence& seq = files_[it->second.file].sequences[it->second.seq];
+    if (seq.steps.empty()) return false;
+    const int frame = seq.steps[static_cast<std::size_t>(index) % seq.steps.size()].frame;
+    const auto& frames = files_[it->second.file].frames;
+    if (frame < 0 || static_cast<std::size_t>(frame) >= frames.size() || frames[static_cast<std::size_t>(frame)].pixels.empty()) return false;
+    const AniFrame& f = frames[static_cast<std::size_t>(frame)];
+    const std::vector<std::uint8_t>* remap =
+        (colour >= 0 && colour < 10 && !remap_[static_cast<std::size_t>(colour)].empty()) ? &remap_[static_cast<std::size_t>(colour)] : nullptr;
+    *width = f.width, *height = f.height;
+    *rgba = aniFrameRgba(f, palette_, remap);
+    return true;
 }
 
 std::optional<Sprite> SpriteBank::sprite(const std::string& sequence, int index, int colour) {
@@ -257,7 +417,51 @@ std::optional<Sprite> SpriteBank::sprite(const std::string& sequence, int index,
 
     const auto key = std::make_tuple(it->second.file, step.frame, colour);
     auto tex = textures_.find(key);
-    if (tex == textures_.end()) tex = textures_.emplace(key, makeTexture(f, colour)).first;
+    if (tex == textures_.end()) {
+        unsigned texture = 0;
+        if (!hiresDir_.empty()) {
+            // The enlarged frame in the player's colour if it differs from the plain one, else the plain one.
+            // "menu bomb" has no enlarged pictures of its own: it draws the trigger bomb's largest one, made smaller by its size.
+            const bool menu = fileStems_[it->second.file] == "menubomb";
+            const std::size_t hf = menu ? menuBombFile_ : it->second.file;
+            const int hframe = menu ? menuBombFrame_ : step.frame;
+            const AniFrame& src = menu ? files_[hf].frames[static_cast<std::size_t>(hframe)] : f;
+            const std::string base = hiresDir_ + "/ani/" + fileStems_[hf] + "/" + std::to_string(hframe);
+            const std::vector<std::uint8_t> plain = aniFrameRgba(src, palette_, nullptr);  // the mask does not depend on the colour
+            const std::vector<std::uint8_t>* table = (colour >= 0 && colour < 10 && !remap_[static_cast<std::size_t>(colour)].empty()) ? &remap_[static_cast<std::size_t>(colour)] : nullptr;
+            const std::string& stem = fileStems_[hf];
+            const bool bomb = stem == "bombs" || stem == "bombanim" || stem == "bomanim2" || stem == "triganim" || stem == "trigbomb";  // balls with a fuse cap
+            const auto post = [&](PngImage& big) {
+                refineSilhouette(big, src.width, src.height, plain);
+                if (bomb) redrawBomb(big, src, palette_, table);
+                if (menu) {  // only the window around the ball's centre, as the frames of "menu bomb" are
+                    const int m = big.width / src.width, side = menuBombWindow_ * m;
+                    PngImage win;
+                    win.width = win.height = side;
+                    win.rgba.assign(static_cast<std::size_t>(side) * static_cast<std::size_t>(side) * 4, 0);
+                    for (int y = 0; y < side; ++y)
+                        for (int x = 0; x < side; ++x) {
+                            const int sx = x + menuBombX_ * m, sy = y + menuBombY_ * m;
+                            if (sx < 0 || sy < 0 || sx >= big.width || sy >= big.height) continue;
+                            std::copy_n(&big.rgba[(static_cast<std::size_t>(sy) * big.width + sx) * 4], 4, &win.rgba[(static_cast<std::size_t>(y) * side + x) * 4]);
+                        }
+                    big = std::move(win);
+                }
+            };
+            // The container of the file first, then the folder of PNGs that older runs made.
+            const auto& pack = hiresPacks_[hf];
+            const auto enlarged = [&](int c) -> unsigned {
+                if (pack)
+                    if (const auto bytes = pack->read(hframe, c))
+                        if (const unsigned t = hiresTextureFrom(decodePng(*bytes), stem + ".hani/" + hiresFrameName(hframe, c), src.width, src.height, post)) return t;
+                return hiresTexture(base + (c >= 0 ? "_c" + std::to_string(c) : std::string()) + ".png", src.width, src.height, post);
+            };
+            if (colour >= 0) texture = enlarged(colour);
+            if (texture == 0) texture = enlarged(-1);
+        }
+        if (texture == 0) texture = makeTexture(f, colour);
+        tex = textures_.emplace(key, texture).first;
+    }
     return Sprite{tex->second, f.width, f.height, f.hotX, f.hotY, step.dx, step.dy};
 }
 

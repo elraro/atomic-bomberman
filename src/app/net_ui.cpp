@@ -694,7 +694,7 @@ void NetUi::startHost() {
     config.scheme = cfg_.scheme;
     // The lobby starts with the settings of the local game.
     config.settings.level = cfg_.level;
-    config.settings.winsNeeded = std::clamp(cfg_.winsNeeded, 1, 9);
+    config.settings.winsNeeded = std::clamp(cfg_.winsNeeded, 1, 10);
     config.settings.teamPlay = cfg_.teamPlay;
     config.settings.playTime = cfg_.playTime;
     config.settings.enclosementDepth = cfg_.enclosementDepth;
@@ -1633,18 +1633,26 @@ void NetUi::drawResult(Renderer& r, SpriteBank& bank) {
         std::string who = nameOf(end.score.matchWinner);
         for (char& ch : who) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
         const std::string line = who + " WINS THE MATCH!";
-        label(r, bank, line, 320.0f - r.textWidth(bank, line) / 2.0f, 440, 1.0f, 0.95f, 0.3f);
+        constexpr float kHeadSlot = 30.0f;
+        const float left = 320.0f - (kHeadSlot + r.textWidth(bank, line)) / 2.0f;
+        r.playerHead(bank, world.displayColour(end.score.matchWinner), left, 438);
+        label(r, bank, line, left + kHeadSlot, 440, 1.0f, 0.95f, 0.3f);
     } else {
         r.image(bank.picture("results"));
         label(r, bank, "(Match winner must score " + std::to_string(client_.winsNeeded()) + (client_.setup().winByKills ? " kills)" : " victories)"), 150, 94, 1, 1, 1);
-        label(r, bank, "Game Winner was " + nameOf(end.winner) + " !", 150, 140, 1, 1, 1);
+        // Modern addition: the player's robot head in front of each name, so the colour tells who is who.
+        constexpr float kHeadSlot = 30.0f;
+        r.playerHead(bank, world.displayColour(end.winner), 150, 139);
+        label(r, bank, "Game Winner was " + nameOf(end.winner) + " !", 150 + kHeadSlot, 140, 1, 1, 1);
         int row = 0;
         for (int i = 0; i < kMaxPlayers; ++i) {
             if (!world.player(i).present) continue;
             const std::string line = nameOf(i) + "   score: " + std::to_string(end.score.wins[static_cast<std::size_t>(i)]) + " (kills: " +
                                      std::to_string(end.score.kills[static_cast<std::size_t>(i)]) + ")";
             const bool won = i == end.winner;
-            label(r, bank, line, 150, 210.0f + 20.0f * static_cast<float>(row++), won ? 1.0f : 0.8f, won ? 0.95f : 0.8f, won ? 0.3f : 0.8f);
+            const float y = 210.0f + 20.0f * static_cast<float>(row++);
+            r.playerHead(bank, world.displayColour(i), 150, y - 2);
+            label(r, bank, line, 150 + kHeadSlot, y, won ? 1.0f : 0.8f, won ? 0.95f : 0.8f, won ? 0.3f : 0.8f);
         }
     }
     if (menuOpen_ || osk_.shown()) return;
