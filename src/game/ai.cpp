@@ -1,5 +1,6 @@
 #include "game/ai.hpp"
 
+#include <cmath>
 #include <algorithm>
 #include <cstdlib>
 

@@ -1,5 +1,6 @@
 #include "resources/png.hpp"
 
+#include <cmath>
 #include <algorithm>
 #include <array>
 #include <cstdlib>

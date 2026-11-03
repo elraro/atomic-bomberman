@@ -1,5 +1,6 @@
 #include "net/client.hpp"
 
+#include <cmath>
 #include <algorithm>
 #include <exception>
 #include <fstream>
