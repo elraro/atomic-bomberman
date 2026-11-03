@@ -1,6 +1,7 @@
 #include "rendering/sprites.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 
 #include "free/free_data.hpp"
