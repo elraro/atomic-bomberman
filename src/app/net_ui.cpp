@@ -694,7 +694,7 @@ void NetUi::startHost() {
     config.scheme = cfg_.scheme;
     // The lobby starts with the settings of the local game.
     config.settings.level = cfg_.level;
-    config.settings.winsNeeded = std::clamp(cfg_.winsNeeded, 1, 9);
+    config.settings.winsNeeded = std::clamp(cfg_.winsNeeded, 1, 10);
     config.settings.teamPlay = cfg_.teamPlay;
     config.settings.playTime = cfg_.playTime;
     config.settings.enclosementDepth = cfg_.enclosementDepth;

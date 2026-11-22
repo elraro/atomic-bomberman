@@ -1699,7 +1699,7 @@ int runGame(int argc, char** argv, bool& again) {
                     }
                     if (d != 0 && setupRow == 1 && !schemes.empty())
                         schemeIndex = (schemeIndex + d + static_cast<int>(schemes.size())) % static_cast<int>(schemes.size());
-                    if (d != 0 && setupRow == 2) winsNeeded = std::clamp(winsNeeded + d, 1, 9);
+                    if (d != 0 && setupRow == 2) winsNeeded = std::clamp(winsNeeded + d, 1, 10);
                     if (key == SDLK_ESCAPE) screen = Screen::PlayerList;
                     if (key == SDLK_RETURN) {
                         newMatch();
