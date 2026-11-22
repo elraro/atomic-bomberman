@@ -111,10 +111,10 @@ The document is JSON with a detached signature, fetched over HTTPS when the play
 
 ```text
 serial, issued, expires
-master: URL, and the pins of its TLS key (see below)
+master: URL, and how its TLS server is recognised: pins of its key, roots its chain may lead to, or both (see below)
 trust: root keys that may sign server certificates, revoked certificate serials
 stun: list of host:port
-turn: list of host:port with transport (UDP, TCP, TLS), credentials come from the master
+turn: list of host:port with transport (UDP, TCP, TLS), credentials come from the master; a TLS one may name pins or roots as the master does
 protocol: lowest and current game protocol accepted
 status: ok / maintenance, message
 flags: free-form switches
@@ -124,7 +124,12 @@ flags: free-form switches
 - **Nothing is cached.** If no current document can be fetched and verified, everything that rests on it is refused, with the reason shown: the list of games, joining by code, relayed connections, the "verified" mark of a server, tournaments. Outdated addresses or an outdated list of revoked certificates are worse than no connection. Playing on the local network and joining by address need no configuration and keep working.
 - Because of that the file must be easy to keep reachable: it is a static signed file, the bootstrap may name several URLs for it (mirrors on different hosts), and any one that verifies will do. A mirror cannot forge it; it can only serve an older one, which the expiry (seven days at most) bounds. The highest serial seen is remembered, as a number only, to refuse a step back.
 - A command-line option and a settings key point the game at another bootstrap URL and key, for a self-hosted community.
-- **How the game knows the master (as built).** It does not consult the system's list of certificate authorities, which differs on every platform. The configuration names the master's TLS key by its pin (SHA-256 of the key), and the game talks to nobody else; the configuration itself may be fetched from anywhere, since its signature is what is checked. So the one thing a game trusts for online play is the root key in its bootstrap.
+- **How the game knows the master (as built).** It does not consult the system's list of certificate authorities, which differs on every platform. The configuration says how the master's TLS server is recognised, in one of two ways or both (`tls_pins`, `tls_roots` under `master`), and the game talks to nobody else; the configuration itself may be fetched from anywhere, since its signature is what is checked. So the one thing a game trusts for online play is the root key in its bootstrap.
+  - **Pins:** SHA-256 of the server key's SubjectPublicKeyInfo. Only that key is taken, even with a certificate from an authority. A new key means a newly signed configuration (list old and new together while changing).
+  - **Roots** (added 2026-11-22): certificates of authorities, in PEM, for instance Let's Encrypt's ISRG Root X1 and X2. The server's chain must lead to one of them, be within its dates, and be made out to the host name in the URL. The key may then change at every renewal (a proxy such as Traefik renewing by itself). The roots travel in the signed configuration, not in the game: when an authority moves to new roots, the configuration is signed anew and no release is needed. Wider than a pin: whoever gets that authority to issue a certificate for the name is taken (a DNS `CAA` record naming the one authority narrows it).
+  - A matching pin or a holding chain is enough. An `https` master with neither is refused; a configuration with a root that cannot be read is refused as a whole.
+  - **The relay over TLS** is judged the same way when its entry in `turn` names pins or roots; with neither, its certificate is not judged (TLS there is to pass networks that let only HTTPS out; TURN has its credentials and the game seals its packets from end to end).
+  - The revocation of a server's TLS certificate is not checked either way (no CRL, no OCSP).
 - In the code this is one small interface (`OnlineConfig load()`), so that the source can change later without touching its users.
 
 ## 3. Connectivity

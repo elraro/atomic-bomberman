@@ -14,6 +14,7 @@
 #include <psa/crypto.h>
 
 #include "online/sign.hpp"
+#include "online/tls_trust.hpp"
 
 namespace ab::online {
 
@@ -39,10 +40,12 @@ struct Connection {
     mbedtls_ssl_config conf;
     mbedtls_ctr_drbg_context drbg;
     mbedtls_entropy_context entropy;
+    mbedtls_x509_crt roots;
     bool tls = false;
     int timeoutMs = 10000;
 
     Connection() {
+        mbedtls_x509_crt_init(&roots);
         mbedtls_net_init(&net);
         mbedtls_ssl_init(&ssl);
         mbedtls_ssl_config_init(&conf);
@@ -55,6 +58,7 @@ struct Connection {
         mbedtls_ssl_config_free(&conf);
         mbedtls_ctr_drbg_free(&drbg);
         mbedtls_entropy_free(&entropy);
+        mbedtls_x509_crt_free(&roots);
         mbedtls_net_free(&net);
     }
     Connection(const Connection&) = delete;
@@ -178,8 +182,13 @@ HttpResponse httpFetch(const HttpRequest& request) {
             response.error = tlsError("cannot set up TLS", r);
             return response;
         }
-        // No list of authorities is consulted: the key is checked against the pins below.
+        // No list of the system's authorities is consulted: the server is judged after the
+        // handshake, by the pins or the roots of the request.
         mbedtls_ssl_conf_authmode(&c.conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
+        if (!request.roots.empty()) {
+            if (!loadTlsRoots(request.roots, &c.roots, response.error)) return response;
+            mbedtls_ssl_conf_ca_chain(&c.conf, &c.roots, nullptr);
+        }
         mbedtls_ssl_conf_rng(&c.conf, mbedtls_ctr_drbg_random, &c.drbg);
         mbedtls_ssl_conf_read_timeout(&c.conf, static_cast<std::uint32_t>(request.timeoutMs));
         if ((r = mbedtls_ssl_setup(&c.ssl, &c.conf)) != 0 || (r = mbedtls_ssl_set_hostname(&c.ssl, host.c_str())) != 0) {
@@ -193,20 +202,7 @@ HttpResponse httpFetch(const HttpRequest& request) {
             return response;
         }
         c.tls = true;
-        const mbedtls_x509_crt* peer = mbedtls_ssl_get_peer_cert(&c.ssl);
-        if (peer == nullptr || peer->pk_raw.p == nullptr) {
-            response.error = "the server showed no certificate";
-            return response;
-        }
-        response.pin = sha256Hex(peer->pk_raw.p, peer->pk_raw.len);
-        if (!request.pins.empty()) {
-            bool known = false;
-            for (const std::string& pin : request.pins) known = known || lower(pin) == response.pin;
-            if (!known) {
-                response.error = "this is not the server the configuration names (its key does not match)";
-                return response;
-            }
-        }
+        if (!judgeTlsPeer(&c.ssl, TlsTrust{request.pins, request.roots}, &response.pin, response.error)) return response;
     }
 
     std::string head = request.method + " " + path + " HTTP/1.1\r\nHost: " + host + (port == (tls ? "443" : "80") ? "" : ":" + port) +

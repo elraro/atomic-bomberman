@@ -1,9 +1,9 @@
 // A small HTTP/1.1 client for the control side of online play (the configuration
 // document, the master server). TLS is mbedTLS's. It does not use the system's
-// list of certificate authorities: a server is recognised by the pin of its key,
-// which the signed configuration names; the configuration itself needs no trust
-// in where it came from, because it is signed. A request blocks; HttpJob runs
-// one on a thread of its own.
+// list of certificate authorities: a server is recognised by the pin of its key or
+// by roots that the signed configuration names (tls_trust.hpp); the configuration
+// itself needs no trust in where it came from, because it is signed. A request
+// blocks; HttpJob runs one on a thread of its own.
 #pragma once
 
 #include <atomic>
@@ -20,9 +20,12 @@ struct HttpRequest {
     std::string url;  // http://host[:port]/path or https://...
     std::vector<std::pair<std::string, std::string>> headers;
     std::string body;  // sent as JSON when not empty
-    // https: SHA-256 (hex) of the server key's SubjectPublicKeyInfo. One must match. Empty:
-    // any key is taken (only for fetching what is verified by its own signature).
+    // https: SHA-256 (hex) of the server key's SubjectPublicKeyInfo, and roots (PEM) its chain
+    // may lead to (made out to the host name of the URL). A matching pin or a chain to one of
+    // the roots is enough. Both empty: any server is taken (only for fetching what is
+    // verified by its own signature).
     std::vector<std::string> pins;
+    std::vector<std::string> roots;
     int timeoutMs = 10000;  // for each read; a long poll needs more
 };
 

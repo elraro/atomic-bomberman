@@ -17,6 +17,8 @@
 #include <mbedtls/net_sockets.h>
 
 #include "fake_http.hpp"
+#include <mbedtls/x509_crt.h>
+
 #include "online/certificate.hpp"
 #include "online/config.hpp"
 #include "online/http.hpp"
@@ -178,7 +180,7 @@ void testConfigRules() {
     OnlineConfig c;
     std::string why;
     CHECK(readConfig(signDocument(seed, configDocument(12, now - 3600, now + 3600, "https://master.example.org:8443/")), key, now, 0, c, why));
-    CHECK(c.serial == 12 && c.masterUrl == "https://master.example.org:8443" && c.masterPins.size() == 1);
+    CHECK(c.serial == 12 && c.masterUrl == "https://master.example.org:8443" && c.masterTrust.pins.size() == 1);
     CHECK(c.stun.size() == 1 && c.turn.size() == 2 && c.turn[1].transport == "tls" && c.turn[1].port == 443);
     CHECK(c.protocolMin == 8 && c.statusState == "ok" && c.statusMessage == "hello");
     CHECK(c.roots.size() == 1 && c.roots[0] == key && c.revoked.size() == 2 && c.revoked[1] == 9 && c.flags["x"].boolean());
@@ -205,10 +207,46 @@ void testConfigRules() {
     // An https master without a pin would be trusted blindly: refused. A plain one needs none.
     std::string noPin = configDocument(12, now - 1, now + 1, "https://m");
     noPin.replace(noPin.find("[\"aa\"]"), 6, "[]");
-    refused(noPin, now, 0, "no key for the master");
+    refused(noPin, now, 0, "no key and no root for the master");
     std::string plain = configDocument(12, now - 1, now + 1, "http://127.0.0.1:8080");
     plain.replace(plain.find("[\"aa\"]"), 6, "[]");
     CHECK(readConfig(signDocument(seed, plain), key, now, 0, c, why));
+    // Instead of a pin, roots: certificates of authorities (PEM) the master's chain may lead to.
+    // (A test authority made by master/cmd/testcerts, nothing real.)
+    const std::string testRoot =
+        "-----BEGIN CERTIFICATE-----\\n"
+        "MIIBWTCCAQCgAwIBAgICA+kwCgYIKoZIzj0EAwIwFDESMBAGA1UEAxMJVGVzdCBS\\n"
+        "b290MB4XDTI2MTEyMTIxMjY1OVoXDTM2MTExOTIxMjY1OVowFDESMBAGA1UEAxMJ\\n"
+        "VGVzdCBSb290MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHOuAelYSwes+1u3X\\n"
+        "BLQQCswICSvuVZVUG6vyZor8nvDkjblFoEg31tiIt/uZMG4lzfP2RlJY111Flwn3\\n"
+        "iwVYO6NCMEAwDgYDVR0PAQH/BAQDAgEGMA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0O\\n"
+        "BBYEFKYhIEpzisjlREmalebekYEW/xBLMAoGCCqGSM49BAMCA0cAMEQCIAzUMddM\\n"
+        "8m85SpDTHNdHxI5m4WumI9kfwCE80NmK5lhKAiBgMZdvhmStoVOk+CJz+27W6X/z\\n"
+        "Z2Y0VCVv3ntOzqrfFQ==\\n"
+        "-----END CERTIFICATE-----\\n";
+    std::string byRoots = configDocument(12, now - 1, now + 1, "https://master.example.org");
+    byRoots.replace(byRoots.find("\"tls_pins\":[\"aa\"]"), 17, "\"tls_roots\":[\"" + testRoot + "\"]");
+    byRoots.replace(byRoots.find("\"transport\":\"tls\"}"), 18, "\"transport\":\"tls\",\"tls_pins\":[\"bb\"],\"tls_roots\":[\"" + testRoot + "\"]}");
+    CHECK(readConfig(signDocument(seed, byRoots), key, now, 0, c, why));
+    CHECK(c.masterTrust.pins.empty() && c.masterTrust.roots.size() == 1 && c.masterTrust.roots[0].find("BEGIN CERTIFICATE") != std::string::npos);
+    CHECK(c.turn.size() == 2 && c.turn[0].trust.empty() && c.turn[1].trust.pins.size() == 1 && c.turn[1].trust.roots.size() == 1);
+    {
+        mbedtls_x509_crt chain;
+        mbedtls_x509_crt_init(&chain);
+        CHECK(loadTlsRoots(c.masterTrust.roots, &chain, why));
+        mbedtls_x509_crt_free(&chain);
+    }
+    // A root that cannot be read makes the whole configuration unreadable: better refused than
+    // a master or a relay judged by less than the configuration meant.
+    std::string badRoot = byRoots;
+    badRoot.replace(badRoot.find("MIIBWTCC"), 8, "MIIBWTCX");
+    refused(badRoot, now, 0, "cannot be read (master)");
+    std::string notCert = configDocument(12, now - 1, now + 1, "https://m");
+    notCert.replace(notCert.find("\"tls_pins\":[\"aa\"]"), 17, "\"tls_roots\":[\"hello\"]");
+    refused(notCert, now, 0, "is not a certificate");
+    std::string badRelayRoot = configDocument(12, now - 1, now + 1, "https://m");
+    badRelayRoot.replace(badRelayRoot.find("\"transport\":\"tls\"}"), 18, "\"transport\":\"tls\",\"tls_roots\":[\"hello\"]}");
+    refused(badRelayRoot, now, 0, "(relay)");
     // Signed by somebody else, or not at all.
     Seed stranger{};
     stranger.fill(3);

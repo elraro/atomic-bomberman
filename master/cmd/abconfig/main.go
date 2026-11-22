@@ -31,6 +31,9 @@ abconfig sign -key NAME.key -in DOC.json -out SIGNED.json [-stamp] [-days 7] [-s
                                              sign a document; -stamp sets serial, issued and expires in it
 abconfig verify -pub HEX -in SIGNED.json     check a signed document and print it
 abconfig pin -cert CERT.pem                  the pin of a TLS certificate's key, for "master.tls_pins"
+abconfig roots -in ROOTS.pem                 the certificates of authorities in a PEM file as a JSON list, for "tls_roots"
+                                             (the master and a relay over TLS are then recognised by a chain to one of
+                                             them made out to their name, for instance Let's Encrypt's ISRG Root X1, X2)
 abconfig example                             an example configuration document
 abconfig cert -key ROOT.key -identity HEX -signing HEX -operator NAME [-contact TEXT] [-days 90] [-serial N] -out FILE
                                              a certificate for a game server: who answers for it, and its two keys
@@ -186,6 +189,19 @@ func main() {
 		// The key, not the certificate: it stays the same when the certificate is renewed with the same key.
 		sum := sha256.Sum256(c.RawSubjectPublicKeyInfo)
 		fmt.Println(hex.EncodeToString(sum[:]))
+	case "roots":
+		if *in == "" {
+			die("roots needs -in")
+		}
+		raw, err := os.ReadFile(*in)
+		if err != nil {
+			die("%v", err)
+		}
+		list, err := rootsJSON(raw)
+		if err != nil {
+			die("%s: %v", *in, err)
+		}
+		fmt.Println(list)
 	case "example":
 		fmt.Print(exampleConfig)
 	case "cert":
@@ -405,6 +421,36 @@ func selfSigned(host string) (certPEM, keyPEM []byte, err error) {
 		return nil, nil, err
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), nil
+}
+
+// rootsJSON: every certificate in the PEM text, each re-encoded on its own, as a JSON list of
+// strings. Only certificates of authorities are taken: a server's own certificate here would
+// be a mistake (it is named by its pin instead).
+func rootsJSON(raw []byte) (string, error) {
+	var roots []string
+	for {
+		var block *pem.Block
+		block, raw = pem.Decode(raw)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		c, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return "", err
+		}
+		if !c.IsCA {
+			return "", fmt.Errorf("%q is not the certificate of an authority", c.Subject.CommonName)
+		}
+		roots = append(roots, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: block.Bytes})))
+	}
+	if len(roots) == 0 {
+		return "", fmt.Errorf("no certificate in it")
+	}
+	out, err := json.Marshal(roots)
+	return string(out), err
 }
 
 const exampleConfig = `{

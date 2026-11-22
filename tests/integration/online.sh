@@ -153,6 +153,37 @@ timeout 30 "$BUILD/net_bot" "code:$CODE" Fay "${ONLINE[@]}" >"$WORK/fay.log" 2>&
 grep -q "does not match" "$WORK/fay.log" || fail "a master with another key than the pinned one should be refused"
 echo "ok   refused: a wrong code, a configuration signed by another key, a master with another key"
 
+# A master recognised by roots instead of a pin: a chain of the kind Let's Encrypt hands
+# out (root, intermediate, the server's certificate), made out to the name the game uses.
+# Taken: the right chain. Refused: another name, an expired certificate, another authority,
+# and a configuration that names neither a pin nor a root. (These runs remember their own
+# highest configuration serial, apart from the rest of this test.)
+"$BIN/testcerts" -out "$WORK/ca" -names localhost,127.0.0.1,127.0.0.2 || fail "testcerts"
+ROOTS=$("$BIN/abconfig" roots -in "$WORK/ca/root.crt") || fail "abconfig roots"
+"$BIN/abconfig" roots -in "$WORK/ca/good.crt" >/dev/null 2>&1 && fail "abconfig roots should refuse a server's certificate"
+port=$((MASTER_PORT + 10))
+for case in good wrongname expired stranger untrusting; do
+    port=$((port + 1))
+    cert=$case
+    roots=$ROOTS
+    [ "$case" = untrusting ] && cert=good && roots="[]"
+    python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); c["master"]={"url": sys.argv[2], "tls_roots": json.loads(sys.argv[3])}; json.dump(c, open(sys.argv[4], "w"))' \
+        "$WORK/config.json" "https://localhost:$port" "$roots" "$WORK/config-$case.json" || fail "config ($case)"
+    grep -q "localhost:$port" "$WORK/config-$case.json" || fail "the master was not written into the configuration ($case)"
+    "$BIN/abconfig" sign -key "$WORK/root.key" -in "$WORK/config-$case.json" -out "$WORK/signed-$case.json" -stamp >/dev/null || fail "sign ($case)"
+    "$BIN/master" -listen "127.0.0.1:$port" -tls-cert "$WORK/ca/$cert.crt" -tls-key "$WORK/ca/$cert.key" -config-file "$WORK/signed-$case.json" >"$WORK/master-$case.log" 2>&1 &
+    pids+=($!)
+    for _ in $(seq 50); do grep -q "master listening" "$WORK/master-$case.log" && break; sleep 0.1; done
+    XDG_DATA_HOME="$WORK/data-$case" APPDATA="$WORK/data-$case" timeout 30 "$BUILD/net_bot" "code:000000" "Ivy-$case" \
+        --online-config "https://127.0.0.1:$port/config.json" --online-key "$KEY" >"$WORK/ivy-$case.log" 2>&1
+done
+grep -q "No game with that code" "$WORK/ivy-good.log" || fail "a master whose chain leads to a named root should be taken: $(tail -n 3 "$WORK/ivy-good.log" | paste -sd ';')"
+grep -q "made out to another name" "$WORK/ivy-wrongname.log" || fail "a certificate for another name should be refused: $(tail -n 3 "$WORK/ivy-wrongname.log" | paste -sd ';')"
+grep -q "has expired" "$WORK/ivy-expired.log" || fail "an expired certificate should be refused: $(tail -n 3 "$WORK/ivy-expired.log" | paste -sd ';')"
+grep -q "not from an authority the configuration names" "$WORK/ivy-stranger.log" || fail "a chain to another authority should be refused: $(tail -n 3 "$WORK/ivy-stranger.log" | paste -sd ';')"
+grep -q "gives no key and no root" "$WORK/ivy-untrusting.log" || fail "a configuration naming neither a pin nor a root should be refused: $(tail -n 3 "$WORK/ivy-untrusting.log" | paste -sd ';')"
+echo "ok   a master by roots: its chain taken; another name, an expired certificate, another authority refused"
+
 # A revoked certificate: the configuration lists its serial, and the games no longer accept it.
 "$BIN/abconfig" sign -key "$WORK/root.key" -in "$WORK/config-revoking.json" -out "$WORK/signed.json" -stamp -serial 99999999990 >/dev/null
 timeout 60 "$BUILD/net_bot" "code:$CODE" Hal --matches 0 "${ONLINE[@]}" >"$WORK/hal.log" 2>&1
@@ -247,7 +278,7 @@ if command -v turnserver >/dev/null 2>&1; then
     TURN_PORT=$((MASTER_PORT + 30))
     TURN_AT=127.0.0.2
     SECRET=integration-secret
-    turnserver -n -v --no-cli --no-dtls --cert "$WORK/master.crt" --pkey "$WORK/master.tls.key" --tls-listening-port $((TURN_PORT + 1)) --listening-ip $TURN_AT --relay-ip $TURN_AT \
+    turnserver -n -v --no-cli --no-dtls --cert "$WORK/ca/good.crt" --pkey "$WORK/ca/good.key" --tls-listening-port $((TURN_PORT + 1)) --listening-ip $TURN_AT --relay-ip $TURN_AT \
         --listening-port "$TURN_PORT" --min-port 41000 --max-port 41200 \
         --use-auth-secret --static-auth-secret "$SECRET" --realm atomic --allow-loopback-peers --log-file stdout --simple-log >"$R/coturn.log" 2>&1 &
     pids+=($!)
@@ -283,6 +314,24 @@ if command -v turnserver >/dev/null 2>&1; then
         grep -q "ice: a way to the host (Relay (TCP))" "$R/$way.log" || { echo "FAIL detail: $(grep "ice:" "$R/$way.log" | tail -n 5 | paste -sd ";")"; fail "the way over $way should have been the relayed one"; }
     done
     echo "ok   through coturn over TCP and over TLS: a player without UDP played a match each way"
+
+    # The relay over TLS judged by roots: its chain to the named root is taken, a relay whose
+    # certificate comes from an authority the configuration does not name is refused.
+    OTHER_ROOTS=$("$BIN/abconfig" roots -in "$WORK/ca/other-root.crt") || fail "abconfig roots (other)"
+    serial=999999999999
+    for trusted in yes no; do
+        roots=$ROOTS
+        [ "$trusted" = no ] && roots=$OTHER_ROOTS
+        serial=$((serial + 1))
+        python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); [t.update(tls_roots=json.loads(sys.argv[2])) for t in c["turn"] if t["transport"] == "tls"]; json.dump(c, open(sys.argv[3], "w"))' \
+            "$R/config.json" "$roots" "$R/config-roots-$trusted.json" || fail "config (relay roots)"
+        grep -q "tls_roots" "$R/config-roots-$trusted.json" || fail "the relay's roots were not written into the configuration"
+        "$BIN/abconfig" sign -key "$WORK/root.key" -in "$R/config-roots-$trusted.json" -out "$R/signed.json" -stamp -serial "$serial" >/dev/null || fail "sign (relay roots)"
+        timeout 150 "$BUILD/net_bot" "code:$RCODE" "Uma-$trusted" --start-after 2000 --matches 1 --relay-tls "${RELAYED[@]}" >"$R/roots-$trusted.log" 2>&1
+    done
+    grep -q "ice: a way to the host (Relay (TCP))" "$R/roots-yes.log" || { tail -n 20 "$R/roots-yes.log"; fail "a relay whose chain leads to a named root should be used"; }
+    grep -q "The relay was refused: .*not from an authority the configuration names" "$R/roots-no.log" || { tail -n 20 "$R/roots-no.log"; fail "a relay from another authority should be refused"; }
+    echo "ok   the relay over TLS by roots: its chain taken, another authority's refused"
 else
     echo "skip the relay: coturn (turnserver) is not installed here"
 fi

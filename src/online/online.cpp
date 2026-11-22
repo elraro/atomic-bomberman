@@ -111,7 +111,8 @@ HttpRequest Online::call(const std::string& method, const std::string& path, con
     HttpRequest q;
     q.method = method;
     q.url = config_.masterUrl + "/v1" + path;
-    q.pins = config_.masterPins;
+    q.pins = config_.masterTrust.pins;
+    q.roots = config_.masterTrust.roots;
     q.timeoutMs = timeoutMs;
     if (!token_.empty()) q.headers.emplace_back("Authorization", "Bearer " + token_);
     if (hostToken) q.headers.emplace_back("X-Host-Token", hostToken_);

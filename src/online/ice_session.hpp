@@ -41,7 +41,7 @@ inline ice::Config iceConfig(const OnlineConfig& config, const std::string& rela
     if (!relayUser.empty())
         for (const TurnServer& t : config.turn) {
             const bool wanted = ways == Ways::Udp ? t.transport == "udp" : ways == Ways::Tls ? t.transport == "tls" : t.transport != "udp";
-            if (wanted && c.turn.size() < 2) c.turn.push_back({t.host, t.port, relayUser, relayPassword, t.transport});
+            if (wanted && c.turn.size() < 2) c.turn.push_back({t.host, t.port, relayUser, relayPassword, t.transport, t.trust});
         }
     return c;
 }
@@ -131,6 +131,7 @@ public:
     // What is being done, for the screen.
     std::string step() const {
         const std::string by = overStream() ? " by the relay over TCP" : "";
+        if (agent_ != nullptr && !agent_->relayRefused().empty()) return "The relay was refused: " + agent_->relayRefused();
         return !offered_ ? "Looking for ways to the host" + by + "..." : !answered_ ? "Waiting for the host's answer..." : "Trying the ways to the host" + by + "...";
     }
 

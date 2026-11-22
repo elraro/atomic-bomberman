@@ -10,6 +10,7 @@
 
 #include "online/json.hpp"
 #include "online/sign.hpp"
+#include "online/tls_trust.hpp"
 
 namespace ab::online {
 
@@ -26,12 +27,15 @@ struct TurnServer {
     std::string host;
     int port = 3478;
     std::string transport = "udp";  // udp, tcp or tls
+    // tls: how the relay is recognised (tls_pins, tls_roots). Empty: its certificate is not
+    // judged (TLS is there to pass where only HTTPS does; TURN and the game protect themselves).
+    TlsTrust trust{};
 };
 
 struct OnlineConfig {
     long long serial = 0, issued = 0, expires = 0;  // times in seconds since 1970
     std::string masterUrl;
-    std::vector<std::string> masterPins;
+    TlsTrust masterTrust;  // tls_pins and tls_roots of "master": one of the two is required for https
     std::vector<std::string> stun;  // host:port
     std::vector<TurnServer> turn;
     int protocolMin = 0, protocolCurrent = 0;

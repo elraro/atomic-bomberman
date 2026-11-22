@@ -4,6 +4,24 @@
 
 namespace ab::online {
 
+namespace {
+
+// "tls_pins" and "tls_roots" of an entry. False (with the reason) if a root cannot be read.
+bool readTrust(const Json& entry, const char* what, TlsTrust& out, std::string& error) {
+    for (const Json& pin : entry["tls_pins"].items())
+        if (pin.isString()) out.pins.push_back(pin.str());
+    for (const Json& root : entry["tls_roots"].items())
+        if (root.isString()) out.roots.push_back(root.str());
+    mbedtls_x509_crt chain;
+    mbedtls_x509_crt_init(&chain);
+    const bool ok = loadTlsRoots(out.roots, &chain, error);
+    mbedtls_x509_crt_free(&chain);
+    if (!ok) error += std::string(" (") + what + ")";
+    return ok;
+}
+
+}  // namespace
+
 bool makeBootstrap(const std::string& urls, const std::string& keyHex, Bootstrap& out, std::string& error) {
     Bootstrap b;
     std::string one;
@@ -73,14 +91,13 @@ bool readConfig(const std::string& envelope, const PublicKey& key, long long now
     const Json& master = doc["master"];
     c.masterUrl = master["url"].str();
     while (!c.masterUrl.empty() && c.masterUrl.back() == '/') c.masterUrl.pop_back();
-    for (const Json& pin : master["tls_pins"].items())
-        if (pin.isString()) c.masterPins.push_back(pin.str());
+    if (!readTrust(master, "master", c.masterTrust, error)) return false;
     if (c.masterUrl.rfind("https://", 0) != 0 && c.masterUrl.rfind("http://", 0) != 0) {
         error = "the configuration names no master server";
         return false;
     }
-    if (c.masterUrl.rfind("https://", 0) == 0 && c.masterPins.empty()) {
-        error = "the configuration gives no key for the master server";
+    if (c.masterUrl.rfind("https://", 0) == 0 && c.masterTrust.empty()) {
+        error = "the configuration gives no key and no root for the master server";
         return false;
     }
     for (const Json& s : doc["stun"].items())
@@ -92,6 +109,7 @@ bool readConfig(const std::string& envelope, const PublicKey& key, long long now
         server.transport = t["transport"].str();
         if (server.host.empty() || server.port < 1 || server.port > 65535) continue;
         if (server.transport != "udp" && server.transport != "tcp" && server.transport != "tls") continue;
+        if (server.transport == "tls" && !readTrust(t, "relay", server.trust, error)) return false;
         c.turn.push_back(server);
     }
     c.protocolMin = static_cast<int>(doc["protocol"]["min"].integer());

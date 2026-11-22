@@ -62,7 +62,7 @@ bool Agent::start(const Config& config) {
         if (t.transport == "udp") continue;
         // libjuice speaks TURN over UDP alone: to this machine, and a bridge takes it on.
         auto stream = std::make_unique<TurnStream>();
-        if (!stream->start(t.host, t.port, t.transport == "tls")) continue;
+        if (!stream->start(t.host, t.port, t.transport == "tls", t.trust)) continue;
         t.host = "127.0.0.1";
         t.port = stream->localPort();
         streams_.push_back(std::move(stream));
@@ -164,6 +164,12 @@ std::string Agent::kind() const {
     if (agent_ == nullptr || juice_get_selected_candidates(agent_, local, sizeof local, remote, sizeof remote) != JUICE_ERR_SUCCESS) return "Direct";
     if (std::strstr(local, " typ relay") != nullptr && !streams_.empty()) return "Relay (TCP)";
     return std::strstr(local, " typ relay") != nullptr || std::strstr(remote, " typ relay") != nullptr ? "Relay" : "Direct";
+}
+
+std::string Agent::relayRefused() const {
+    for (const auto& stream : streams_)
+        if (stream->failed() && !stream->refusal().empty()) return stream->refusal();
+    return "";
 }
 
 TestServer::TestServer(const std::string& username, const std::string& password, const std::string& address) {

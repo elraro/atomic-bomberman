@@ -90,6 +90,9 @@ struct TurnStream::Shared {
     std::string host;
     int port = 0;
     bool tls = false;
+    online::TlsTrust trust;
+    std::string refusal;  // written before `failed` is set, read only after
+    mbedtls_x509_crt roots;
     mbedtls_net_context udp, tcp;
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config conf;
@@ -97,6 +100,7 @@ struct TurnStream::Shared {
     mbedtls_entropy_context entropy;
 
     Shared() {
+        mbedtls_x509_crt_init(&roots);
         mbedtls_net_init(&udp);
         mbedtls_net_init(&tcp);
         mbedtls_ssl_init(&ssl);
@@ -111,6 +115,7 @@ struct TurnStream::Shared {
         mbedtls_entropy_free(&entropy);
         mbedtls_net_free(&tcp);
         mbedtls_net_free(&udp);
+        mbedtls_x509_crt_free(&roots);
     }
 
     bool open() {
@@ -120,7 +125,11 @@ struct TurnStream::Shared {
             static const char kPurpose[] = "atomic bomberman relay";
             if (mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, reinterpret_cast<const unsigned char*>(kPurpose), sizeof kPurpose) != 0) return false;
             if (mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) != 0) return false;
-            mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_NONE);
+            mbedtls_ssl_conf_authmode(&conf, trust.empty() ? MBEDTLS_SSL_VERIFY_NONE : MBEDTLS_SSL_VERIFY_OPTIONAL);
+            if (!trust.roots.empty()) {
+                if (!online::loadTlsRoots(trust.roots, &roots, refusal)) return false;
+                mbedtls_ssl_conf_ca_chain(&conf, &roots, nullptr);
+            }
             mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &drbg);
             mbedtls_ssl_conf_read_timeout(&conf, 10000);
             if (mbedtls_ssl_setup(&ssl, &conf) != 0 || mbedtls_ssl_set_hostname(&ssl, host.c_str()) != 0) return false;
@@ -128,6 +137,7 @@ struct TurnStream::Shared {
             int r = 0;
             while ((r = mbedtls_ssl_handshake(&ssl)) != 0)
                 if ((r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE) || stop.load()) return false;
+            if (!online::judgeTlsPeer(&ssl, trust, nullptr, refusal)) return false;
             mbedtls_ssl_set_bio(&ssl, &tcp, mbedtls_net_send, mbedtls_net_recv, nullptr);
         }
         return mbedtls_net_set_nonblock(&tcp) == 0;
@@ -206,12 +216,13 @@ TurnStream::~TurnStream() {
     if (shared_) shared_->stop.store(true);
 }
 
-bool TurnStream::start(const std::string& host, int port, bool tls) {
+bool TurnStream::start(const std::string& host, int port, bool tls, const online::TlsTrust& trust) {
     if (shared_) return false;
     auto shared = std::make_shared<Shared>();
     shared->host = host;
     shared->port = port;
     shared->tls = tls;
+    shared->trust = trust;
     if (mbedtls_net_bind(&shared->udp, "127.0.0.1", "0", MBEDTLS_NET_PROTO_UDP) != 0 || mbedtls_net_set_nonblock(&shared->udp) != 0) return false;
     // Room for a burst: what does not fit while the stream is being written to is lost.
     const int room = 1 << 20;
@@ -227,5 +238,6 @@ bool TurnStream::start(const std::string& host, int port, bool tls) {
 
 bool TurnStream::connected() const { return shared_ && shared_->connected.load(); }
 bool TurnStream::failed() const { return shared_ && shared_->failed.load(); }
+std::string TurnStream::refusal() const { return failed() ? shared_->refusal : std::string(); }
 
 }  // namespace ab::ice

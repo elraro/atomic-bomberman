@@ -20,6 +20,7 @@
 #include <memory>
 
 #include "net/carrier.hpp"
+#include "online/tls_trust.hpp"
 #include "online/turn_stream.hpp"
 
 struct juice_agent;
@@ -32,6 +33,7 @@ struct TurnServer {
     int port = 3478;
     std::string username, password;
     std::string transport = "udp";  // udp; tcp or tls: by way of a bridge on this machine (turn_stream.hpp)
+    online::TlsTrust trust{};       // tls: how the relay is recognised; empty: not judged
 };
 
 struct Config {
@@ -70,6 +72,8 @@ public:
     bool alive() const override;
     std::string remote() const override;
     std::string kind() const override;  // "Direct", "Relay" or "Relay (TCP)"
+    // Why a relay over TLS was not used (its certificate did not hold); empty if none was refused.
+    std::string relayRefused() const;
 
     // Called by libjuice, on its own thread.
     void onState(int state);

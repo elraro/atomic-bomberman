@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 
+#include "online/tls_trust.hpp"
+
 namespace ab::ice {
 
 // One datagram as it goes into the stream. False: neither a STUN message nor channel data.
@@ -30,13 +32,16 @@ public:
     TurnStream& operator=(const TurnStream&) = delete;
 
     // Opens the UDP port on this machine and begins to connect to the relay, on a thread of
-    // its own. With `tls` the stream is wrapped in TLS; the relay's certificate is not judged
-    // (what TURN protects, it protects itself with the credentials, and the game's packets are
-    // sealed from end to end: TLS is here to pass where only HTTPS does).
-    bool start(const std::string& host, int port, bool tls);
+    // its own. With `tls` the stream is wrapped in TLS. The relay's certificate is judged by
+    // `trust` (pins or roots from the configuration); with an empty trust it is not (what TURN
+    // protects, it protects itself with the credentials, and the game's packets are sealed from
+    // end to end: TLS is there to pass where only HTTPS does).
+    bool start(const std::string& host, int port, bool tls, const online::TlsTrust& trust = {});
     int localPort() const { return port_; }  // on 127.0.0.1
     bool connected() const;
     bool failed() const;
+    // Once failed: why the relay's certificate was not taken (empty if that was not the reason).
+    std::string refusal() const;
 
 private:
     struct Shared;
