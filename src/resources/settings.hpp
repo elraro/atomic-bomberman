@@ -18,6 +18,7 @@ struct Settings {
     bool winByKills = false;          // win_by_kills
     bool goldman = false;             // goldman (the roulette)
     std::string scheme = "BASIC";     // schemefilename, stored with .SCH
+    int schemeRandom = 0;             // scheme_random: 0 the chosen scheme, 1 a random one per match, 2 a random one per round (not in the original)
     int playTime = 150;               // playtime in seconds; kInfiniteTime = no limit
     bool diseasesDestroyable = true;  // diseases_destroyable
     bool disableGameMusic = false;    // disable_game_music

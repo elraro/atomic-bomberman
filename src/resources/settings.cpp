@@ -40,6 +40,7 @@ void Settings::parse(const std::string& text) {
         else if (key == "stomped_bombs_detonate") stompedBombsDetonate = n != 0;
         else if (key == "win_by_kills") winByKills = n != 0;
         else if (key == "goldman") goldman = n != 0;
+        else if (key == "scheme_random") schemeRandom = std::clamp(n, 0, 2);
         else if (key == "playtime") playTime = n;
         else if (key == "diseases_destroyable") diseasesDestroyable = n != 0;
         else if (key == "disable_game_music") disableGameMusic = n != 0;
@@ -88,7 +89,7 @@ std::string Settings::serialize() const {
         << "levelno=" << level << "\nnum_to_win_match=" << winsNeeded << "\nenclosement_depth=" << enclosementDepth
         << "\nconveyor_speed=" << conveyorSpeed << "\nteam_play=" << teamPlay << "\nrandom_start=" << randomStart
         << "\nstomped_bombs_detonate=" << stompedBombsDetonate << "\nwin_by_kills=" << winByKills << "\ngoldman=" << goldman
-        << "\nschemefilename=" << scheme << ".SCH\nplaytime=" << playTime << "\ndiseases_destroyable=" << diseasesDestroyable
+        << "\nschemefilename=" << scheme << ".SCH\nscheme_random=" << schemeRandom << "\nplaytime=" << playTime << "\ndiseases_destroyable=" << diseasesDestroyable
         << "\ndisable_game_music=" << disableGameMusic << "\nassign_keyboards=" << assignKeyboards << "\nmenu_all_pads=" << menuAllPads << "\nfree_assets=" << freeAssets << "\nfullscreen=" << fullscreen << "\nsmallmemory=" << smallMemory
         << "\nmusic_volume=" << musicVolume << "\nsound_volume=" << soundVolume << "\nunused_voices=" << unusedVoices << "\nnet_name=" << netName << "\nnet_address="
         << netAddress << "\nnet_server_name=" << netServerName << "\nnet_port=" << netPort << "\nnet_prediction=" << netPrediction << "\nnet_online=" << netOnline
