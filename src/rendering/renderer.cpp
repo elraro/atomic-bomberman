@@ -1,4 +1,5 @@
 #include "rendering/renderer.hpp"
+#include "rendering/draw_order.hpp"
 
 #include "rendering/gl.hpp"
 #include "rendering/glyphs.hpp"
@@ -451,19 +452,25 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
             }
         }
 
-    std::size_t bi = 0;
-    for (const Bomb& b : world.bombs()) {
-        const std::size_t idx = bi++;
-        if (!b.active) continue;
-        const RenderSnapshot::Pos was = prev.from(b, idx);
-        const float bx = lerpBomb(was.x, b.x, alpha);
-        const float by = lerpBomb(was.y, b.y, alpha) - bombLift(b);
-        const char* seq = b.dud                        ? "bomb regular green dud"
-                        : b.type == BombType::Trigger ? "bomb trigger green"
-                        : b.type == BombType::Jelly   ? "bomb jelly green"
-                                                      : "bomb regular green";
-        sprite(bank, seq, frame - b.createdTick, b.owner >= 0 ? world.displayColour(b.owner) : -1, bx, by);
-    }
+    // Bombs on the ground go under the players; carried and flying bombs are drawn after
+    // them (below), because they are held or fly above the players' heads.
+    auto drawBombs = [&](bool airborne) {
+        std::size_t bi = 0;
+        for (const Bomb& b : world.bombs()) {
+            const std::size_t idx = bi++;
+            if (!b.active) continue;
+            if (bombDrawnOverPlayers(b) != airborne) continue;
+            const RenderSnapshot::Pos was = prev.from(b, idx);
+            const float bx = lerpBomb(was.x, b.x, alpha);
+            const float by = lerpBomb(was.y, b.y, alpha) - bombLift(b);
+            const char* seq = b.dud                        ? "bomb regular green dud"
+                            : b.type == BombType::Trigger ? "bomb trigger green"
+                            : b.type == BombType::Jelly   ? "bomb jelly green"
+                                                          : "bomb regular green";
+            sprite(bank, seq, frame - b.createdTick, b.owner >= 0 ? world.displayColour(b.owner) : -1, bx, by);
+        }
+    };
+    drawBombs(false);
 
     // Players are drawn back to front.
     std::array<int, kMaxPlayers> order{};
@@ -523,6 +530,8 @@ void Renderer::drawSprites(const World& world, const RenderSnapshot& prev, float
                 sprite(bank, "stand " + dir, 0, colour, px, py);
         }
     }
+
+    drawBombs(true);
 
     // Campaign enemies: "ghost <dir>" / "rover <dir>", frame = pixels walked.
     for (const Alien& a : world.aliens()) {
@@ -601,23 +610,28 @@ void Renderer::drawShapes(const World& world, const RenderSnapshot& prev, float 
         }
 
     // Object reference points are bottom-centre of the cell (hot-spot 20,35).
-    std::size_t bi = 0;
-    for (const Bomb& b : world.bombs()) {
-        const std::size_t idx = bi++;
-        if (!b.active) continue;
-        const RenderSnapshot::Pos was = prev.from(b, idx);
-        const float bx = lerpBomb(was.x, b.x, alpha);
-        const float by = lerpBomb(was.y, b.y, alpha);
-        const float pulse = 1.0f + 0.12f * static_cast<float>((b.elapsedMs / 100) % 2);
-        const float s = 13.0f * pulse;
-        const float cy = by - 17.0f;
-        float r = 0.08f, g = 0.08f, bl = 0.10f;
-        if (b.type == BombType::Trigger) r = 0.55f;
-        if (b.type == BombType::Jelly) g = 0.45f;
-        quad(bx - s, cy - s * 0.6f, 2 * s, 1.2f * s, r, g, bl);
-        quad(bx - s * 0.6f, cy - s, 1.2f * s, 2 * s, r, g, bl);
-        quad(bx - 3, cy - s - 5, 6, 6, 0.95f, 0.80f, 0.20f);
-    }
+    // As with the sprites: bombs on the ground under the players, carried and flying ones over them.
+    auto drawBombs = [&](bool airborne) {
+        std::size_t bi = 0;
+        for (const Bomb& b : world.bombs()) {
+            const std::size_t idx = bi++;
+            if (!b.active) continue;
+            if (bombDrawnOverPlayers(b) != airborne) continue;
+            const RenderSnapshot::Pos was = prev.from(b, idx);
+            const float bx = lerpBomb(was.x, b.x, alpha);
+            const float by = lerpBomb(was.y, b.y, alpha);
+            const float pulse = 1.0f + 0.12f * static_cast<float>((b.elapsedMs / 100) % 2);
+            const float s = 13.0f * pulse;
+            const float cy = by - 17.0f;
+            float r = 0.08f, g = 0.08f, bl = 0.10f;
+            if (b.type == BombType::Trigger) r = 0.55f;
+            if (b.type == BombType::Jelly) g = 0.45f;
+            quad(bx - s, cy - s * 0.6f, 2 * s, 1.2f * s, r, g, bl);
+            quad(bx - s * 0.6f, cy - s, 1.2f * s, 2 * s, r, g, bl);
+            quad(bx - 3, cy - s - 5, 6, 6, 0.95f, 0.80f, 0.20f);
+        }
+    };
+    drawBombs(false);
 
     for (int i = 0; i < kMaxPlayers; ++i) {
         const Player& p = world.player(i);
@@ -635,6 +649,7 @@ void Renderer::drawShapes(const World& world, const RenderSnapshot& prev, float 
         const auto f = static_cast<unsigned>(p.facing);
         quad(pxf - 2 + static_cast<float>(kDx[f]) * 6, pyf - 35 + static_cast<float>(kDy[f]) * 4, 4, 4, 0.05f, 0.05f, 0.05f);
     }
+    drawBombs(true);
     flush();
 }
 
