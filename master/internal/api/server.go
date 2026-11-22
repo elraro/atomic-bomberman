@@ -162,10 +162,13 @@ func readJSON(r *http.Request, v any) bool {
 
 func (s *Server) clientIP(r *http.Request) string {
 	if s.cfg.TrustProxy {
-		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			first := strings.TrimSpace(strings.Split(fwd, ",")[0])
-			if net.ParseIP(first) != nil {
-				return first
+		// The last entry is the one the proxy in front of this server added: the address the
+		// connection came from. Anything before it was sent by the client and can be made up.
+		if fwd := r.Header.Values("X-Forwarded-For"); len(fwd) > 0 {
+			parts := strings.Split(fwd[len(fwd)-1], ",")
+			last := strings.TrimSpace(parts[len(parts)-1])
+			if net.ParseIP(last) != nil {
+				return last
 			}
 		}
 	}

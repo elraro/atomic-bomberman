@@ -434,3 +434,32 @@ func TestCodesAreUnique(t *testing.T) {
 		seen[code] = true
 	}
 }
+
+// Behind a proxy (TrustProxy) the client's address is the last X-Forwarded-For entry, the one
+// the proxy added; earlier ones come from the client and are ignored. Without TrustProxy the
+// header is not believed at all.
+func TestClientIPBehindProxy(t *testing.T) {
+	s := New(Config{TrustProxy: true}, store.NewMemory())
+	r := httptest.NewRequest("GET", "/v1/status", nil)
+	r.RemoteAddr = "127.0.0.1:5000"
+	if got := s.clientIP(r); got != "127.0.0.1" {
+		t.Fatalf("no header: %q", got)
+	}
+	r.Header.Set("X-Forwarded-For", "203.0.113.7")
+	if got := s.clientIP(r); got != "203.0.113.7" {
+		t.Fatalf("one entry: %q", got)
+	}
+	r.Header.Set("X-Forwarded-For", "6.6.6.6, 198.51.100.4")
+	if got := s.clientIP(r); got != "198.51.100.4" {
+		t.Fatalf("a made-up first entry should be passed over: %q", got)
+	}
+	r.Header.Set("X-Forwarded-For", "not an address")
+	if got := s.clientIP(r); got != "127.0.0.1" {
+		t.Fatalf("an unreadable entry: %q", got)
+	}
+	direct := New(Config{}, store.NewMemory())
+	r.Header.Set("X-Forwarded-For", "203.0.113.7")
+	if got := direct.clientIP(r); got != "127.0.0.1" {
+		t.Fatalf("without TrustProxy the header must not count: %q", got)
+	}
+}
