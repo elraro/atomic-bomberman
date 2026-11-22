@@ -142,8 +142,10 @@ if(AB_ONLINE)
     target_compile_definitions(ab_online PUBLIC AB_ONLINE=1)
     # Where a packaged game looks for the configuration of online play, and the key that
     # must have signed it (docs/operations/online.md). Empty: the player has to name one.
-    set(AB_ONLINE_CONFIG_URLS "" CACHE STRING "Addresses of the signed configuration of online play, separated by commas")
-    set(AB_ONLINE_CONFIG_KEY "" CACHE STRING "The Ed25519 public key (hex) that signs it")
+    # Unless given with -D, taken from the environment variables of the same names (the CI
+    # sets them for the published builds, Android's Gradle build included).
+    set(AB_ONLINE_CONFIG_URLS "$ENV{AB_ONLINE_CONFIG_URLS}" CACHE STRING "Addresses of the signed configuration of online play, separated by commas")
+    set(AB_ONLINE_CONFIG_KEY "$ENV{AB_ONLINE_CONFIG_KEY}" CACHE STRING "The Ed25519 public key (hex) that signs it")
     if(AB_ONLINE_CONFIG_URLS)
         target_compile_definitions(ab_online PUBLIC AB_ONLINE_CONFIG_URLS="${AB_ONLINE_CONFIG_URLS}" AB_ONLINE_CONFIG_KEY="${AB_ONLINE_CONFIG_KEY}")
     endif()

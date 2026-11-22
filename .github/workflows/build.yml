@@ -20,6 +20,14 @@ on:
 permissions:
   contents: read
 
+# The online service the published game uses (deploy/ on master.atomic-bomberman.elraro.eu):
+# where its signed configuration is, and the public half of the root key that signs it.
+# Built into every copy made here (CMakeLists.txt reads them); a player can still name
+# another one (--online-config, --online-key). Public values: the private key is not here.
+env:
+  AB_ONLINE_CONFIG_URLS: https://master.atomic-bomberman.elraro.eu/config.json
+  AB_ONLINE_CONFIG_KEY: 31dddd7df27834232a13ff5708339fecdd8c4eed2b6ba4feb5f38a828298803e
+
 jobs:
   # The master server of online play (master/, Go): its tests run against the memory
   # store and against a real PostgreSQL.
