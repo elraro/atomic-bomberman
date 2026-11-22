@@ -209,4 +209,22 @@ std::optional<GamePalette> loadPaletteFile(const std::string& path) {
     return p;
 }
 
+std::vector<std::uint8_t> aniFrameRgba(const AniFrame& f, const GamePalette& palette, const std::vector<std::uint8_t>* remap) {
+    std::vector<std::uint8_t> rgba(f.pixels.size() * 4);
+    for (std::size_t i = 0; i < f.pixels.size(); ++i) {
+        const std::uint16_t px = f.pixels[i];
+        if (f.hasKey && px == f.key) continue;  // transparent
+        // As in the original: RGB555 -> palette index, optional player remap, palette colour.
+        std::uint8_t idx = palette.lookup[px & 0x7FFF];
+        if (idx == 0) continue;  // index 0 is the transparent colour on screen
+        if (remap != nullptr && (*remap)[idx] != 0) idx = (*remap)[idx];
+        const std::uint8_t* c = &palette.rgb6[static_cast<std::size_t>(idx) * 3];
+        rgba[i * 4] = static_cast<std::uint8_t>(c[0] * 4 > 255 ? 255 : c[0] * 4);
+        rgba[i * 4 + 1] = static_cast<std::uint8_t>(c[1] * 4 > 255 ? 255 : c[1] * 4);
+        rgba[i * 4 + 2] = static_cast<std::uint8_t>(c[2] * 4 > 255 ? 255 : c[2] * 4);
+        rgba[i * 4 + 3] = 255;
+    }
+    return rgba;
+}
+
 }  // namespace ab

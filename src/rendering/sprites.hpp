@@ -63,6 +63,8 @@ public:
     // Sprite for step `index` (wrapped) of a named sequence; colour -1 = unmodified,
     // 0-9 = player colour remap.
     std::optional<Sprite> sprite(const std::string& sequence, int index, int colour);
+    // The same frame as plain RGBA pixels (width x height x 4, at the logical size); false if it is missing.
+    bool spriteRgba(const std::string& sequence, int index, int colour, int* width, int* height, std::vector<std::uint8_t>* rgba);
 
 private:
     struct Ref {
