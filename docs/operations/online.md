@@ -43,6 +43,8 @@ bin/abconfig pin -cert master.crt        # prints the pin: 64 hexadecimal digits
 
 The pin is of the key, not of the certificate: renewing a certificate with the same key keeps the pin (for certbot: `--reuse-key`). A new key means a new pin and a newly signed configuration; to change keys without a gap, list the old and the new pin together for a week.
 
+**Or by roots instead of a pin** (from 2026-11-22): `"tls_roots"` under `master` (and under a `turn` entry over TLS) lists certificates of authorities, for instance Let's Encrypt's. The game then takes a server whose chain leads to one of them and is made out to the name in the URL, whatever its key; a renewal with a new key changes nothing. `bin/abconfig roots -in roots.pem` turns a PEM file into that list. `deploy/` does this with Traefik on 443 and Let's Encrypt (`PROXY` in `deploy/.env`; `deploy/README.md`, "Behind Traefik"). A pin and roots may stand together: either is enough.
+
 ```sh
 bin/master -listen :8443 -tls-cert master.crt -tls-key master.tls.key \
     -database postgres://master:PASSWORD@127.0.0.1/master \

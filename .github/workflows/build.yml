@@ -161,6 +161,78 @@ jobs:
           done
 
   # One name for both processor types: "latest" for the main branch, the tag's name for a release.
+  # The same service behind Traefik on 443 (deploy/proxy.yml, traefik.yml): the master by
+  # name over HTTPS, the relay over TLS by name, both ended by Traefik, and a configuration
+  # that names roots instead of a pin. Let's Encrypt cannot issue certificates here, so
+  # Traefik shows one from a test authority (master/cmd/testcerts) and the configuration
+  # names that authority's root; the names resolve to this machine.
+  docker-traefik:
+    name: docker behind traefik
+    runs-on: ubuntu-24.04
+    env:
+      COMPOSE_FILE: docker-compose.yml:proxy.yml:traefik.yml:ci.yml
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: master/go.mod
+          cache-dependency-path: master/go.sum
+      - name: Test authority, names, keys, signed configuration
+        working-directory: deploy
+        run: |
+          IP=$(hostname -I | awk '{print $1}')
+          echo "$IP master.test turn.test" | sudo tee -a /etc/hosts
+          (cd ../master && go run ./cmd/testcerts -out ../deploy/data/testca -names master.test,turn.test)
+          mkdir -p data/traefik
+          cp data/testca/good.crt data/testca/good.key data/traefik/
+          printf 'tls:\n  stores:\n    default:\n      defaultCertificate:\n        certFile: /etc/traefik/dynamic/good.crt\n        keyFile: /etc/traefik/dynamic/good.key\n' > data/traefik/tls.yml
+          # The game server and the players have addresses of their own (see the docker job),
+          # and find the names there too.
+          printf 'services:\n  gameserver:\n    network_mode: bridge\n    extra_hosts: ["master.test:%s", "turn.test:%s"]\n' "$IP" "$IP" > ci.yml
+          cp .env.example .env
+          sed -i "s/^TURN_HOST=.*/TURN_HOST=turn.test/; s/^PROXY=.*/PROXY=traefik/; s/^ACME_EMAIL=.*/ACME_EMAIL=ci@example.invalid/; s/^TRAEFIK_RESOLVER=.*/TRAEFIK_RESOLVER=/; s|^TLS_ROOTS_FILE=.*|TLS_ROOTS_FILE=data/testca/root.crt|" .env
+          ./setup.sh master.test "$IP"
+          sed -i 's/^GAME_NAME=.*/GAME_NAME=Container game/; s/^GAME_OPTIONS=.*/GAME_OPTIONS=--wins 1 --hide-address/' .env
+          grep -q tls_roots data/config.json || { echo "::error::the configuration names no roots"; exit 1; }
+          grep -q 'no-tls' data/coturn/turnserver.conf || { echo "::error::coturn should leave TLS to the proxy"; exit 1; }
+      - name: Build the images and start the services
+        working-directory: deploy
+        run: |
+          docker compose --profile gameserver up -d --build --wait || {
+            docker compose --profile gameserver ps -a
+            docker compose --profile gameserver logs --tail 40
+            docker compose --profile gameserver logs --tail 5 | sed 's/^/::error::/'
+            exit 1
+          }
+      - name: Play through Traefik
+        working-directory: deploy
+        run: |
+          IP=$(sed -n 's/^PUBLIC_IP=//p' .env)
+          KEY=$(sed -n 's/^ONLINE_KEY=//p' .env)
+          failed() { echo "::error::$*"; docker compose --profile gameserver logs --tail 60; exit 1; }
+          # Through Traefik, with the test authority's root and the name checked.
+          curl -fsS --cacert data/testca/root.crt https://master.test/v1/status || failed "the master does not answer through Traefik"
+          curl -fsS --cacert data/testca/root.crt https://master.test/config.json >/dev/null || failed "the configuration is not served through Traefik"
+          ! curl -fsS "http://$IP:8443/v1/status" 2>/dev/null || failed "the master should listen for the proxy only (127.0.0.1)"
+          for _ in $(seq 60); do docker compose logs gameserver 2>&1 | grep -q "Online: listed, code" && break; sleep 1; done
+          docker compose logs gameserver 2>&1 | grep -q "Online: listed, code" || failed "the game server was not announced"
+          bot() {
+            local log=$1; shift
+            timeout 200 docker run --rm --network bridge --add-host "master.test:$IP" --add-host "turn.test:$IP" -e XDG_DATA_HOME=/tmp \
+              --entrypoint net_bot ghcr.io/elraro/atomic-bomberman-server:latest \
+              "listed:Container game" "$@" --start-after 2000 --matches 1 \
+              --online-config https://master.test/config.json --online-key "$KEY" >"$log" 2>&1 || { tail -n 30 "$log"; failed "$log: no match played ($(grep 'ice:' "$log" | tail -n 1))"; }
+            grep -q "done: matches=1" "$log" || { tail -n 30 "$log"; failed "$log: the match was not played to its end"; }
+            echo "ok   $log: $(grep 'ice: a way' "$log" | head -n 1)"
+          }
+          bot udp.log Ann
+          grep -q "ice: a way to the host (Relay)" udp.log || failed "udp: the way should be through the relay: $(grep 'ice:' udp.log | tail -n 5 | paste -sd ';')"
+          # The relay over TLS: Traefik ends TLS for turn.test and passes the stream to coturn.
+          bot tls.log Tina --relay-tls
+          grep -q "ice: a way to the host (Relay (TCP))" tls.log || failed "tls: the way should be the relayed one: $(grep 'ice:' tls.log | tail -n 5 | paste -sd ';')"
+          bot tcp.log Tess --relay-tcp
+          grep -q "ice: a way to the host (Relay (TCP))" tcp.log || failed "tcp: the way should be the relayed one: $(grep 'ice:' tcp.log | tail -n 5 | paste -sd ';')"
+
   docker-publish:
     if: github.event_name == 'push'
     needs: docker

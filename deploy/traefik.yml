@@ -1,0 +1,26 @@
+# Traefik on port 443 in front of the master and the relay (PROXY=traefik in .env; setup.sh
+# adds this file and proxy.yml to COMPOSE_FILE). It gets the certificates for MASTER_HOST and
+# TURN_HOST from Let's Encrypt by the TLS-ALPN challenge, on 443 itself (port 80 is not
+# needed), and keeps them in data/acme/. Its routes are data/traefik/atomic.yml.
+#
+# With a Traefik of your own instead: PROXY=external, and give it data/traefik/atomic.yml
+# (its file provider), with TRAEFIK_ENTRYPOINT and TRAEFIK_RESOLVER set to the names it uses.
+services:
+  traefik:
+    image: traefik:${TRAEFIK_TAG:-v3}
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      master:
+        condition: service_healthy
+    command:
+      - --entrypoints.${TRAEFIK_ENTRYPOINT:-websecure}.address=:443
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --certificatesresolvers.${TRAEFIK_RESOLVER:-letsencrypt}.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.${TRAEFIK_RESOLVER:-letsencrypt}.acme.storage=/acme/acme.json
+      - --certificatesresolvers.${TRAEFIK_RESOLVER:-letsencrypt}.acme.tlschallenge=true
+      - --log.level=INFO
+    volumes:
+      - ./data/traefik:/etc/traefik/dynamic:ro
+      - ./data/acme:/acme

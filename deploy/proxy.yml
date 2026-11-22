@@ -1,0 +1,20 @@
+# The master and the relay behind a proxy that handles TLS on port 443 (PROXY in .env;
+# setup.sh adds this file to COMPOSE_FILE). The proxy shows a certificate from Let's Encrypt
+# for MASTER_HOST and TURN_HOST, and the configuration names Let's Encrypt's roots instead of
+# a pin, so the certificate can be renewed with a new key.
+#
+# - master: plain HTTP on PROXY_BIND:MASTER_PORT, for the proxy only; it takes each player's
+#   address from the proxy's X-Forwarded-For (MASTER_TRUST_PROXY).
+# - coturn: UDP and TCP on TURN_PORT as before; no TLS port of its own (setup.sh writes
+#   no-tls): the proxy ends TLS for TURN_HOST and passes the stream to TURN_PORT.
+#
+# Routes for the proxy: data/traefik/atomic.yml (written by setup.sh).
+services:
+  master:
+    environment:
+      MASTER_LISTEN: "${PROXY_BIND:-127.0.0.1}:${MASTER_PORT:-8443}"
+      MASTER_TLS_CERT: ""
+      MASTER_TLS_KEY: ""
+      MASTER_TRUST_PROXY: "1"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://${PROXY_BIND:-127.0.0.1}:${MASTER_PORT:-8443}/v1/status"]
