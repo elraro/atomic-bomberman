@@ -72,6 +72,8 @@ private:
         std::size_t seq;
     };
     bool addAni(const std::string& path);
+    // Makes the sequence "menu bomb": the trigger bomb's largest picture in the sizes of the regular bomb's animation.
+    void addMenuBomb();
     bool loadFree(int level);
 
     bool free_ = false;  // the free asset set: frames from art_ instead of files_
