@@ -179,7 +179,11 @@ void SpriteBank::addMenuBomb() {
         for (int x = 0; x < big.width; ++x)
             if (opaque(x, y)) half = std::max(half, std::max(std::max(ax - x, x + 1 - ax), std::max(ay - y, y + 1 - ay)));
     const int window = 2 * half;
-    const int windowX = ax - half, windowY = ay - half;
+    menuBombFile_ = trig->second.file;
+    menuBombFrame_ = ts.steps[0].frame;
+    menuBombX_ = ax - half;
+    menuBombY_ = ay - half;
+    menuBombWindow_ = window;
 
     AniFile out;
     AniSequence seq;
@@ -201,8 +205,8 @@ void SpriteBank::addMenuBomb() {
             // Each new pixel is the mean of the source area it covers; mostly empty areas stay transparent.
             for (int y = 0; y < size; ++y)
                 for (int x = 0; x < size; ++x) {
-                    const float x0 = static_cast<float>(x) * step + static_cast<float>(windowX), x1 = x0 + step;
-                    const float y0 = static_cast<float>(y) * step + static_cast<float>(windowY), y1 = y0 + step;
+                    const float x0 = static_cast<float>(x) * step + static_cast<float>(menuBombX_), x1 = x0 + step;
+                    const float y0 = static_cast<float>(y) * step + static_cast<float>(menuBombY_), y1 = y0 + step;
                     float sum[3] = {0, 0, 0}, solid = 0, area = 0;
                     for (int sy = static_cast<int>(std::floor(y0)); sy < static_cast<int>(std::ceil(y1)); ++sy)
                         for (int sx = static_cast<int>(std::floor(x0)); sx < static_cast<int>(std::ceil(x1)); ++sx) {
@@ -231,6 +235,8 @@ void SpriteBank::addMenuBomb() {
     const std::size_t fi = files_.size();
     sequences_[seq.name] = {fi, 0};
     files_.push_back(std::move(out));
+    hiresPacks_.push_back(std::nullopt);
+    fileStems_.push_back("menubomb");
 }
 
 bool SpriteBank::loadFree(int level) {
@@ -415,22 +421,40 @@ std::optional<Sprite> SpriteBank::sprite(const std::string& sequence, int index,
         unsigned texture = 0;
         if (!hiresDir_.empty()) {
             // The enlarged frame in the player's colour if it differs from the plain one, else the plain one.
-            const std::string base = hiresDir_ + "/ani/" + fileStems_[it->second.file] + "/" + std::to_string(step.frame);
-            const std::vector<std::uint8_t> plain = aniFrameRgba(f, palette_, nullptr);  // the mask does not depend on the colour
+            // "menu bomb" has no enlarged pictures of its own: it draws the trigger bomb's largest one, made smaller by its size.
+            const bool menu = fileStems_[it->second.file] == "menubomb";
+            const std::size_t hf = menu ? menuBombFile_ : it->second.file;
+            const int hframe = menu ? menuBombFrame_ : step.frame;
+            const AniFrame& src = menu ? files_[hf].frames[static_cast<std::size_t>(hframe)] : f;
+            const std::string base = hiresDir_ + "/ani/" + fileStems_[hf] + "/" + std::to_string(hframe);
+            const std::vector<std::uint8_t> plain = aniFrameRgba(src, palette_, nullptr);  // the mask does not depend on the colour
             const std::vector<std::uint8_t>* table = (colour >= 0 && colour < 10 && !remap_[static_cast<std::size_t>(colour)].empty()) ? &remap_[static_cast<std::size_t>(colour)] : nullptr;
-            const std::string& stem = fileStems_[it->second.file];
-            const bool bomb = stem == "bombs" || stem == "bombanim" || stem == "bomanim2";  // balls with a fuse cap
+            const std::string& stem = fileStems_[hf];
+            const bool bomb = stem == "bombs" || stem == "bombanim" || stem == "bomanim2" || stem == "triganim" || stem == "trigbomb";  // balls with a fuse cap
             const auto post = [&](PngImage& big) {
-                refineSilhouette(big, f.width, f.height, plain);
-                if (bomb) redrawBomb(big, f, palette_, table);
+                refineSilhouette(big, src.width, src.height, plain);
+                if (bomb) redrawBomb(big, src, palette_, table);
+                if (menu) {  // only the window around the ball's centre, as the frames of "menu bomb" are
+                    const int m = big.width / src.width, side = menuBombWindow_ * m;
+                    PngImage win;
+                    win.width = win.height = side;
+                    win.rgba.assign(static_cast<std::size_t>(side) * static_cast<std::size_t>(side) * 4, 0);
+                    for (int y = 0; y < side; ++y)
+                        for (int x = 0; x < side; ++x) {
+                            const int sx = x + menuBombX_ * m, sy = y + menuBombY_ * m;
+                            if (sx < 0 || sy < 0 || sx >= big.width || sy >= big.height) continue;
+                            std::copy_n(&big.rgba[(static_cast<std::size_t>(sy) * big.width + sx) * 4], 4, &win.rgba[(static_cast<std::size_t>(y) * side + x) * 4]);
+                        }
+                    big = std::move(win);
+                }
             };
             // The container of the file first, then the folder of PNGs that older runs made.
-            const auto& pack = hiresPacks_[it->second.file];
+            const auto& pack = hiresPacks_[hf];
             const auto enlarged = [&](int c) -> unsigned {
                 if (pack)
-                    if (const auto bytes = pack->read(step.frame, c))
-                        if (const unsigned t = hiresTextureFrom(decodePng(*bytes), stem + ".hani/" + hiresFrameName(step.frame, c), f.width, f.height, post)) return t;
-                return hiresTexture(base + (c >= 0 ? "_c" + std::to_string(c) : std::string()) + ".png", f.width, f.height, post);
+                    if (const auto bytes = pack->read(hframe, c))
+                        if (const unsigned t = hiresTextureFrom(decodePng(*bytes), stem + ".hani/" + hiresFrameName(hframe, c), src.width, src.height, post)) return t;
+                return hiresTexture(base + (c >= 0 ? "_c" + std::to_string(c) : std::string()) + ".png", src.width, src.height, post);
             };
             if (colour >= 0) texture = enlarged(colour);
             if (texture == 0) texture = enlarged(-1);
