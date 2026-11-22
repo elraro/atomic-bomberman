@@ -2302,10 +2302,10 @@ int runGame(int argc, char** argv, bool& again) {
                 // The picture carries the item texts; the game draws only the cursor
                 // (original value 700: first item at x 332, y 140, 38 px apart).
                 // The original's pointer here is its regular trigger bomb, pulsing; the free set keeps its own pointer.
-                if (ab::isFreeAssetDir(opt.gameDir))
+                // If the menu bomb could not be made (a file of the bombs missing), the regular pointer stands in.
+                const int bombStep = static_cast<int>(static_cast<std::int64_t>(animFrame) * 143 / 400);
+                if (ab::isFreeAssetDir(opt.gameDir) || !renderer.sprite(*spritesPtr, "menu bomb", bombStep, -1, 332.0f, kMenuRowCentre[menuItem]))
                     renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 332.0f, 140.0f + 38.0f * static_cast<float>(menuItem));
-                else
-                    renderer.sprite(*spritesPtr, "menu bomb", animFrame * 143 / 400, -1, 332.0f, kMenuRowCentre[menuItem]);
                 // The release, top left, where the original shows its "V1.0".
                 renderer.text(*spritesPtr, "V" AB_VERSION " Modern", 9, 7, 0, 0, 0);
                 renderer.text(*spritesPtr, "V" AB_VERSION " Modern", 8, 6, 1, 1, 1);
