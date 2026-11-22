@@ -1219,12 +1219,17 @@ int runGame(int argc, char** argv, bool& again) {
                 // waits for one takes that gamepad (another seat that had it goes OFF). The menus are not
                 // steered by it, so this works with the gamepads that may not steer them.
                 bool padTaken = false;
+                // The d-pad does not answer a waiting seat: it still moves through the list (Left: OFF,
+                // Right: on to the next choice), so a menu worked with a gamepad can leave "press button".
+                const bool dpad = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
+                                  (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_UP || e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_DOWN ||
+                                   e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_LEFT || e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
                 if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && screen == Screen::PlayerList) {
                     for (std::size_t j = 0; j < pads.size() && !padTaken; ++j) {
                         if (pads[j] == nullptr || SDL_GetGamepadID(pads[j]) != e.gbutton.which) continue;
                         padFlashUntil[j] = SDL_GetTicks() + 600;
                         Control& waiting = control[static_cast<std::size_t>(listRow)];
-                        if (waiting == Control::PadWait) {
+                        if (waiting == Control::PadWait && !dpad) {
                             const Control mine = static_cast<Control>(static_cast<int>(Control::Pad0) + static_cast<int>(j));
                             for (Control& other : control)
                                 if (other == mine) other = Control::Off;
