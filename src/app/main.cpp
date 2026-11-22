@@ -379,7 +379,8 @@ std::string findGameDir(const std::string& requested) {
 
 // How each player slot is controlled, as on the original's player list.
 // The pads are Pad0 up to Pad0 + kMaxPads - 1 (one per seat).
-enum class Control { Off, Key0, Key1, Ai, Pad0 };
+// PadWait: the seat waits for a button on the gamepad that is meant for it.
+enum class Control { Off, Key0, Key1, Ai, PadWait, Pad0 };
 constexpr int kMaxPads = ab::PadKeys::kMaxPads;
 
 std::string controlName(Control c) {
@@ -388,6 +389,7 @@ std::string controlName(Control c) {
         case Control::Key1: return "KEY 1";
         case Control::Ai: return "AI";
         case Control::Off: return "OFF";
+        case Control::PadWait: return "JOY - PRESS BUTTON";
         default: return "JOY " + std::to_string(static_cast<int>(c) - static_cast<int>(Control::Pad0));
     }
 }
@@ -737,6 +739,7 @@ int runGame(int argc, char** argv, bool& again) {
         };
         int optionsGlue = 2;
         int listRow = 0;
+        std::array<std::uint64_t, kMaxPads> padFlashUntil{};  // the pad was pressed: its line in the joystick list lights up
         if (opt.menuShot == 2) screen = Screen::PlayerList;
         if (opt.menuShot == 3) screen = Screen::LevelSetup;
         if (opt.menuShot == 4) screen = Screen::Options;
@@ -1212,6 +1215,27 @@ int runGame(int argc, char** argv, bool& again) {
                     SDL_GetWindowSize(window, &ww, &wh);
                     touch.handle(e, ww, wh);
                 }
+                // Player list: a button on any gamepad lights its line in the joystick list, and a seat that
+                // waits for one takes that gamepad (another seat that had it goes OFF). The menus are not
+                // steered by it, so this works with the gamepads that may not steer them.
+                bool padTaken = false;
+                if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && screen == Screen::PlayerList) {
+                    for (std::size_t j = 0; j < pads.size() && !padTaken; ++j) {
+                        if (pads[j] == nullptr || SDL_GetGamepadID(pads[j]) != e.gbutton.which) continue;
+                        padFlashUntil[j] = SDL_GetTicks() + 600;
+                        Control& waiting = control[static_cast<std::size_t>(listRow)];
+                        if (waiting == Control::PadWait) {
+                            const Control mine = static_cast<Control>(static_cast<int>(Control::Pad0) + static_cast<int>(j));
+                            for (Control& other : control)
+                                if (other == mine) other = Control::Off;
+                            waiting = mine;
+                            SDL_RumbleGamepad(pads[j], 0x7000, 0x7000, 250);
+                            if (sound) audio.playRange(20, 20);
+                            padTaken = true;
+                        }
+                    }
+                }
+                if (padTaken) continue;
                 // Outside a match the menus listen to Joy 0 only, unless Options says all. The result screen
                 // after a round or match (win or draw) is the exception: every gamepad may go on there.
                 auto padIgnored = [&](SDL_JoystickID id) {
@@ -1351,29 +1375,20 @@ int runGame(int argc, char** argv, bool& again) {
                     if (key == SDLK_LEFT) c = Control::Off;
                     if (key == SDLK_RIGHT)  // AI -> KEY 0 -> KEY 1 -> OFF -> AI, as observed on the original
                     {
-                        // then any connected gamepads before OFF; a device that another
-                        // seat already uses is skipped
+                        // then, with gamepads connected, "press a button" (the gamepad that answers is
+                        // taken; another seat that had it goes OFF), then OFF
                         std::vector<Control> order{Control::Ai, Control::Key0, Control::Key1};
-                        for (int j = 0; j < padCount; ++j) order.push_back(static_cast<Control>(static_cast<int>(Control::Pad0) + j));
+                        if (padCount > 0) order.push_back(Control::PadWait);
                         order.push_back(Control::Off);
-                        auto takenElsewhere = [&](Control d) {
-                            if (d == Control::Ai || d == Control::Off) return false;
-                            for (int i = 0; i < ab::kMaxPlayers; ++i)
-                                if (i != listRow && control[static_cast<std::size_t>(i)] == d) return true;
-                            return false;
-                        };
-                        std::size_t at = order.size() - 1;  // a gamepad that is gone counts as OFF
+                        const Control at = c >= Control::Pad0 ? Control::PadWait : c;
                         for (std::size_t o = 0; o < order.size(); ++o)
-                            if (order[o] == c) at = o;
-                        for (std::size_t hop = 1; hop <= order.size(); ++hop) {
-                            const Control next = order[(at + hop) % order.size()];
-                            if (!takenElsewhere(next)) {
-                                c = next;
+                            if (order[o] == at) {
+                                c = order[(o + 1) % order.size()];
                                 break;
                             }
-                        }
                     }
                     if (key == SDLK_ESCAPE) {
+                        for (Control& seatCtl : control) seatCtl = seatCtl == Control::PadWait ? Control::Off : seatCtl;
                         screen = Screen::MainMenu;
                         if (sound) audio.playMusic(1010);
                     }
@@ -1403,6 +1418,7 @@ int runGame(int argc, char** argv, bool& again) {
                     }
                     if (key == SDLK_0) c = Control::Off;  // original key '0'
                     if (key == SDLK_RETURN) {
+                        for (Control& seatCtl : control) seatCtl = seatCtl == Control::PadWait ? Control::Off : seatCtl;  // nobody pressed a button
                         int n = 0, humans = 0;
                         std::array<int, 2> perTeam{};
                         bool shared = false;
@@ -2305,11 +2321,18 @@ int runGame(int argc, char** argv, bool& again) {
                         if (control[static_cast<std::size_t>(i)] == static_cast<Control>(static_cast<int>(Control::Pad0) + j)) seat = i;
                     const float y = 170.0f + 24.0f * static_cast<float>(j);
                     std::string line = "Joy " + std::to_string(j) + " - " + (name != nullptr ? name : "?");
-                    if (seat >= 0) line = "P" + std::to_string(seat + 1) + "  " + line;
                     const float cr = seat >= 0 ? colour[seat][0] : 0.85f, cg = seat >= 0 ? colour[seat][1] : 0.85f,
                                 cb = seat >= 0 ? colour[seat][2] : 0.85f;
-                    renderer.text(*spritesPtr, line, 301, y + 1, 0, 0, 0);
-                    renderer.text(*spritesPtr, line, 300, y, cr, cg, cb);
+                    // The seat's tag keeps its colour; only the gamepad's own text lights up when it is pressed.
+                    const bool flash = SDL_GetTicks() < padFlashUntil[static_cast<std::size_t>(j)];
+                    const float lineX = 300.0f + renderer.textWidth(*spritesPtr, "P10 ");
+                    if (seat >= 0) {
+                        const std::string tag = "P" + std::to_string(seat + 1);
+                        renderer.text(*spritesPtr, tag, 301, y + 1, 0, 0, 0);
+                        renderer.text(*spritesPtr, tag, 300, y, cr, cg, cb);
+                    }
+                    renderer.text(*spritesPtr, line, lineX + 1, y + 1, 0, 0, 0);
+                    renderer.text(*spritesPtr, line, lineX, y, flash ? 1.0f : 0.85f, flash ? 1.0f : 0.85f, flash ? 0.3f : 0.85f);
                 }
                 renderer.text(*spritesPtr, teamPlay ? "Up/Down: select   Left: off   Right: change   T: team   Enter: start" : "Up/Down: select   Left: off   Right: change   Enter: start", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
