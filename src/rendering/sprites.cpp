@@ -1,6 +1,7 @@
 #include "rendering/sprites.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 #include "free/free_data.hpp"
 #include "rendering/gl.hpp"
@@ -102,6 +103,97 @@ bool SpriteBank::addAni(const std::string& path) {
     return true;
 }
 
+void SpriteBank::addMenuBomb() {
+    const auto trig = sequences_.find("bomb trigger green");
+    const auto reg = sequences_.find("bomb regular green");
+    if (trig == sequences_.end() || reg == sequences_.end() || palette_.lookup.size() < 32768 || palette_.rgb6.size() < 768) return;
+    const AniFile& tf = files_[trig->second.file];
+    const AniFile& rf = files_[reg->second.file];
+    const AniSequence& ts = tf.sequences[trig->second.seq];
+    const AniSequence& rs = rf.sequences[reg->second.seq];
+    if (ts.steps.empty() || rs.steps.empty()) return;
+    const AniFrame& big = tf.frames[static_cast<std::size_t>(ts.steps[0].frame)];  // the largest: "BOOM" can be read
+    if (big.pixels.empty() || !big.hasKey) return;
+    int widest = 1;
+    for (const AniStep& st : rs.steps) widest = std::max(widest, rf.frames[static_cast<std::size_t>(st.frame)].width);
+
+    // The ball (the green of the original's palette) gives the centre the bomb swells and shrinks around;
+    // the fuse cap sticks out of it, so the window around that centre is as large as the picture needs.
+    auto opaque = [&](int x, int y) { return big.pixels[static_cast<std::size_t>(y * big.width + x)] != big.key; };
+    int bx0 = big.width, by0 = big.height, bx1 = -1, by1 = -1;
+    for (int y = 0; y < big.height; ++y)
+        for (int x = 0; x < big.width; ++x) {
+            if (!opaque(x, y)) continue;
+            const std::uint8_t idx = palette_.lookup[big.pixels[static_cast<std::size_t>(y * big.width + x)] & 0x7FFF];
+            if (idx == 0) continue;
+            const std::uint8_t* c = &palette_.rgb6[static_cast<std::size_t>(idx) * 3];
+            if (!(c[1] > 1.25f * c[0] && c[1] > 1.5f * c[2])) continue;
+            bx0 = std::min(bx0, x);
+            by0 = std::min(by0, y);
+            bx1 = std::max(bx1, x);
+            by1 = std::max(by1, y);
+        }
+    if (bx1 < bx0) return;
+    const int ax = (bx0 + bx1 + 1) / 2, ay = (by0 + by1 + 1) / 2;  // the centre, on a whole pixel
+    int half = 1;
+    for (int y = 0; y < big.height; ++y)
+        for (int x = 0; x < big.width; ++x)
+            if (opaque(x, y)) half = std::max(half, std::max(std::max(ax - x, x + 1 - ax), std::max(ay - y, y + 1 - ay)));
+    const int window = 2 * half;
+    const int windowX = ax - half, windowY = ay - half;
+
+    AniFile out;
+    AniSequence seq;
+    seq.name = "menu bomb";
+    std::map<int, int> made;  // target width -> frame index
+    for (const AniStep& st : rs.steps) {
+        const int target = rf.frames[static_cast<std::size_t>(st.frame)].width;
+        auto it = made.find(target);
+        if (it == made.end()) {
+            // Always an even number of pixels, the hot spot in the middle: the ball keeps its centre in every step.
+            const int size = std::max(2, 2 * static_cast<int>(std::lround(static_cast<float>(window) * static_cast<float>(target) / static_cast<float>(widest) / 2.0f)));
+            AniFrame f;
+            f.width = f.height = size;
+            f.hotX = f.hotY = size / 2;
+            f.hasKey = true;
+            f.key = big.key;
+            f.pixels.assign(static_cast<std::size_t>(size * size), big.key);
+            const float step = static_cast<float>(window) / static_cast<float>(size);  // source pixels per new pixel
+            // Each new pixel is the mean of the source area it covers; mostly empty areas stay transparent.
+            for (int y = 0; y < size; ++y)
+                for (int x = 0; x < size; ++x) {
+                    const float x0 = static_cast<float>(x) * step + static_cast<float>(windowX), x1 = x0 + step;
+                    const float y0 = static_cast<float>(y) * step + static_cast<float>(windowY), y1 = y0 + step;
+                    float sum[3] = {0, 0, 0}, solid = 0, area = 0;
+                    for (int sy = static_cast<int>(std::floor(y0)); sy < static_cast<int>(std::ceil(y1)); ++sy)
+                        for (int sx = static_cast<int>(std::floor(x0)); sx < static_cast<int>(std::ceil(x1)); ++sx) {
+                            const float w = (std::min(x1, static_cast<float>(sx + 1)) - std::max(x0, static_cast<float>(sx))) *
+                                            (std::min(y1, static_cast<float>(sy + 1)) - std::max(y0, static_cast<float>(sy)));
+                            area += w;
+                            if (sx < 0 || sy < 0 || sx >= big.width || sy >= big.height) continue;
+                            const std::uint16_t c = big.pixels[static_cast<std::size_t>(sy * big.width + sx)];
+                            if (c == big.key) continue;
+                            solid += w;
+                            sum[0] += w * static_cast<float>((c >> 10) & 31);
+                            sum[1] += w * static_cast<float>((c >> 5) & 31);
+                            sum[2] += w * static_cast<float>(c & 31);
+                        }
+                    if (area <= 0 || solid * 2.0f < area) continue;
+                    auto c = static_cast<std::uint16_t>((std::lround(sum[0] / solid) << 10) | (std::lround(sum[1] / solid) << 5) | std::lround(sum[2] / solid));
+                    if (c == big.key) c ^= 1;  // never equal to the key colour
+                    f.pixels[static_cast<std::size_t>(y * size + x)] = c;
+                }
+            it = made.emplace(target, static_cast<int>(out.frames.size())).first;
+            out.frames.push_back(std::move(f));
+        }
+        seq.steps.push_back({it->second, 0, 0});
+    }
+    out.sequences.push_back(seq);
+    const std::size_t fi = files_.size();
+    sequences_[seq.name] = {fi, 0};
+    files_.push_back(std::move(out));
+}
+
 bool SpriteBank::loadFree(int level) {
     free_ = true;
     art_ = makeFreeArt();
@@ -154,6 +246,7 @@ bool SpriteBank::load(const std::string& gameDir, int level) {
     addAni(ani + "hurry.ani");
     addAni(ani + "conveyor.ani");
     addAni(ani + "aliens1.ani");
+    addMenuBomb();
     for (int n = 1; n <= 4; ++n) {
         addAni(ani + "punbomb" + std::to_string(n) + ".ani");
         addAni(ani + "bwalk" + std::to_string(n) + ".ani");
