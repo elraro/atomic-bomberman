@@ -213,25 +213,11 @@ int SpriteBank::sequenceLength(const std::string& name) const {
 }
 
 unsigned SpriteBank::makeTexture(const AniFrame& f, int colour) {
-    std::vector<std::uint8_t> rgba(f.pixels.size() * 4);
     const std::vector<std::uint8_t>* remap =
         (colour >= 0 && colour < 10 && !remap_[static_cast<std::size_t>(colour)].empty())
             ? &remap_[static_cast<std::size_t>(colour)]
             : nullptr;
-    for (std::size_t i = 0; i < f.pixels.size(); ++i) {
-        const std::uint16_t px = f.pixels[i];
-        if (f.hasKey && px == f.key) continue;  // transparent
-        // As in the original: RGB555 -> palette index, optional player remap, palette colour.
-        std::uint8_t idx = palette_.lookup[px & 0x7FFF];
-        if (idx == 0) continue;  // index 0 is the transparent colour on screen
-        if (remap != nullptr && (*remap)[idx] != 0) idx = (*remap)[idx];
-        const std::uint8_t* c = &palette_.rgb6[static_cast<std::size_t>(idx) * 3];
-        rgba[i * 4] = static_cast<std::uint8_t>(c[0] * 4 > 255 ? 255 : c[0] * 4);
-        rgba[i * 4 + 1] = static_cast<std::uint8_t>(c[1] * 4 > 255 ? 255 : c[1] * 4);
-        rgba[i * 4 + 2] = static_cast<std::uint8_t>(c[2] * 4 > 255 ? 255 : c[2] * 4);
-        rgba[i * 4 + 3] = 255;
-    }
-    return uploadRgba(f.width, f.height, rgba);
+    return uploadRgba(f.width, f.height, aniFrameRgba(f, palette_, remap));
 }
 
 std::optional<Sprite> SpriteBank::sprite(const std::string& sequence, int index, int colour) {
