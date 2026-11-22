@@ -63,6 +63,8 @@ public:
     // Sprite for step `index` (wrapped) of a named sequence; colour -1 = unmodified,
     // 0-9 = player colour remap.
     std::optional<Sprite> sprite(const std::string& sequence, int index, int colour);
+    // The same frame as plain RGBA pixels (width x height x 4, at the logical size); false if it is missing.
+    bool spriteRgba(const std::string& sequence, int index, int colour, int* width, int* height, std::vector<std::uint8_t>* rgba);
 
 private:
     struct Ref {
@@ -70,6 +72,8 @@ private:
         std::size_t seq;
     };
     bool addAni(const std::string& path);
+    // Makes the sequence "menu bomb": the trigger bomb's largest picture in the sizes of the regular bomb's animation.
+    void addMenuBomb();
     bool loadFree(int level);
 
     bool free_ = false;  // the free asset set: frames from art_ instead of files_

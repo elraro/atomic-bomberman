@@ -136,7 +136,7 @@ int main(int argc, char** argv) {
         else if (a == "--schemes-dir") config.userSchemesDir = next(), schemesDirGiven = true;
         else if (a == "--scheme") config.scheme = next();
         else if (a == "--level") config.settings.level = std::clamp(std::atoi(next().c_str()), -1, 10);
-        else if (a == "--wins") config.settings.winsNeeded = std::clamp(std::atoi(next().c_str()), 1, 9);
+        else if (a == "--wins") config.settings.winsNeeded = std::clamp(std::atoi(next().c_str()), 1, 10);
         else if (a == "--computers") config.settings.computers = std::clamp(std::atoi(next().c_str()), 0, ab::kMaxPlayers - 1);
         else if (a == "--play-time") {
             const int seconds = std::atoi(next().c_str());

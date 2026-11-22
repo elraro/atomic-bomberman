@@ -54,6 +54,10 @@ struct GamePalette {
 };
 std::optional<GamePalette> loadPaletteFile(const std::string& path);
 
+// One frame as RGBA the way the game draws it: RGB555 -> palette index (index 0 and the key
+// colour are transparent) -> optional player remap (256 bytes, or null) -> palette colour x4.
+std::vector<std::uint8_t> aniFrameRgba(const AniFrame& f, const GamePalette& palette, const std::vector<std::uint8_t>* remap);
+
 // Bitmap font (fontN.fon): i32 glyph count, i32 height, i32 spacing, 8 bytes of
 // run-time pointers, then per glyph {i32 width, i32 data offset}, then 1-bit rows
 // (most significant bit first, each row padded to a byte).

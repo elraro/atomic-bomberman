@@ -113,7 +113,7 @@ Options parseArgs(int argc, char** argv) {
                       "  --game-dir DIR       imported assets or an original game folder to play from\n"
                       "  --free               play with the free asset set even if original game data is found\n"
                       "  --start              skip the menu and start a match at once\n"
-                      "  --scheme NAME        scheme (map) to play, e.g. BASIC\n"
+                      "  --scheme NAME        scheme (map) to play, e.g. BASIC; random-match or random-round draw one\n"
                       "  --level N            level theme 0-10\n"
                       "  --players N          number of players (default 4)\n"
                       "  --humans N           keyboard players, 0-2\n"
@@ -378,22 +378,23 @@ std::string findGameDir(const std::string& requested) {
 }
 
 // How each player slot is controlled, as on the original's player list.
-enum class Control { Off, Key0, Key1, Ai, Pad0, Pad1, Pad2, Pad3 };
+// The pads are Pad0 up to Pad0 + kMaxPads - 1 (one per seat).
+// PadWait: the seat waits for a button on the gamepad that is meant for it.
+enum class Control { Off, Key0, Key1, Ai, PadWait, Pad0 };
+constexpr int kMaxPads = ab::PadKeys::kMaxPads;
 
-const char* controlName(Control c) {
+std::string controlName(Control c) {
     switch (c) {
         case Control::Key0: return "KEY 0";
         case Control::Key1: return "KEY 1";
         case Control::Ai: return "AI";
-        case Control::Pad0: return "JOY 0";
-        case Control::Pad1: return "JOY 1";
-        case Control::Pad2: return "JOY 2";
-        case Control::Pad3: return "JOY 3";
-        default: return "OFF";
+        case Control::Off: return "OFF";
+        case Control::PadWait: return "JOY - PRESS BUTTON";
+        default: return "JOY " + std::to_string(static_cast<int>(c) - static_cast<int>(Control::Pad0));
     }
 }
 
-constexpr int kOptionRows = 19;  // the original's, and this implementation's: sound test, original game data, which data to use, screen
+constexpr int kOptionRows = 20;  // the original's, and this implementation's: sound test, original game data, which data to use, screen
 enum class Screen { MainMenu, PlayerList, LevelSetup, Match, Roulette, Options, Help, HelpList, Message, CampaignList, Intro, Keys, Editor, AudioAdjust, Movie, Net, SoundTest };
 
 using ab::SchemeEntry;
@@ -569,6 +570,15 @@ int runGame(int argc, char** argv, bool& again) {
         opt.scheme = cfg.scheme;
         for (char& ch : opt.scheme) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     }
+    // A random scheme per match or per round: from the saved settings, or --scheme random-match / random-round.
+    int schemeRandom = opt.schemeSet ? 0 : cfg.schemeRandom;
+    std::string schemeArg = opt.scheme;
+    for (char& ch : schemeArg) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    if (opt.schemeSet && (schemeArg == "random-match" || schemeArg == "random-round")) {
+        schemeRandom = schemeArg == "random-match" ? 1 : 2;
+        opt.scheme = cfg.scheme;  // the one the first draw replaces
+        for (char& ch : opt.scheme) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
     if (opt.roulette) cfg.goldman = true;
 
     ab::Values values = ab::Values::defaults();
@@ -614,6 +624,30 @@ int runGame(int argc, char** argv, bool& again) {
             if (schemes[i].file == opt.scheme) schemeIndex = static_cast<int>(i);
         int setupRow = 0;
         bool teamPlay = cfg.teamPlay;
+        if (teamPlay && schemeRandom == 2) schemeRandom = 1;  // team play: the teams follow the scheme, so it stays for the match
+        // The scheme list of the level screen: two random entries (-1 per match, -2 per round) before
+        // the schemes themselves; no "per round" with team play.
+        bool schemePopup = false;
+        int popupRow = 0, popupTop = 0;
+        std::vector<int> popupChoices;
+        int popupPreviewFor = -1;  // the scheme whose grid popupPreview holds
+        ab::Scheme popupPreview;
+        constexpr int kRandomMatch = -1, kRandomRound = -2, kPopupRows = 7;
+        auto schemeChoices = [&]() {
+            std::vector<int> c{kRandomMatch};
+            if (!teamPlay) c.push_back(kRandomRound);
+            for (std::size_t i = 0; i < schemes.size(); ++i) c.push_back(static_cast<int>(i));
+            return c;
+        };
+        auto currentChoice = [&]() { return schemeRandom == 1 ? kRandomMatch : schemeRandom == 2 ? kRandomRound : schemeIndex; };
+        auto applyChoice = [&](int choice) {
+            schemeRandom = choice == kRandomMatch ? 1 : choice == kRandomRound ? 2 : 0;
+            if (choice >= 0) schemeIndex = choice;
+        };
+        auto schemeTitle = [&](int choice) {
+            return choice == kRandomMatch ? std::string("Random (per match)") : choice == kRandomRound ? std::string("Random (per round)")
+                                                                                                     : schemes[static_cast<std::size_t>(choice)].title;
+        };
         std::array<int, ab::kMaxPlayers> teams{};
         std::array<ab::SchemePower, 13> schemePowers{};  // the scheme's -P lines
         int teamsFromScheme = -1;
@@ -645,6 +679,7 @@ int runGame(int argc, char** argv, bool& again) {
             cfg.level = randomLevel ? -1 : level;
             cfg.winsNeeded = winsNeeded;
             cfg.teamPlay = teamPlay;
+            cfg.schemeRandom = schemeRandom;
             if (!schemes.empty()) {
                 cfg.scheme = schemes[static_cast<std::size_t>(schemeIndex)].file;
                 for (char& ch : cfg.scheme) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
@@ -654,11 +689,11 @@ int runGame(int argc, char** argv, bool& again) {
         ab::Audio audio;
         const bool sound = !opt.gameDir.empty() && !opt.mute && audio.init(opt.gameDir, cfg.smallMemory, cfg.unusedVoices);
         audio.setVolumes(cfg.musicVolume, cfg.soundVolume);
-        // Up to four gamepads, opened once at start.
-        std::array<SDL_Gamepad*, 4> pads{};
+        // Up to one gamepad per seat, opened once at start.
+        std::array<SDL_Gamepad*, kMaxPads> pads{};
         int padCount = 0;
         if (SDL_JoystickID* ids = SDL_GetGamepads(&padCount)) {
-            padCount = std::min(padCount, 4);
+            padCount = std::min(padCount, kMaxPads);
             for (int i = 0; i < padCount; ++i) pads[static_cast<std::size_t>(i)] = SDL_OpenGamepad(ids[i]);
             SDL_free(ids);
         } else {
@@ -738,6 +773,7 @@ int runGame(int argc, char** argv, bool& again) {
         };
         int optionsGlue = 2;
         int listRow = 0;
+        std::array<std::uint64_t, kMaxPads> padFlashUntil{};  // the pad was pressed: its line in the joystick list lights up
         if (opt.menuShot == 2) screen = Screen::PlayerList;
         if (opt.menuShot == 3) screen = Screen::LevelSetup;
         if (opt.menuShot == 4) screen = Screen::Options;
@@ -832,12 +868,7 @@ int runGame(int argc, char** argv, bool& again) {
         net.setGameVersion(AB_VERSION);
         // What the original resets once per match (0x421793): scores, kills and, with
         // "random start", the start positions: 200 swaps of two of the ten.
-        auto newMatch = [&]() {
-            wins = {};
-            matchKills = {};
-            matchOver = false;
-            matchWinner = -1;
-            applySettings();
+        auto shuffleStartCells = [&]() {
             startCells = scheme.start;
             if (cfg.randomStart)
                 for (int n = 0; n < 200; ++n) {
@@ -846,7 +877,30 @@ int runGame(int argc, char** argv, bool& again) {
                     std::swap(startCells[a], startCells[b]);
                 }
         };
+        // A random scheme (this implementation's addition): never the same twice in a row.
+        auto drawScheme = [&]() {
+            if (schemes.empty()) return;
+            const int n = static_cast<int>(schemes.size());
+            int pick = appRng.below(n);
+            if (n > 1 && pick == schemeIndex) pick = (pick + 1 + appRng.below(n - 1)) % n;
+            schemeIndex = pick;
+        };
+        bool matchFresh = false;   // the first round of a match has its scheme from newMatch
+        Uint64 schemeShownAt = 0;  // when a drawn scheme was announced
+        std::string schemeShown;
+        auto newMatch = [&]() {
+            wins = {};
+            matchKills = {};
+            matchOver = false;
+            matchWinner = -1;
+            if (teamPlay && schemeRandom == 2) schemeRandom = 1;
+            if (schemeRandom != 0 && !campaignMode) drawScheme();
+            applySettings();
+            shuffleStartCells();
+            matchFresh = true;
+        };
         auto beginMatch = [&]() {
+            bool changed = false;
             if (randomLevel && !campaignMode) {
                 // "Random Each Game": a level drawn for every round, as the original's round setup
                 // does (0x410B6E, run before each round); values 1150-1160 say which may come up.
@@ -854,7 +908,22 @@ int runGame(int argc, char** argv, bool& again) {
                     level = appRng.below(11);
                     if (values.get(1150 + level) != 0) break;
                 }
-                applySettings();  // its graphics and extras
+                changed = true;  // its graphics and extras
+            }
+            // "Random (per round)": a new scheme for every round after the first.
+            if (schemeRandom == 2 && !campaignMode && !matchFresh) {
+                drawScheme();
+                shuffleStartCells();
+                changed = true;
+            }
+            if (changed) applySettings();
+            matchFresh = false;
+            if (schemeRandom != 0 && !campaignMode && !schemes.empty()) {
+                schemeShown = "Scheme: " + schemes[static_cast<std::size_t>(schemeIndex)].title;
+                schemeShownAt = SDL_GetTicks();
+                std::fprintf(stderr, "INFO  Random scheme=\"%s\"\n", schemes[static_cast<std::size_t>(schemeIndex)].file.c_str());
+            } else {
+                schemeShown.clear();
             }
             // The original flushes its sound cache and picks a new selection of voice lines
             // every value 7 seconds (value 9 in the normal memory model), between rounds.
@@ -1165,6 +1234,10 @@ int runGame(int argc, char** argv, bool& again) {
         double accumulatorMs = 0.0;
 
         while (running) {
+            // Pictures that move by themselves (pointers, the editor's cursor) run on the clock, 60 steps a second,
+            // whatever the display's refresh rate or the window's size make of the number of drawn frames.
+            // Automated runs count drawn frames, so that their pictures are the same every time.
+            const int animFrame = opt.frames > 0 || opt.menuShot > 0 ? frame : static_cast<int>(SDL_GetTicks() * 60 / 1000);
             // Scripted key presses for automated checks of the menu screens.
             if (!opt.script.empty() && frame % 10 == 5 && static_cast<std::size_t>(frame / 10) < opt.script.size()) {
                 const std::string& k = opt.script[static_cast<std::size_t>(frame / 10)];
@@ -1213,6 +1286,40 @@ int runGame(int argc, char** argv, bool& again) {
                     SDL_GetWindowSize(window, &ww, &wh);
                     touch.handle(e, ww, wh);
                 }
+                // Player list: a button on any gamepad lights its line in the joystick list, and a seat that
+                // waits for one takes that gamepad (another seat that had it goes OFF). The menus are not
+                // steered by it, so this works with the gamepads that may not steer them.
+                bool padTaken = false;
+                // The d-pad does not answer a waiting seat: it still moves through the list (Left: OFF,
+                // Right: on to the next choice), so a menu worked with a gamepad can leave "press button".
+                const bool dpad = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
+                                  (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_UP || e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_DOWN ||
+                                   e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_LEFT || e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+                if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && screen == Screen::PlayerList) {
+                    for (std::size_t j = 0; j < pads.size() && !padTaken; ++j) {
+                        if (pads[j] == nullptr || SDL_GetGamepadID(pads[j]) != e.gbutton.which) continue;
+                        padFlashUntil[j] = SDL_GetTicks() + 600;
+                        Control& waiting = control[static_cast<std::size_t>(listRow)];
+                        if (waiting == Control::PadWait && !dpad) {
+                            const Control mine = static_cast<Control>(static_cast<int>(Control::Pad0) + static_cast<int>(j));
+                            for (Control& other : control)
+                                if (other == mine) other = Control::Off;
+                            waiting = mine;
+                            SDL_RumbleGamepad(pads[j], 0x7000, 0x7000, 250);
+                            if (sound) audio.playRange(20, 20);
+                            padTaken = true;
+                        }
+                    }
+                }
+                if (padTaken) continue;
+                // Outside a match the menus listen to Joy 0 only, unless Options says all. The result screen
+                // after a round or match (win or draw) is the exception: every gamepad may go on there.
+                auto padIgnored = [&](SDL_JoystickID id) {
+                    const bool resultScreen = screen == Screen::Match && !attract && world.roundOver();
+                    return !cfg.menuAllPads && !padsPlaying() && !resultScreen && (pads[0] == nullptr || SDL_GetGamepadID(pads[0]) != id);
+                };
+                if ((e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) && padIgnored(e.gbutton.which)) continue;
+                if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && padIgnored(e.gaxis.which)) continue;
                 if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
                     if (const ab::PadKeys::Button b = padButton(e.gbutton.button); b != ab::PadKeys::Button::Count)
                         padKeys.button(b, e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GetTicks());
@@ -1236,7 +1343,7 @@ int runGame(int argc, char** argv, bool& again) {
                             pads[i] = SDL_OpenGamepad(e.gdevice.which);
                             known = true;
                         }
-                    for (padCount = 4; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
+                    for (padCount = kMaxPads; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
                     continue;
                 }
                 if (e.type == SDL_EVENT_GAMEPAD_REMOVED) {
@@ -1246,7 +1353,7 @@ int runGame(int argc, char** argv, bool& again) {
                             pads[i] = nullptr;
                             padKeys.stick(static_cast<int>(i), 0, 0, SDL_GetTicks());
                         }
-                    for (padCount = 4; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
+                    for (padCount = kMaxPads; padCount > 0 && pads[static_cast<std::size_t>(padCount - 1)] == nullptr;) --padCount;
                     continue;
                 }
                 // A phone's back key is Esc.
@@ -1344,16 +1451,20 @@ int runGame(int argc, char** argv, bool& again) {
                     if (key == SDLK_LEFT) c = Control::Off;
                     if (key == SDLK_RIGHT)  // AI -> KEY 0 -> KEY 1 -> OFF -> AI, as observed on the original
                     {
-                        // then any connected gamepads before OFF
-                        const int k = static_cast<int>(c);
-                        if (c == Control::Ai) c = Control::Key0;
-                        else if (c == Control::Key0) c = Control::Key1;
-                        else if (c == Control::Key1) c = padCount > 0 ? Control::Pad0 : Control::Off;
-                        else if (k >= static_cast<int>(Control::Pad0))
-                            c = k - static_cast<int>(Control::Pad0) + 1 < padCount ? static_cast<Control>(k + 1) : Control::Off;
-                        else c = Control::Ai;
+                        // then, with gamepads connected, "press a button" (the gamepad that answers is
+                        // taken; another seat that had it goes OFF), then OFF
+                        std::vector<Control> order{Control::Ai, Control::Key0, Control::Key1};
+                        if (padCount > 0) order.push_back(Control::PadWait);
+                        order.push_back(Control::Off);
+                        const Control at = c >= Control::Pad0 ? Control::PadWait : c;
+                        for (std::size_t o = 0; o < order.size(); ++o)
+                            if (order[o] == at) {
+                                c = order[(o + 1) % order.size()];
+                                break;
+                            }
                     }
                     if (key == SDLK_ESCAPE) {
+                        for (Control& seatCtl : control) seatCtl = seatCtl == Control::PadWait ? Control::Off : seatCtl;
                         screen = Screen::MainMenu;
                         if (sound) audio.playMusic(1010);
                     }
@@ -1383,6 +1494,7 @@ int runGame(int argc, char** argv, bool& again) {
                     }
                     if (key == SDLK_0) c = Control::Off;  // original key '0'
                     if (key == SDLK_RETURN) {
+                        for (Control& seatCtl : control) seatCtl = seatCtl == Control::PadWait ? Control::Off : seatCtl;  // nobody pressed a button
                         int n = 0, humans = 0;
                         std::array<int, 2> perTeam{};
                         bool shared = false;
@@ -1408,6 +1520,7 @@ int runGame(int argc, char** argv, bool& again) {
                             showMessage({"Problem!!", "Must have at least one player on each team!"}, back);  // message 48
                         } else {
                             screen = Screen::LevelSetup;
+                            if (sound) audio.playRange(10, 10);  // as when the main menu is confirmed
                         }
                     }
                 } else if (screen == Screen::Roulette && roulette) {
@@ -1559,7 +1672,10 @@ int runGame(int argc, char** argv, bool& again) {
                     if (d != 0) {
                         if (sound) audio.playRange(20, 20);
                         switch (optionRow) {
-                            case 0: teamPlay = !teamPlay; break;
+                            case 0:
+                                teamPlay = !teamPlay;
+                                if (teamPlay && schemeRandom == 2) schemeRandom = 1;
+                                break;
                             case 1: cfg.randomStart = !cfg.randomStart; break;
                             case 2: cfg.conveyorSpeed = (cfg.conveyorSpeed + d + 3) % 3; break;
                             case 3: cfg.stompedBombsDetonate = !cfg.stompedBombsDetonate; break;
@@ -1637,6 +1753,7 @@ int runGame(int argc, char** argv, bool& again) {
                                 saveSettings();
 #endif
                                 break;
+                            case 19: cfg.menuAllPads = !cfg.menuAllPads; break;
                         }
                     }
                     if (key == SDLK_ESCAPE) {
@@ -1646,20 +1763,58 @@ int runGame(int argc, char** argv, bool& again) {
                 } else if (screen == Screen::LevelSetup) {
                     // Level, scheme and match length, as on the original's second pre-game screen.
                     const int d = key == SDLK_RIGHT ? 1 : key == SDLK_LEFT ? -1 : 0;
+                    if (schemePopup) {
+                        // The scheme list: up and down move the cursor, Enter (A) takes the entry, Esc (B) leaves it as it was.
+                        const int n = static_cast<int>(popupChoices.size());
+                        if (key == SDLK_UP) popupRow = std::max(0, popupRow - 1);
+                        if (key == SDLK_DOWN) popupRow = std::min(n - 1, popupRow + 1);
+                        if (key == SDLK_PAGEUP) popupRow = std::max(0, popupRow - kPopupRows);
+                        if (key == SDLK_PAGEDOWN) popupRow = std::min(n - 1, popupRow + kPopupRows);
+                        if (key == SDLK_HOME) popupRow = 0;
+                        if (key == SDLK_END) popupRow = n - 1;
+                        if (popupRow < popupTop) popupTop = popupRow;
+                        if (popupRow >= popupTop + kPopupRows) popupTop = popupRow - kPopupRows + 1;
+                        if (key == SDLK_RETURN && n > 0) {
+                            applyChoice(popupChoices[static_cast<std::size_t>(popupRow)]);
+                            schemePopup = false;
+                        }
+                        if (key == SDLK_ESCAPE) schemePopup = false;
+                        continue;
+                    }
                     if (key == SDLK_UP) setupRow = (setupRow + 3) % 4;
                     if (key == SDLK_DOWN) setupRow = (setupRow + 1) % 4;
-                    if (d != 0 && setupRow == 3) teamPlay = !teamPlay;
+                    if (d != 0 && setupRow == 3) {
+                        teamPlay = !teamPlay;
+                        if (teamPlay && schemeRandom == 2) schemeRandom = 1;
+                    }
                     if (d != 0 && setupRow == 0) {
                         // Random Each Game, then the eleven levels.
                         const int choice = ((randomLevel ? -1 : level) + d + 1 + 12) % 12 - 1;
                         randomLevel = choice < 0;
                         if (!randomLevel) level = choice;
                     }
-                    if (d != 0 && setupRow == 1 && !schemes.empty())
-                        schemeIndex = (schemeIndex + d + static_cast<int>(schemes.size())) % static_cast<int>(schemes.size());
-                    if (d != 0 && setupRow == 2) winsNeeded = std::clamp(winsNeeded + d, 1, 9);
+                    if (d != 0 && setupRow == 1 && !schemes.empty()) {
+                        // Through the list the popup shows: the random entries, then the schemes, wrapping.
+                        const std::vector<int> choices = schemeChoices();
+                        const int n = static_cast<int>(choices.size());
+                        int at = 0;
+                        for (int i = 0; i < n; ++i)
+                            if (choices[static_cast<std::size_t>(i)] == currentChoice()) at = i;
+                        applyChoice(choices[static_cast<std::size_t>((at + d + n) % n)]);
+                    }
+                    if (d != 0 && setupRow == 2) winsNeeded = std::clamp(winsNeeded + d, 1, 10);
                     if (key == SDLK_ESCAPE) screen = Screen::PlayerList;
-                    if (key == SDLK_RETURN) {
+                    if (key == SDLK_RETURN && setupRow == 1 && !schemes.empty()) {
+                        // Enter on the scheme line opens the list; the other lines start the match.
+                        popupChoices = schemeChoices();
+                        popupRow = 0;
+                        popupPreviewFor = -1;
+                        for (int i = 0; i < static_cast<int>(popupChoices.size()); ++i)
+                            if (popupChoices[static_cast<std::size_t>(i)] == currentChoice()) popupRow = i;
+                        popupTop = std::clamp(popupRow - kPopupRows / 2, 0, std::max(0, static_cast<int>(popupChoices.size()) - kPopupRows));
+                        schemePopup = true;
+                    } else if (key == SDLK_RETURN) {
+                        if (sound) audio.playRange(10, 10);
                         newMatch();
                         saveSettings();
                         screen = Screen::Match;
@@ -1893,6 +2048,14 @@ int runGame(int argc, char** argv, bool& again) {
                     for (int i = 0; i < ab::kMaxPlayers; ++i)
                         shown[static_cast<std::size_t>(i)] = campaignScore[static_cast<std::size_t>(i)] + world.player(i).score;
                 renderer.draw(world, previous, alpha, w, h, spritesPtr.get(), &shown, &killsBeforeRound);
+                if (!schemeShown.empty() && spritesPtr->loaded() && !world.roundOver() && SDL_GetTicks() - schemeShownAt < 3000) {
+                    // A drawn scheme is announced for three seconds at the start of the round.
+                    renderer.begin(w, h);
+                    const float tx = 320.0f - renderer.textWidth(*spritesPtr, schemeShown) / 2.0f;
+                    renderer.text(*spritesPtr, schemeShown, tx + 1, 4, 0, 0, 0);
+                    renderer.text(*spritesPtr, schemeShown, tx, 3, 1.0f, 0.95f, 0.3f);
+                    renderer.end();
+                }
                 if (world.roundOver() && spritesPtr->loaded() && roundOverSteps > 20) {
                     // After a second on the frozen field: the original's result pictures.
                     const int win = world.teamPlay() ? world.winningTeam() : world.winner();
@@ -1909,14 +2072,18 @@ int runGame(int argc, char** argv, bool& again) {
                     } else if (matchOver) {
                         renderer.image(spritesPtr->picture("victory" + std::to_string(matchWinner)));
                         const std::string line = "PLAYER " + std::to_string(matchWinner + 1) + " WINS THE MATCH!";  // message 36
-                        renderer.text(*spritesPtr, line, 211, 441, 0, 0, 0);  // below the artwork's own title
-                        renderer.text(*spritesPtr, line, 210, 440, 1.0f, 0.95f, 0.3f);
+                        renderer.playerHead(*spritesPtr, world.displayColour(matchWinner), 212, 438);
+                        renderer.text(*spritesPtr, line, 241, 441, 0, 0, 0);  // below the artwork's own title
+                        renderer.text(*spritesPtr, line, 240, 440, 1.0f, 0.95f, 0.3f);
                     } else {
                         renderer.image(spritesPtr->picture("results"));
                         // Messages 30, 31 and 120/121 at the original's positions (values 780, 785, 800).
                         const std::string head = "Game Winner was Player " + std::to_string(win + 1) + " !";
-                        renderer.text(*spritesPtr, head, 151, 141, 0, 0, 0);
-                        renderer.text(*spritesPtr, head, 150, 140, 1, 1, 1);
+                        // Modern addition: the player's robot head in front of each name, so the colour tells who is who.
+                        constexpr float kHeadSlot = 30.0f;
+                        renderer.playerHead(*spritesPtr, world.displayColour(win), 150, 139);
+                        renderer.text(*spritesPtr, head, 151 + kHeadSlot, 141, 0, 0, 0);
+                        renderer.text(*spritesPtr, head, 150 + kHeadSlot, 140, 1, 1, 1);
                         const std::string need = "(Match winner must score " + std::to_string(winsNeeded) +
                                                  (cfg.winByKills ? " kills)" : " victories)");
                         renderer.text(*spritesPtr, need, 151, 95, 0, 0, 0);
@@ -1928,14 +2095,15 @@ int runGame(int argc, char** argv, bool& again) {
                                                      std::to_string(wins[static_cast<std::size_t>(i)]) + " (kills: " +
                                                      std::to_string(matchKills[static_cast<std::size_t>(i)]) + ")";
                             const float y = 210.0f + 20.0f * static_cast<float>(row++);
-                            renderer.text(*spritesPtr, line, 151, y + 1, 0, 0, 0);
-                            renderer.text(*spritesPtr, line, 150, y, i == win ? 1.0f : 0.8f, i == win ? 0.95f : 0.8f, i == win ? 0.3f : 0.8f);
+                            renderer.playerHead(*spritesPtr, world.displayColour(i), 150, y - 2);
+                            renderer.text(*spritesPtr, line, 151 + kHeadSlot, y + 1, 0, 0, 0);
+                            renderer.text(*spritesPtr, line, 150 + kHeadSlot, y, i == win ? 1.0f : 0.8f, i == win ? 0.95f : 0.8f, i == win ? 0.3f : 0.8f);
                         }
                     }
                     renderer.end();
                 }
             } else if (screen == Screen::Net) {
-                net.draw(renderer, *spritesPtr, w, h, frame, ab::net::clockMs());
+                net.draw(renderer, *spritesPtr, w, h, animFrame, ab::net::clockMs());
             } else if (screen == Screen::Roulette && roulette) {
                 static const char* const kPower[ab::kPowTypeCount] = {"bomb", "flame", "disease", "kicker", "skate", "punch", "grab",
                                                                     "spooge", "goldflame", "trigger", "jelly", "disease3", "random", "clog"};
@@ -2019,7 +2187,7 @@ int runGame(int argc, char** argv, bool& again) {
                     const bool on = static_cast<int>(r) == campaignRow;
                     renderer.text(*spritesPtr, campaignFiles[r], 80, 92.0f + 22.0f * static_cast<float>(r), on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, 107.0f + 22.0f * static_cast<float>(campaignRow));
+                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 62.0f, 107.0f + 22.0f * static_cast<float>(campaignRow));
                 renderer.text(*spritesPtr, "Up/Down: select   Enter: play   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::Help) {
@@ -2065,12 +2233,12 @@ int runGame(int argc, char** argv, bool& again) {
                     const bool on = static_cast<int>(r) == helpRow;
                     renderer.text(*spritesPtr, helpFiles[r], 80, 92.0f + 22.0f * static_cast<float>(r), on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, 107.0f + 22.0f * static_cast<float>(helpRow));
+                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 62.0f, 107.0f + 22.0f * static_cast<float>(helpRow));
                 renderer.text(*spritesPtr, "Up/Down: select   Enter: read   Esc: back", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::Editor) {
                 renderer.begin(w, h);
-                editor.draw(renderer, *spritesPtr, level, frame);
+                editor.draw(renderer, *spritesPtr, level, animFrame);
                 renderer.end();
             } else if (screen == Screen::SoundTest) {
                 const auto shown = shownSounds();
@@ -2099,7 +2267,7 @@ int runGame(int argc, char** argv, bool& again) {
                     char length[24];
                     std::snprintf(length, sizeof length, "%.1f s", item.seconds);
                     renderer.text(*spritesPtr, length, 540, y, cr, cg, cb);
-                    if (on) renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 52.0f, y + 15.0f);
+                    if (on) renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 52.0f, y + 15.0f);
                 }
                 if (unused == 0 && !soundList.empty() && !ab::isFreeAssetDir(opt.gameDir))
                     renderer.text(*spritesPtr, "For the disc's other sounds: atomic --import-assets PATH --all-sounds", 45, 398, 0.7f, 0.7f, 0.7f);
@@ -2124,7 +2292,7 @@ int runGame(int argc, char** argv, bool& again) {
                     const bool on = r == audioRow;
                     renderer.text(*spritesPtr, rows[r], 80, 100.0f + 24.0f * static_cast<float>(r), on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, 115.0f + 24.0f * static_cast<float>(audioRow));
+                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 62.0f, 115.0f + 24.0f * static_cast<float>(audioRow));
                 renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::Keys) {
@@ -2143,7 +2311,7 @@ int runGame(int argc, char** argv, bool& again) {
                     const bool on = r == keyRow;
                     const float y = 70.0f + 22.0f * static_cast<float>(r) + (r >= 6 ? 12.0f : 0.0f) + (r >= 12 ? 12.0f : 0.0f);
                     renderer.text(*spritesPtr, line, 80, y, on ? 1.0f : 0.85f, on ? 0.95f : 0.85f, on ? 0.3f : 0.85f);
-                    if (on) renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 62.0f, y + 15.0f);
+                    if (on) renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 62.0f, y + 15.0f);
                 }
                 if (keyCapture) {
                     const std::string ask = std::string("Press key for '") + kAction[keyRow % 6] + "'";  // message 1105
@@ -2178,7 +2346,8 @@ int runGame(int argc, char** argv, bool& again) {
                     "Sound Test",
                     "Original Game Data: " + (folderShown.empty() ? std::string("Choose Folder") : folderShown),
                     std::string("Graphics And Sound: ") + (ab::isFreeAssetDir(opt.gameDir) ? "Free" : "Original"),
-                    std::string("Screen: ") + ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0 ? "Full Screen" : "Windowed")};
+                    std::string("Screen: ") + ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0 ? "Full Screen" : "Windowed"),
+                    std::string("Menus: ") + (cfg.menuAllPads ? "All Joysticks" : "Joy 0 Only")};
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("glue" + std::to_string(optionsGlue)));
                 for (int r = 0; r < kOptionRows; ++r) {
@@ -2186,8 +2355,8 @@ int runGame(int argc, char** argv, bool& again) {
                     renderer.text(*spritesPtr, rows[r], 56, y + 1, 0, 0, 0);
                     renderer.text(*spritesPtr, rows[r], 55, y, r == optionRow ? 1.0f : 0.85f, r == optionRow ? 0.95f : 0.85f, r == optionRow ? 0.3f : 0.85f);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 41.0f, 55.0f + 21.0f * static_cast<float>(optionRow));
-                renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 440, 0.4f, 1.0f, 1.0f);
+                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 36.0f, 55.0f + 21.0f * static_cast<float>(optionRow));
+                renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Esc: done", 60, 462, 0.4f, 1.0f, 1.0f);
                 renderer.end();
             } else if (screen == Screen::LevelSetup) {
                 const int shownLevel = randomLevel ? -1 : level;
@@ -2228,7 +2397,7 @@ int runGame(int argc, char** argv, bool& again) {
                 }
                 const std::string lines[4] = {
                     randomLevel ? "Random Each Game" : ab::kLevelName[level],
-                    schemes.empty() ? std::string("(built-in arena)") : "Scheme: " + schemes[static_cast<std::size_t>(schemeIndex)].title,
+                    schemes.empty() ? std::string("(built-in arena)") : "Scheme: " + schemeTitle(currentChoice()),
                     std::to_string(winsNeeded) + (cfg.winByKills ? " Kills" : " Wins") + " to win match",  // messages 211, 208/209
                     std::string("Team play: ") + (teamPlay ? "ON (teams from the scheme)" : "OFF")};
                 for (int r = 0; r < 4; ++r) {
@@ -2237,15 +2406,80 @@ int runGame(int argc, char** argv, bool& again) {
                     renderer.text(*spritesPtr, lines[r], 56, y + 1, 0, 0, 0);
                     renderer.text(*spritesPtr, lines[r], 55, y, 1, 1, 1);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 41.0f, 185.0f + 24.0f * static_cast<float>(setupRow));
-                renderer.text(*spritesPtr, "Up/Down: select   Left/Right: change   Enter: start", 60, 440, 0.4f, 1.0f, 1.0f);
+                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 36.0f, 185.0f + 24.0f * static_cast<float>(setupRow));
+                renderer.text(*spritesPtr, schemePopup ? "Up/Down: select   Enter: take   Esc: cancel"
+                                                       : "Up/Down: select   Left/Right: change   Enter: start (list on Scheme)",
+                              60, 440, 0.4f, 1.0f, 1.0f);
+                if (schemePopup) {
+                    // The scheme list in the style of the original's campaign file box.
+                    const float bx = 150, by = 14, bw = 340, bh = 412;
+                    const float lx = bx + 10, ly = by + 36, lw = bw - 52, rowH = 22;
+                    const int n = static_cast<int>(popupChoices.size());
+                    renderer.quad(0, 0, 640, 480, 0.0f, 0.0f, 0.0f, 0.45f);
+                    renderer.quad(bx - 2, by - 2, bw + 4, bh + 4, 0.62f, 0.60f, 0.56f, 1.0f);
+                    renderer.quad(bx, by, bw, bh, 0.36f, 0.34f, 0.31f, 1.0f);
+                    renderer.quad(bx + 8, by + 8, bw - 16, 22, 0.24f, 0.23f, 0.21f, 1.0f);
+                    const std::string title = "Select a scheme:";
+                    renderer.text(*spritesPtr, title, bx + bw / 2 - renderer.textWidth(*spritesPtr, title) / 2.0f, by + 12, 0.85f, 0.85f, 0.85f);
+                    renderer.quad(lx, ly, lw, rowH * kPopupRows, 0.27f, 0.26f, 0.24f, 1.0f);
+                    for (int r = 0; r < kPopupRows && popupTop + r < n; ++r) {
+                        const int at = popupTop + r;
+                        const float y = ly + rowH * static_cast<float>(r);
+                        if (at == popupRow) renderer.quad(lx, y, lw, rowH, 0.52f, 0.50f, 0.47f, 1.0f);
+                        const bool shown = at == popupRow;
+                        renderer.text(*spritesPtr, schemeTitle(popupChoices[static_cast<std::size_t>(at)]), lx + 8, y + 4, shown ? 1.0f : 0.88f, shown ? 1.0f : 0.88f, shown ? 1.0f : 0.88f);
+                    }
+                    // Scrollbar: arrows above and below, the thumb in between shows where the window is.
+                    const float sx = lx + lw + 8, sw = 22, trackY = ly + 20, trackH = rowH * kPopupRows - 40;
+                    renderer.quad(sx, ly, sw, 18, 0.46f, 0.44f, 0.41f, 1.0f);
+                    renderer.quad(sx, ly + rowH * kPopupRows - 18, sw, 18, 0.46f, 0.44f, 0.41f, 1.0f);
+                    renderer.text(*spritesPtr, "^", sx + 7, ly + 2, 1, 1, 1);
+                    renderer.text(*spritesPtr, "v", sx + 7, ly + rowH * kPopupRows - 16, 1, 1, 1);
+                    renderer.quad(sx, trackY, sw, trackH, 0.30f, 0.29f, 0.27f, 1.0f);
+                    const float share = n > kPopupRows ? static_cast<float>(kPopupRows) / static_cast<float>(n) : 1.0f;
+                    const float thumbH = trackH * share;
+                    const float span = static_cast<float>(std::max(1, n - kPopupRows));
+                    const float thumbY = trackY + (trackH - thumbH) * (n > kPopupRows ? static_cast<float>(popupTop) / span : 0.0f);
+                    renderer.quad(sx, thumbY, sw, thumbH, 0.56f, 0.54f, 0.50f, 1.0f);
+                    // The marked scheme in the classic theme (level 0), at half size: 15 x 11 cells of 20 x 18.
+                    const int shownChoice = n > 0 ? popupChoices[static_cast<std::size_t>(popupRow)] : kRandomMatch;
+                    if (shownChoice >= 0 && shownChoice != popupPreviewFor) {
+                        popupPreviewFor = shownChoice;
+                        popupPreview = ab::Scheme{};
+                        if (auto sf = ab::loadSchemeFile(schemes[static_cast<std::size_t>(shownChoice)].path)) popupPreview = sf->scheme;
+                    }
+                    const float mx = bx + bw / 2 - 150.0f, my = ly + rowH * kPopupRows + 14;
+                    renderer.quad(mx - 2, my - 2, 304, 202, 0.62f, 0.60f, 0.56f, 1.0f);
+                    renderer.quad(mx, my, 300, 198, 0.10f, 0.22f, 0.12f, 1.0f);
+                    if (shownChoice >= 0) {
+                        spritesPtr->ensureTiles(0);
+                        for (int y = 0; y < ab::kGridH; ++y)
+                            for (int x = 0; x < ab::kGridW; ++x) {
+                                const ab::Tile t = popupPreview.tiles[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)];
+                                if (t == ab::Tile::Blank) continue;
+                                // A tile's reference point is the bottom centre of its cell (40 x 36 in the game).
+                                renderer.sprite(*spritesPtr, t == ab::Tile::Solid ? "tile 0 solid" : "tile 0 brick", 0, -1,
+                                                mx + 20.0f * static_cast<float>(x) + 10.0f, my + 18.0f * static_cast<float>(y) + 17.5f, 0.5f);
+                            }
+                    } else {
+                        const std::string note[2] = {"The scheme is drawn", shownChoice == kRandomMatch ? "when the match starts" : "before every round"};
+                        for (int r = 0; r < 2; ++r)
+                            renderer.text(*spritesPtr, note[r], mx + 150.0f - renderer.textWidth(*spritesPtr, note[r]) / 2.0f, my + 80.0f + 22.0f * static_cast<float>(r), 0.85f, 0.85f, 0.85f);
+                    }
+                }
                 renderer.end();
             } else if (screen == Screen::MainMenu) {
+                // Vertical centres of the seven lines of lettering in mainmenu.pcx (measured in the picture).
+                static constexpr float kMenuRowCentre[7] = {126.0f, 162.5f, 199.0f, 236.0f, 273.0f, 310.0f, 347.0f};
                 renderer.begin(w, h);
                 renderer.image(spritesPtr->picture("mainmenu"));
                 // The picture carries the item texts; the game draws only the cursor
                 // (original value 700: first item at x 332, y 140, 38 px apart).
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 332.0f, 140.0f + 38.0f * static_cast<float>(menuItem));
+                // The original's pointer here is its regular trigger bomb, pulsing; the free set keeps its own pointer.
+                // If the menu bomb could not be made (a file of the bombs missing), the regular pointer stands in.
+                const int bombStep = static_cast<int>(static_cast<std::int64_t>(animFrame) * 143 / 400);
+                if (ab::isFreeAssetDir(opt.gameDir) || !renderer.sprite(*spritesPtr, "menu bomb", bombStep, -1, 332.0f, kMenuRowCentre[menuItem]))
+                    renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 332.0f, 140.0f + 38.0f * static_cast<float>(menuItem));
                 // The release, top left, where the original shows its "V1.0".
                 renderer.text(*spritesPtr, "V" AB_VERSION " Modern", 9, 7, 0, 0, 0);
                 renderer.text(*spritesPtr, "V" AB_VERSION " Modern", 8, 6, 1, 1, 1);
@@ -2265,15 +2499,31 @@ int runGame(int argc, char** argv, bool& again) {
                     renderer.text(*spritesPtr, line, 71, y + 1, 0, 0, 0);
                     renderer.text(*spritesPtr, line, 70, y, colour[i][0], colour[i][1], colour[i][2]);
                 }
-                renderer.sprite(*spritesPtr, "cursor1", frame / 8, -1, 56.0f, 185.0f + 24.0f * static_cast<float>(listRow));
+                renderer.sprite(*spritesPtr, "cursor1", animFrame / 8, -1, 46.0f, 185.0f + 24.0f * static_cast<float>(listRow));
                 // Messages 40-42 at the original's positions (values 715, 720).
                 renderer.text(*spritesPtr, "Available Joysticks:", 301, 141, 0, 0, 0);
                 renderer.text(*spritesPtr, "Available Joysticks:", 300, 140, 1, 1, 1);
                 if (padCount == 0) renderer.text(*spritesPtr, "None Detected", 320, 170, 0.85f, 0.85f, 0.85f);
                 for (int j = 0; j < padCount; ++j) {
                     const char* name = pads[static_cast<std::size_t>(j)] != nullptr ? SDL_GetGamepadName(pads[static_cast<std::size_t>(j)]) : nullptr;
-                    renderer.text(*spritesPtr, "Joy " + std::to_string(j) + " - " + (name != nullptr ? name : "?"), 320,
-                                  170.0f + 24.0f * static_cast<float>(j), 0.85f, 0.85f, 0.85f);
+                    // A gamepad that a player uses is shown with that player's number and colour.
+                    int seat = -1;
+                    for (int i = 0; i < ab::kMaxPlayers && seat < 0; ++i)
+                        if (control[static_cast<std::size_t>(i)] == static_cast<Control>(static_cast<int>(Control::Pad0) + j)) seat = i;
+                    const float y = 170.0f + 24.0f * static_cast<float>(j);
+                    std::string line = "Joy " + std::to_string(j) + " - " + (name != nullptr ? name : "?");
+                    const float cr = seat >= 0 ? colour[seat][0] : 0.85f, cg = seat >= 0 ? colour[seat][1] : 0.85f,
+                                cb = seat >= 0 ? colour[seat][2] : 0.85f;
+                    // The seat's tag keeps its colour; only the gamepad's own text lights up when it is pressed.
+                    const bool flash = SDL_GetTicks() < padFlashUntil[static_cast<std::size_t>(j)];
+                    const float lineX = 300.0f + renderer.textWidth(*spritesPtr, "P10 ");
+                    if (seat >= 0) {
+                        const std::string tag = "P" + std::to_string(seat + 1);
+                        renderer.text(*spritesPtr, tag, 301, y + 1, 0, 0, 0);
+                        renderer.text(*spritesPtr, tag, 300, y, cr, cg, cb);
+                    }
+                    renderer.text(*spritesPtr, line, lineX + 1, y + 1, 0, 0, 0);
+                    renderer.text(*spritesPtr, line, lineX, y, flash ? 1.0f : 0.85f, flash ? 1.0f : 0.85f, flash ? 0.3f : 0.85f);
                 }
                 renderer.text(*spritesPtr, teamPlay ? "Up/Down: select   Left: off   Right: change   T: team   Enter: start" : "Up/Down: select   Left: off   Right: change   Enter: start", 60, 440, 0.4f, 1.0f, 1.0f);
                 renderer.end();

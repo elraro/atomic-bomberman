@@ -104,7 +104,7 @@ bool readTournament(const std::string& envelope, const PublicKey* trusted, long 
     const Json& rules = doc["rules"];
     t.rules.gameVersion = rules["game_version"].str();
     t.rules.protocol = static_cast<int>(rules["protocol"].integer());
-    if (rules["wins"].isNumber()) t.rules.wins = std::clamp(static_cast<int>(rules["wins"].integer()), 1, 9);
+    if (rules["wins"].isNumber()) t.rules.wins = std::clamp(static_cast<int>(rules["wins"].integer()), 1, 10);
     if (rules["level"].isNumber()) t.rules.level = std::clamp(static_cast<int>(rules["level"].integer()), -1, 10);
     if (rules["scheme"].isString()) t.rules.scheme = rules["scheme"].str();
     if (rules["play_time"].isNumber()) t.rules.playTime = std::clamp(static_cast<int>(rules["play_time"].integer()), 30, 1001);
